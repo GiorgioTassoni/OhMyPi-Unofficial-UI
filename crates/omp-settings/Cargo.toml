@@ -1,0 +1,23 @@
+[package]
+name = "omp-settings"
+description = "The engine's settings as the app reads, validates and writes them"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+omp-transport = { path = "../omp-transport" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+# The config file is YAML and the engine owns its shape. This crate reads it (to say where a
+# value comes from, and to diff a hand-edit before applying it) but never writes it — the
+# engine does that, through its own CLI. `serde_yaml` is frozen upstream (0.9, deprecated in
+# favour of `saphyr`), which is acceptable for a read-only parser inside a version-pinned
+# app: what it must handle is the subset the engine itself emits plus what a human types.
+serde_yaml = "0.9"
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

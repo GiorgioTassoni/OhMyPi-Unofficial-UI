@@ -1,0 +1,165 @@
+name: Release
+
+# A tag is what produces installers for a release (`docs/15-packaging-and-release.md`).
+# `workflow_dispatch` exists so the whole pipeline can be exercised without cutting one.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bundle:
+    name: bundle ${{ matrix.sidecar }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            sidecar: linux-x64
+          # macos-14 is arm64: the runner's own architecture is what the sidecar key and
+          # the bundle must both be, since `externalBin` needs the matching triple.
+          - os: macos-14
+            sidecar: darwin-arm64
+          - os: windows-latest
+            sidecar: windows-x64
+    env:
+      # The CLI is run through its own entry script so that one command text works under bash
+      # and pwsh, pinned to the version the frontend installed instead of a floating `bunx`.
+      TAURI: bun frontend/node_modules/@tauri-apps/cli/tauri.js
+
+      # Derived flags, never the secrets themselves. An environment variable that is set but
+      # empty is *present* to the CLI (`std::env::var_os`), so mapping a missing secret into
+      # `APPLE_CERTIFICATE`/`APPLE_ID`/`WINDOWS_CERTIFICATE` would turn an unsigned build into
+      # a signing or notarization attempt with empty credentials — and `APPLE_ID` with
+      # `APPLE_PASSWORD` but no `APPLE_TEAM_ID` is a hard error in tauri-bundler. The secrets
+      # are read only inside the steps whose guard says the owner supplied them.
+      SIGN_MACOS: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
+      NOTARIZE_MACOS: ${{ secrets.APPLE_ID != '' && secrets.APPLE_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+      SIGN_WINDOWS: ${{ secrets.WINDOWS_CERTIFICATE != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # macOS and Windows runners already carry what Tauri needs (Xcode command line tools,
+      # the MSVC toolchain); only the WebKitGTK/soup stack and AppImage's patchelf are extra.
+      - name: Install Tauri's Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install the frontend toolchain
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      # `externalBin` is per-target and the bundle fails without it, so staging is not optional.
+      # This also writes the attribution file the bundle ships (`bundle.resources`).
+      - name: Stage the pinned sidecar
+        run: bun scripts/fetch-sidecar.ts --target ${{ matrix.sidecar }}
+
+      # Our embedded digests re-checked against the release's own SHA256SUMS.txt. The local
+      # build's offline equivalent is the `beforeBuildCommand` hook (`--verify-staged`).
+      - name: Audit the pinned digests
+        run: bun scripts/fetch-sidecar.ts --audit
+
+      # The generator *executes* the staged binary (`omp config list`), and its sidecar path is
+      # the linux-x64 triple, so only the Linux runner can run this gate. The catalog it checks
+      # is the engine's own key surface — identical on every platform — so catching an engine
+      # bump once per release is enough.
+      - name: Verify the settings catalog
+        if: matrix.sidecar == 'linux-x64'
+        run: bun scripts/gen-settings-catalog.ts --check
+
+      - name: Build the frontend
+        working-directory: frontend
+        run: bun run build
+
+      # Windows signing needs a thumbprint, which only exists after the certificate is in the
+      # runner's store; the command line then carries it in a config extension so that no
+      # certificate material ever lives in this repository.
+      - name: Import the Windows signing certificate
+        if: env.SIGN_WINDOWS == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'certificate.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String(($env:WINDOWS_CERTIFICATE -replace '\s', '')))
+          $secure = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          $imported = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $secure
+          $thumbprint = ($imported | Where-Object { $_.HasPrivateKey } | Select-Object -First 1).Thumbprint
+          $config = Join-Path $env:RUNNER_TEMP 'signing.conf.json'
+          @{ bundle = @{ windows = @{ certificateThumbprint = $thumbprint; digestAlgorithm = 'sha256' } } } |
+            ConvertTo-Json -Depth 5 | Set-Content -Path $config
+          "WINDOWS_SIGN_CONFIG=$config" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Bundle for Windows (signed)
+        if: runner.os == 'Windows' && env.WINDOWS_SIGN_CONFIG != ''
+        shell: pwsh
+        run: ${{ env.TAURI }} build --config $env:WINDOWS_SIGN_CONFIG
+
+      - name: Bundle for Windows (unsigned)
+        if: runner.os == 'Windows' && env.WINDOWS_SIGN_CONFIG == ''
+        run: ${{ env.TAURI }} build
+
+      # Signing and notarization are separate capabilities, so they are separate steps: a
+      # half-configured notarization (Apple ID without a team ID) is a hard error in the CLI,
+      # and passing an empty `APPLE_*` variable would attempt an authenticated call with
+      # nothing. Each step below therefore exports exactly the variables its guard promises.
+      - name: Bundle for macOS (signed and notarized)
+        if: runner.os == 'macOS' && env.SIGN_MACOS == 'true' && env.NOTARIZE_MACOS == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: ${{ env.TAURI }} build
+
+      - name: Bundle for macOS (signed, not notarized)
+        if: runner.os == 'macOS' && env.SIGN_MACOS == 'true' && env.NOTARIZE_MACOS != 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: ${{ env.TAURI }} build
+
+      - name: Bundle for macOS (unsigned)
+        if: runner.os == 'macOS' && env.SIGN_MACOS != 'true'
+        run: ${{ env.TAURI }} build
+
+      - name: Bundle for Linux
+        if: runner.os == 'Linux'
+        run: ${{ env.TAURI }} build
+
+      # One glob list for every platform: `upload-artifact` skips the patterns that match
+      # nothing and fails only when none of them matched.
+      - name: Upload the installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: oh-my-pi-${{ matrix.sidecar }}
+          if-no-files-found: error
+          path: |
+            target/release/bundle/deb/*.deb
+            target/release/bundle/rpm/*.rpm
+            target/release/bundle/appimage/*.AppImage
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/macos/*.app
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/msi/*.msi

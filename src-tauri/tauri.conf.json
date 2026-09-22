@@ -1,0 +1,81 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Oh My Pi",
+  "version": "0.1.0",
+  "identifier": "sh.omp.desktop",
+  "build": {
+    "beforeDevCommand": "bun run --cwd ../frontend dev",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "bun run --cwd ../frontend build && bun run --cwd .. scripts/fetch-sidecar.ts --verify-staged",
+    "frontendDist": "../frontend/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Oh My Pi",
+        "width": 1200,
+        "height": 820,
+        "minWidth": 900,
+        "minHeight": 600
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "deb",
+      "rpm",
+      "appimage",
+      "nsis",
+      "msi",
+      "app",
+      "dmg"
+    ],
+    "publisher": "GioViale",
+    "category": "DeveloperTool",
+    "shortDescription": "Desktop shell for the Oh My Pi coding agent.",
+    "longDescription": "A desktop client for the Oh My Pi (omp) coding agent. Every open thread is an omp --mode rpc-ui child process the app supervises; the window speaks the engine's own RPC protocol and renders sessions, transcripts, approvals, settings and subagents. The pinned engine binary and the third-party attribution it requires ship inside the bundle.",
+    "copyright": "Copyright \u00a9 2026 GioViale",
+    "icon": [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "THIRD-PARTY-NOTICES.txt"
+    ],
+    "externalBin": [
+      "binaries/omp"
+    ],
+    "linux": {
+      "deb": {
+        "section": "devel"
+      },
+      "rpm": {}
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      },
+      "wix": {
+        "language": "en-US"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "entitlements": "entitlements.plist",
+      "hardenedRuntime": true
+    }
+  }
+}

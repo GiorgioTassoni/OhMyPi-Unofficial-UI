@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = ["crates/omp-transport", "crates/omp-session", "crates/omp-store", "crates/omp-settings", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.82"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = [
+    "process",
+    "io-util",
+    "sync",
+    "time",
+    "rt",
+    "rt-multi-thread",
+    "macros",
+] }
+
+[profile.dev]
+# The sidecar speaks JSONL over pipes; debug builds of the transport are on the
+# hot path for every frame. Keep optimisation on for our own crates only.
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2

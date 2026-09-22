@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The transport and the session layer are pure Rust with no Tauri dependency, so
+  # they get the strict gate on every push.
+  rust:
+    name: crates (fmt, clippy, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      # Every crate that does not need the shell. `omp-settings` reads the config file and
+      # talks to the engine's CLI; `omp-store` reads the engine's on-disk store. Both are pure
+      # Rust, and both were the kind of thing that quietly drifts when nobody compiles them.
+      - name: Lints
+        run: cargo clippy -p omp-transport -p omp-session -p omp-store -p omp-settings --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test -p omp-transport -p omp-session -p omp-store -p omp-settings
+
+  frontend:
+    name: frontend (type check + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install
+        run: bun install --frozen-lockfile
+        working-directory: frontend
+
+      - name: Type check and build
+        run: bun run build
+        working-directory: frontend
+
+      # The markdown sanitizer's assertions. They guard a security boundary — model
+      # output becoming markup in a webview that can call the host — where a
+      # screenshot of a leak looks exactly like a screenshot of inert text.
+      - name: Tests
+        run: bun test
+        working-directory: frontend
+
+  # Verifies our pinned digests against the release's own manifest. Cheap, and
+  # it means a tampered or re-cut release fails here rather than in a user build.
+  sidecar-manifest:
+    name: sidecar manifest audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Verify pinned digests against the release
+        run: bun scripts/fetch-sidecar.ts --audit
+
+  # The shell needs the WebKit stack and the ~250 MB sidecar (Tauri validates
+  # `externalBin` at build time), so it is built rather than fully tested here.
+  # The milestone tests that drive a real agent stay local: they need credentials.
+  shell:
+    name: desktop shell (build)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri's Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Stage the pinned sidecar
+        run: bun scripts/fetch-sidecar.ts --target linux-x64
+
+      # The settings catalog is generated from three sources — the engine's own `config list`,
+      # the pinned package's schema, and `docs/13` — and the app renders 314 rows from it. This
+      # is the gate that notices an engine bump: it re-runs the generator and fails on any
+      # difference, so a catalog that no longer matches the sidecar can never ship.
+      - name: Settings catalog is current
+        run: bun scripts/gen-settings-catalog.ts --check
+
+      - name: Build the frontend
+        run: bun install --frozen-lockfile && bun run build
+        working-directory: frontend
+
+      - name: Build the shell
+        run: cargo build -p omp-desktop
+
+      # The desktop crate's own unit tests: the URL allowlist and the row mapping.
+      # Pure logic, so no provider credentials are needed — they run wherever the
+      # shell can be built.
+      - name: Shell unit tests
+        run: cargo test -p omp-desktop --lib
+
+      # The only live test CI can run: the others need provider credentials.
+      - name: Live transport test
+        env:
+          OMP_BIN: src-tauri/binaries/omp-x86_64-unknown-linux-gnu
+        run: cargo test -p omp-transport --test live_sidecar -- --ignored --nocapture handshake

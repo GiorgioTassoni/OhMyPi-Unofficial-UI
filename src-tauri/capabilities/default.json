@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for the main window. Only Tauri core APIs are granted: the agent runs as a child process spawned by our own Rust code (not through tauri-plugin-shell), so no shell permissions are needed and none are granted. The notification permission covers the plugin's own command surface; the banner the app actually shows is sent from Rust (`bridge::notify_os`), which the capability system does not gate.",
+  "windows": ["main"],
+  "permissions": ["core:default", "notification:default"]
+}

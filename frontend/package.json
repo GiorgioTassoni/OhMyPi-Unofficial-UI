@@ -1,0 +1,35 @@
+{
+  "name": "omp-desktop-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Frontend for the Oh My Pi desktop shell",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --build && vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "bun test",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@lucide/vue": "^1.47.0",
+    "@tauri-apps/api": "^2",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "dompurify": "^3.4.15",
+    "marked": "^18.0.13",
+    "vue": "^3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/cli": "^2.11.4",
+    "@types/bun": "^1.4.2",
+    "@types/jsdom": "^30.0.0",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "jsdom": "^30.1.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5",
+    "vite": "^8.3.0",
+    "vue-tsc": "^3.3.11"
+  }
+}

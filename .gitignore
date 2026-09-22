@@ -1,0 +1,36 @@
+# Phase-1 research scaffolding (upstream checkout, probe output, notes).
+# Not part of the deliverable: the report in docs/ is self-contained.
+.research/
+
+# Rust build output
+/target/
+**/*.rs.bk
+
+# Sidecar binaries are fetched and digest-verified at build time
+# (`scripts/fetch-sidecar.ts`), never committed — each is ~200-250 MB.
+/src-tauri/binaries/
+/src-tauri/THIRD-PARTY-NOTICES.txt
+
+# Tauri's generated permission schemas.
+/src-tauri/gen/
+
+# Dependencies and frontend build output
+node_modules/
+dist/
+dist-ssr/
+
+# AI reference and prompts
+builddocs/
+
+# Bytecode from the window checks (`scripts/window-checks/harness.py` is run, not imported).
+__pycache__/
+*.local
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# TypeScript build cache
+*.tsbuildinfo

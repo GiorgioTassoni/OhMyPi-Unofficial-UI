@@ -1,0 +1,5 @@
+[test]
+# `src/test-setup.ts` stands up a DOM (see its header). Bun's preload runs before
+# any test module is loaded, which is what lets tests import the module under test
+# statically.
+preload = ["./src/test-setup.ts"]

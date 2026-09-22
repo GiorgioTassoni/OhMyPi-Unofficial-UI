@@ -1,0 +1,30 @@
+[package]
+name = "omp-desktop"
+description = "Tauri shell hosting the Oh My Pi coding agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[target.'cfg(unix)'.dependencies]
+# Only for the escalation a polite signal does not reach: `SIGKILL` to a shell's process
+# group, so closing a tab cannot leave a job running that the user cannot see.
+libc = "0.2"
+
+[dependencies]
+omp-transport = { path = "../crates/omp-transport" }
+omp-session = { path = "../crates/omp-session" }
+omp-store = { path = "../crates/omp-store" }
+omp-settings = { path = "../crates/omp-settings" }
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-notification = "2"
+tokio.workspace = true
+open = "5.4.4"
+portable-pty = "0.9"
+base64 = "0.22"
