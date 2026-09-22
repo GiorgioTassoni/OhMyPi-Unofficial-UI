@@ -26,6 +26,10 @@ builddocs/
 __pycache__/
 *.local
 
+# The local CI harness (`.ci-local/run.sh`): it runs `.github/workflows/ci.yml` in a container
+# before a push, is pinned to this machine's tooling, and is not part of the deliverable.
+/.ci-local/
+
 # Editor / OS noise
 .DS_Store
 .idea/

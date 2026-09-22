@@ -11,7 +11,8 @@ tauri-build = { version = "2", features = [] }
 
 [target.'cfg(unix)'.dependencies]
 # Only for the escalation a polite signal does not reach: `SIGKILL` to a shell's process
-# group, so closing a tab cannot leave a job running that the user cannot see.
+# group and to the session it led, so closing a tab cannot leave a job running that the user
+# cannot see.
 libc = "0.2"
 
 [dependencies]

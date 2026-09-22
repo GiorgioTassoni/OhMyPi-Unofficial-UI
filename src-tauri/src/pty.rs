@@ -21,7 +21,7 @@
 //! was opened beside, because the user's reason for having one is usually that they are about
 //! to switch threads. It ends when its shell ends, when the user closes the tab, or when the
 //! app exits ([`Terminals::shutdown`], from the host's own exit hook) — and that last one is
-//! the one that must not leak a process, so it kills the shell's whole process group rather
+//! the one that must not leak a process, so it ends the shell's whole session rather
 //! than only the shell.
 //!
 //! # Why input is written on the calling thread
@@ -487,13 +487,35 @@ fn spawn_pump(
 /// Blocking on the first batch and draining whatever else is *already* queued, rather than
 /// waiting on a timer: a keystroke's echo goes out immediately — a 16 ms tick would be felt —
 /// while a program printing a screenful arrives as one event instead of hundreds.
+///
+/// One event carries at most [`MAX_CHUNK`]: a read that would take the batch past it waits to
+/// be the next event's first batch, rather than being merged into this one. Measured, that is
+/// the difference between a batch of exactly the size the reader asks for and one of 8 KiB plus
+/// whatever was queued behind it.
 fn pump(receiver: &Receiver<Vec<u8>>, id: &str, sink: &dyn TerminalSink) {
-    while let Ok(first) = receiver.recv() {
-        let mut batch = first;
+    // A read that did not fit in the event just sent. It goes out with the next one, so holding
+    // it back costs a batch and not a delay: the loop below does not block while this is set.
+    let mut held: Option<Vec<u8>> = None;
+
+    loop {
+        let mut batch = match held.take() {
+            Some(bytes) => bytes,
+            // Disconnected: the writer is gone, which is how the output ends.
+            None => match receiver.recv() {
+                Ok(bytes) => bytes,
+                Err(_) => break,
+            },
+        };
 
         while batch.len() < MAX_CHUNK {
             match receiver.try_recv() {
-                Ok(next) => batch.extend_from_slice(&next),
+                Ok(next) => {
+                    if batch.len() + next.len() > MAX_CHUNK {
+                        held = Some(next);
+                        break;
+                    }
+                    batch.extend_from_slice(&next);
+                }
                 // Empty: nothing else is queued, so this batch goes now. Disconnected: this is
                 // the last one, and the next `recv` ends the loop.
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
@@ -510,20 +532,27 @@ fn pump(receiver: &Receiver<Vec<u8>>, id: &str, sink: &dyn TerminalSink) {
 /// End a shell, and everything it started.
 ///
 /// `SIGHUP` first, because that is what a terminal sends when it goes away and what a shell is
-/// written to expect. What follows exists for the shell that ignores it: `SIGKILL` to the
-/// child, and to the child's process *group* — portable-pty gives each shell its own session
-/// (`setsid`), so its pid is its group id, and the group covers the jobs it started without job
-/// control. A foreground job in an interactive shell is in its own group; that one goes when the
-/// session leader dies, which the kernel does on its own: the pty's foreground group is hung up.
+/// written to expect. What follows exists because the jobs outlive the shell: an interactive
+/// shell — which is what a pty makes of one — gives every job a process *group* of its own
+/// (`setsid` puts the shell alone in its group), so killing the shell's group reaches the shell
+/// and nothing it started. The *session* is the boundary that covers them, and it is what the
+/// host sweeps.
+///
+/// The shell's own death is not where this stops. `dash` — the `/bin/sh` of every Debian- and
+/// Ubuntu-derived machine — does not pass `SIGHUP` on to its jobs, so a host that read the
+/// polite death as "done" would leave them running where `bash` happened to end them.
 fn terminate(session: &mut Session) {
     let _ = session.child.kill();
 
-    if reaped(session, KILL_GRACE) {
-        return;
-    }
+    // The polite signal gets its moment to work on its own: a shell that forwards it is doing
+    // the cleanest version of this, and this is what tells the two cases apart.
+    let shell_gone = reaped(session, KILL_GRACE);
 
     escalate(session);
-    let _ = reaped(session, REAP_GRACE);
+
+    if !shell_gone {
+        let _ = reaped(session, REAP_GRACE);
+    }
 }
 
 /// Poll a child until it has exited, or the deadline passes.
@@ -548,19 +577,35 @@ fn reaped(session: &mut Session, within: Duration) -> bool {
 }
 
 /// The part a polite signal does not reach.
+///
+/// Three passes, smallest first: the shell, the shell's process group (its jobs, for a shell
+/// with no job control), then every process still in the shell's *session*. That last one is
+/// the pass this exists for: the jobs of an interactive shell are one group each, so neither
+/// of the first two reaches them. It is the Linux pass: `/proc` is what lists a session's
+/// members, and the two kills above are the whole of this on a platform without it.
 #[cfg(unix)]
 fn escalate(session: &mut Session) {
-    let Some(pid) = session.child.process_id() else {
+    // The id the child was spawned with: `process_id` answers only while the child is
+    // unreaped, and this runs after the shell has been reaped.
+    let Some(leader) = session.pid else {
         return;
     };
 
-    // SAFETY: `kill` with a pid the caller owns and a signal number that takes no argument.
-    // Both calls are allowed to fail — the process may have exited between the two — and a
+    // SAFETY: `kill` with a pid the host spawned and a signal number that takes no argument.
+    // The calls are allowed to fail — the process may have exited since it was counted — and a
     // failure here is not something the caller can act on, since the alternative is a process
     // the user cannot see.
     unsafe {
-        libc::kill(pid as i32, libc::SIGKILL);
-        libc::kill(-(pid as i32), libc::SIGKILL);
+        libc::kill(leader as i32, libc::SIGKILL);
+        libc::kill(-(leader as i32), libc::SIGKILL);
+    }
+
+    #[cfg(target_os = "linux")]
+    for member in session_members(leader) {
+        // SAFETY: as above.
+        unsafe {
+            libc::kill(member as i32, libc::SIGKILL);
+        }
     }
 }
 
@@ -569,6 +614,45 @@ fn escalate(session: &mut Session) {
 #[cfg(not(unix))]
 fn escalate(session: &mut Session) {
     let _ = session.child.kill();
+}
+
+/// Every process still in the session the shell led.
+///
+/// `setsid` makes the shell a session leader, so its pid *is* the session id — no reading of
+/// `/proc` is needed to learn what to look for, only to find who is in it. A job leaves the
+/// session by asking to (`setsid`, the second fork of a daemon), and one that did is left
+/// alone, which is the point of the boundary.
+///
+/// Read-then-kill cannot name a process that has since died and been replaced: Linux hands out
+/// pid numbers in a cycle, so a number comes round again only after `pid_max` — four million —
+/// further spawns, and this window is the microseconds between two reads.
+#[cfg(target_os = "linux")]
+fn session_members(leader: u32) -> Vec<u32> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        // No `/proc` to read: the two kills in `escalate` are what is left.
+        return Vec::new();
+    };
+
+    entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|pid| *pid != std::process::id() && session_of(*pid) == Some(leader))
+        .collect()
+}
+
+/// The session a process belongs to, out of `/proc/<pid>/stat`.
+///
+/// The second field is the process's own name and may contain spaces and parentheses, so the
+/// fields after it are found from the *last* `)`: state, ppid, pgrp, session.
+#[cfg(target_os = "linux")]
+fn session_of(pid: u32) -> Option<u32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+
+    stat[stat.rfind(')')? + 1..]
+        .split_whitespace()
+        .nth(3)?
+        .parse()
+        .ok()
 }
 
 /// What the platform said happened, without inventing a number.
@@ -988,8 +1072,10 @@ mod tests {
             .open_program(sink.clone(), &workspace(), 80, 24, sh())
             .expect("a terminal opens");
 
-        // A background job: it holds the terminal but not the foreground, so only a group kill
-        // — or the kernel hanging up the session — reaches it.
+        // A background job. An interactive shell gives it a process group of its own, so
+        // killing the shell's group misses it, and `dash` (the `/bin/sh` of Debian and Ubuntu)
+        // does not pass `SIGHUP` on to it either: the session sweep is what reaches it, on a
+        // `bash` machine as much as on a `dash` one.
         let marker = "sleep 271828";
         terminals
             .write(&opened.id, &format!("{marker} &\r"))
@@ -999,6 +1085,45 @@ mod tests {
         terminals.close(&*sink, &opened.id).expect("the tab closes");
 
         wait_until("the job to go with its terminal", || {
+            !something_runs(marker)
+        });
+    }
+
+    #[test]
+    fn closing_a_tab_leaves_the_other_tabs_alone() {
+        let terminals = Arc::new(Terminals::new());
+        let sink = recorder();
+        let kept = terminals
+            .open_program(sink.clone(), &workspace(), 80, 24, sh())
+            .expect("the first terminal opens");
+        let closed = terminals
+            .open_program(sink.clone(), &workspace(), 80, 24, sh())
+            .expect("the second terminal opens");
+
+        // A job in the tab that stays open: ending a tab sweeps a session, and this is the
+        // process that would notice if the sweep were not bounded by it.
+        let marker = "sleep 161803";
+        terminals
+            .write(&kept.id, &format!("{marker} &\r"))
+            .expect("the shell is reading");
+        wait_until("the job to start", || something_runs(marker));
+
+        terminals.close(&*sink, &closed.id).expect("the tab closes");
+
+        assert!(
+            something_runs(marker),
+            "the other tab's job is still running"
+        );
+        assert!(
+            terminals
+                .list()
+                .iter()
+                .any(|terminal| terminal.id == kept.id && terminal.running),
+            "and its tab is still open"
+        );
+
+        terminals.close(&*sink, &kept.id).expect("the tab closes");
+        wait_until("the job to go with the tab that kept it", || {
             !something_runs(marker)
         });
     }

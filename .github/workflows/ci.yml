@@ -131,4 +131,12 @@ jobs:
           # as the working directory, so a repo-relative path here resolves under
           # `crates/omp-transport/` and the spawn fails with ENOENT.
           OMP_BIN: ${{ github.workspace }}/src-tauri/binaries/omp-x86_64-unknown-linux-gnu
+          # The engine will not serve `--mode rpc-ui` until it has a model to offer, and a
+          # fresh runner has none to offer: without a key of some kind it prints "No models
+          # available" and never sends the `ready` frame this test waits for (`measured`: a
+          # `HOME` with no `.omp`, on both a workstation and the runner image). The handshake
+          # never reaches a provider — it reads state, the catalogue and the command palette —
+          # so a placeholder is what gets the engine past its own startup check, and it is not
+          # a credential.
+          ANTHROPIC_API_KEY: a-placeholder-the-engine-only-checks-for-presence
         run: cargo test -p omp-transport --test live_sidecar -- --ignored --nocapture handshake

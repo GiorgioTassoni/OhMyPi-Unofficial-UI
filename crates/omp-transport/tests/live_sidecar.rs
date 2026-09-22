@@ -1,7 +1,11 @@
 //! Integration against a **real** `omp` sidecar.
 //!
-//! Ignored by default because it needs the binary (and, for anything beyond
-//! state inspection, credentials). Run it explicitly:
+//! Ignored by default because it needs the binary. The handshake test below needs no working
+//! credential, but the engine will not serve `--mode rpc-ui` until *some* provider key is in
+//! the environment: with none it prints "No models available" and never sends the `ready`
+//! frame. CI sets a placeholder for that reason (`ci.yml`), and so does anything else that
+//! runs this on a machine with no configuration. The prompt test at the bottom needs real
+//! credentials and network, and is separate for that reason.
 //!
 //! ```text
 //! cargo test -p omp-transport --test live_sidecar -- --ignored --nocapture
