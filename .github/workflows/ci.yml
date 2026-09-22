@@ -101,12 +101,15 @@ jobs:
       - name: Stage the pinned sidecar
         run: bun scripts/fetch-sidecar.ts --target linux-x64
 
-      # The settings catalog is generated from three sources — the engine's own `config list`,
-      # the pinned package's schema, and `docs/13` — and the app renders 314 rows from it. This
-      # is the gate that notices an engine bump: it re-runs the generator and fails on any
-      # difference, so a catalog that no longer matches the sidecar can never ship.
-      - name: Settings catalog is current
-        run: bun scripts/gen-settings-catalog.ts --check
+      # The settings catalog is *not* regenerated here. Its fourth input, the mapping
+      # document (`builddocs/13-settings-mapping.md`), is not tracked — the generator reads
+      # the owner's own notes — so a step that runs it can only ever fail on a runner:
+      #
+      #     bun scripts/fetch-sidecar.ts && bun scripts/gen-settings-catalog.ts --check
+      #
+      # is the local equivalent, and the command to run after an engine bump.
+      # `crates/omp-settings/catalog.json` *is* tracked: it is the screen, and its
+      # regeneration is a commit rather than a build step.
 
       - name: Build the frontend
         run: bun install --frozen-lockfile && bun run build
@@ -124,5 +127,8 @@ jobs:
       # The only live test CI can run: the others need provider credentials.
       - name: Live transport test
         env:
-          OMP_BIN: src-tauri/binaries/omp-x86_64-unknown-linux-gnu
+          # Absolute, and it has to be: cargo runs a test binary with its *package* directory
+          # as the working directory, so a repo-relative path here resolves under
+          # `crates/omp-transport/` and the spawn fails with ENOENT.
+          OMP_BIN: ${{ github.workspace }}/src-tauri/binaries/omp-x86_64-unknown-linux-gnu
         run: cargo test -p omp-transport --test live_sidecar -- --ignored --nocapture handshake

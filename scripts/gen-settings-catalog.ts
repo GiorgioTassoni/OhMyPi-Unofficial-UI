@@ -3,7 +3,7 @@
  * Generates `crates/omp-settings/catalog.json` — the machine-readable copy of the settings
  * schema's *presentation* half that the desktop settings screen renders from.
  *
- * Sources, each authoritative for one thing (see `docs/13-settings-mapping.md` and the
+ * Sources, each authoritative for one thing (see `builddocs/13-settings-mapping.md` and the
  * generator contract):
  *
  *   - the pinned tarball  `package/src/config/settings-schema.ts` — the 45 `ui.condition` names
@@ -12,7 +12,7 @@
  *     values are unset;
  *   - the pinned sidecar  `omp config list`          — enum domains (its own type display) and the
  *     engine's tab grouping;
- *   - `docs/13-settings-mapping.md`                  — section, group, control, restart class,
+ *   - `builddocs/13-settings-mapping.md`                  — section, group, control, restart class,
  *     disposition, credentials, the danger list, and each section's blurb.
  *
  * Usage:
@@ -36,7 +36,14 @@ const UI_MEMBER = "package/src/config/settings-ui.ts";
 const SCHEMA_REL = join("src", "config", "settings-schema.ts");
 const UI_REL = join("src", "config", "settings-ui.ts");
 const SIDECAR_REL = join("src-tauri", "binaries", "omp-x86_64-unknown-linux-gnu");
-const DOC_REL = join("docs", "13-settings-mapping.md");
+/**
+ * The mapping document — the generator's only input that is **not** part of this repository.
+ *
+ * It is the owner's own design notes (the ignored `builddocs/` tree), which is why every
+ * consumer of this script that can run in CI must not need it: the catalog it produces is
+ * tracked, the document is not, and a workflow step that reads it can only ever fail.
+ */
+const DOC_REL = join("builddocs", "13-settings-mapping.md");
 const OUT_REL = join("crates", "omp-settings", "catalog.json");
 
 /** Cross-check numbers, all of which must hold or the generator refuses to emit a catalog. */
@@ -275,7 +282,15 @@ function deepEqual(a: unknown, b: unknown): boolean {
  * template literal with interpolation) comes back as `nonliteral`/`interpolated`.
  */
 function parseLiteral(raw: string): Literal {
-	const text = raw.trim().replace(/,\s*$/, "").trim();
+	// `X as const` is how the schema pins a literal against widening; the assertion is
+	// TypeScript, not part of the value, and leaving it on turns a literal into a non-literal
+	// (measured: `dev.autoqaConsent`'s `"unset" as const` failed check 9 on any machine whose
+	// own config had moved the value away from the declared default).
+	const text = raw
+		.trim()
+		.replace(/,\s*$/, "")
+		.replace(/\s+as\s+const\s*$/, "")
+		.trim();
 	if (text === "") return { kind: "nonliteral", raw };
 	if (text === "undefined") return { kind: "nonliteral", raw };
 	if (text === "true") return { kind: "literal", value: true };
@@ -300,7 +315,7 @@ function parseLiteral(raw: string): Literal {
 	}
 	if (text.startsWith("[") || text.startsWith("{")) {
 		try {
-			return { kind: "literal", value: JSON.parse(text.replace(/\s+as\s+const$/, "")) };
+			return { kind: "literal", value: JSON.parse(text) };
 		} catch {
 			return { kind: "nonliteral", raw };
 		}
@@ -523,7 +538,7 @@ interface Doc {
 
 function headingLine(lines: string[], heading: string): number {
 	const index = lines.findIndex((l) => l.trim() === heading);
-	if (index < 0) fail(`docs/13-settings-mapping.md: heading "${heading}" not found`);
+	if (index < 0) fail(`builddocs/13-settings-mapping.md: heading "${heading}" not found`);
 	return index;
 }
 
@@ -535,7 +550,7 @@ function parseDoc(source: string): Doc {
 	const danger = headingLine(lines, "## Keys that must NOT be exposed");
 	const hatch = headingLine(lines, "## Raw config escape hatch");
 	if (!(nav < keyMapping && keyMapping < secrets && secrets < danger && danger < hatch)) {
-		fail("docs/13-settings-mapping.md: sections are not in the expected order");
+		fail("builddocs/13-settings-mapping.md: sections are not in the expected order");
 	}
 
 	// Nav structure bullets: the section list, in emission order, with each section's blurb.
@@ -685,10 +700,16 @@ async function main(): Promise<void> {
 	if (!existsSync(sidecar)) {
 		fail(`pinned sidecar ${SIDECAR_REL} is missing — run \`bun scripts/fetch-sidecar.ts\` first`);
 	}
+	// Named before the batch, because `readFile`'s own ENOENT names an absolute path under
+	// whatever machine ran it and says nothing about *why* the file is not here.
+	const docPath = resolve(REPO_ROOT, DOC_REL);
+	if (!existsSync(docPath)) {
+		fail(`${DOC_REL} is missing\n  it is the generator's fourth input and is not tracked in this repository (it lives in the ignored \`builddocs/\` design notes)`);
+	}
 
 	const [{ schema, ui }, docSource, engineJsonText, enginePlainText] = await Promise.all([
 		loadPackageSources(args.packageDir),
-		readFile(resolve(REPO_ROOT, DOC_REL), "utf8"),
+		readFile(docPath, "utf8"),
 		Promise.resolve(runEngine(["list", "--json"], "omp config list --json")),
 		Promise.resolve(runEngine(["list"], "omp config list")),
 	]);

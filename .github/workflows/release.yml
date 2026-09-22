@@ -76,13 +76,14 @@ jobs:
       - name: Audit the pinned digests
         run: bun scripts/fetch-sidecar.ts --audit
 
-      # The generator *executes* the staged binary (`omp config list`), and its sidecar path is
-      # the linux-x64 triple, so only the Linux runner can run this gate. The catalog it checks
-      # is the engine's own key surface — identical on every platform — so catching an engine
-      # bump once per release is enough.
-      - name: Verify the settings catalog
-        if: matrix.sidecar == 'linux-x64'
-        run: bun scripts/gen-settings-catalog.ts --check
+      # The settings catalog is not verified here, for the same reason CI does not: the
+      # generator's mapping document is not tracked (see `ci.yml`). Cutting a release whose
+      # engine bump moved the key set means running
+      #
+      #     bun scripts/fetch-sidecar.ts --target linux-x64 && bun scripts/gen-settings-catalog.ts --check
+      #
+      # and committing `crates/omp-settings/catalog.json` before tagging. The catalog is the
+      # engine's own key surface, identical on every platform, so it needs one machine.
 
       - name: Build the frontend
         working-directory: frontend
