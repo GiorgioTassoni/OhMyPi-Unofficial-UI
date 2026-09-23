@@ -13,12 +13,14 @@ import type { AttachmentSnapshot, RowSnapshot } from "../bridge";
 import Icon from "./ui/Icon.vue";
 import MarkdownBody from "./MarkdownBody.vue";
 import ToolCard from "./ToolCard.vue";
+import { systemNotice } from "../lib/systemNotice";
 
 const props = defineProps<{ row: RowSnapshot }>();
 /** A link the host refused to open, for the window's error banner. */
 const emit = defineEmits<{ (event: "failed", message: string): void }>();
 
 const isNotice = computed(() => props.row.role.startsWith("notice:"));
+const agentNotice = computed(() => systemNotice(props.row));
 /** `notice:warning` reads as `warning`; the level is the line's tint. */
 const level = computed(() => (isNotice.value ? props.row.role.slice(7) : ""));
 const copied = ref(false);
@@ -66,9 +68,23 @@ function source(attachment: AttachmentSnapshot): string {
 </script>
 
 <template>
+  <!-- A delivery sent to the agent is distinct from both its answer and app status. -->
+  <details
+    v-if="agentNotice"
+    class="group/system my-1 min-w-0 overflow-hidden rounded-[9px] border border-line/60 bg-raised/35"
+  >
+    <summary class="flex min-w-0 cursor-pointer list-none items-center gap-2 px-3 py-2 text-[12px] text-dim select-none hover:bg-raised/55 [&::-webkit-details-marker]:hidden">
+      <Icon name="bell" class="h-3.5 w-3.5 shrink-0 text-accent" />
+      <span class="shrink-0 font-medium text-fg">System notification</span>
+      <span class="min-w-0 truncate text-faint">{{ agentNotice.headline }}</span>
+      <Icon name="chevron-down" class="ml-auto h-3 w-3 shrink-0 text-faint transition-transform group-open/system:rotate-180" />
+    </summary>
+    <pre class="max-h-72 overflow-auto border-t border-line/50 px-3 py-2.5 whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-dim select-text">{{ agentNotice.body }}</pre>
+  </details>
+
   <!-- A user turn: right-aligned, so a long thread reads as a dialogue rather
        than one column of prose. -->
-  <div v-if="row.role === 'user'" class="flex flex-col items-end gap-1.5 my-1">
+  <div v-else-if="row.role === 'user'" class="flex flex-col items-end gap-1.5 my-1">
     <div v-if="row.attachments.length > 0" class="flex flex-wrap justify-end gap-1.5">
       <img
         v-for="(attachment, index) in row.attachments"
@@ -103,7 +119,7 @@ function source(attachment: AttachmentSnapshot): string {
         class="flex items-center gap-1.5 cursor-pointer select-none text-[12px] font-medium text-faint transition-colors hover:text-dim list-none"
       >
         <Icon name="brain" class="h-3.5 w-3.5 text-faint" />
-        <span>Thought</span>
+        <span>{{ row.streaming && !row.text ? "Thinking…" : "Thought" }}</span>
         <Icon name="chevron-right" class="h-3 w-3 text-faint transition-transform group-open:rotate-90" />
       </summary>
       <div
@@ -112,6 +128,15 @@ function source(attachment: AttachmentSnapshot): string {
         {{ row.thinking }}
       </div>
     </details>
+    <div
+      v-else-if="row.streaming && !row.text"
+      class="my-0.5 flex items-center gap-1.5 text-[12px] font-medium text-faint"
+      role="status"
+      aria-live="polite"
+    >
+      <Icon name="brain" class="h-3.5 w-3.5" />
+      <span>Thinking…</span>
+    </div>
 
     <div v-if="row.text" class="group/message flex flex-col gap-1.5">
       <div class="text-[13.5px] leading-relaxed text-fg select-text">

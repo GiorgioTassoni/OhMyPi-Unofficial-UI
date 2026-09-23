@@ -21,6 +21,7 @@
  *    front of the reader, which is the difference between a working search and a list.
  */
 import { computed, nextTick, onMounted, provide, ref, watch } from "vue";
+import type { AppTheme } from "../lib/appTheme";
 
 import {
   resetSetting,
@@ -61,6 +62,9 @@ const props = defineProps<{
   refreshing: boolean;
   /** The active session's approval mode, for the General section's mode row. */
   mode: string | null;
+  /** App-owned preference; unlike OMP settings, this takes effect without a restart. */
+  notificationSoundEnabled: boolean;
+  appTheme: AppTheme;
 }>();
 
 const emit = defineEmits<{
@@ -72,6 +76,8 @@ const emit = defineEmits<{
   favourites: [keys: string[]];
   /** A failure with nowhere on the row to show it. */
   failed: [message: string];
+  notificationSound: [enabled: boolean];
+  appTheme: [theme: AppTheme];
 }>();
 
 /** What the controls below need from the shell. Provided, not threaded through four levels. */
@@ -325,12 +331,16 @@ function describe(cause: unknown): string {
               :errors="errors"
               :highlight="highlight"
               :locate="needsOf"
+              :notification-sound-enabled="props.notificationSoundEnabled"
+              :app-theme="props.appTheme"
               @write="(row: SettingsRow, value: unknown) => request(row, value, false)"
               @reset="request($event, null, true)"
               @restart="restart"
               @navigate="goTo"
               @action="dispatch"
               @changed="onChanged"
+              @notification-sound="emit('notificationSound', $event)"
+              @app-theme="emit('appTheme', $event)"
             />
 
             <!--

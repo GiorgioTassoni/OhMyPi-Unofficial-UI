@@ -35,6 +35,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use omp_store::listing;
 
@@ -183,6 +184,107 @@ fn advisor_of(id: &str) -> (bool, Option<String>) {
 /// Generous for a command that lists files and reads pid files, and short enough that a
 /// wedged broker (the very thing this view exists to find) cannot hold a panel open.
 const PS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// OMP's default daemon-broker idle grace is three seconds. Give brokers used by this app
+/// a little longer to finish their own graceful shutdown before an AppImage unmounts the
+/// executable they were launched from.
+const APPIMAGE_BROKER_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Let project brokers used by this app exit normally before an AppImage is unmounted.
+///
+/// The broker is deliberately not killed here: it may own work another OMP client is
+/// using. `omp ps --json --dir` only observes an existing broker; closing that brief
+/// inspection connection starts the broker's normal idle-shutdown timer. Persistent work
+/// is never stopped; if it keeps the broker alive past the bound, the broker is left alone.
+#[cfg(target_os = "linux")]
+pub async fn wait_for_appimage_brokers(workspaces: &[String]) {
+    if std::env::var_os("APPIMAGE").is_none() {
+        return;
+    }
+
+    let mut pids = std::collections::HashSet::new();
+    for cwd in workspaces {
+        match project_broker_for_shutdown(cwd).await {
+            Ok(Some(scope)) => {
+                if let Some(pid) = scope.broker_pid {
+                    pids.insert(pid);
+                }
+            }
+            Ok(None) => {}
+            Err(error) => eprintln!("[omp-desktop] could not inspect broker during exit: {error}"),
+        }
+    }
+
+    if pids.is_empty() {
+        return;
+    }
+
+    let deadline = Instant::now() + APPIMAGE_BROKER_EXIT_TIMEOUT;
+    while pids.iter().any(|pid| daemon_broker_is_running(*pid)) && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(75)).await;
+    }
+
+    let still_running: Vec<_> = pids
+        .into_iter()
+        .filter(|pid| daemon_broker_is_running(*pid))
+        .collect();
+    if !still_running.is_empty() {
+        eprintln!(
+            "[omp-desktop] OMP broker(s) {still_running:?} did not exit before the AppImage shutdown timeout; leaving them running"
+        );
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub async fn wait_for_appimage_brokers(_workspaces: &[String]) {}
+
+#[cfg(target_os = "linux")]
+async fn project_broker_for_shutdown(cwd: &str) -> Result<Option<BrokerScope>, String> {
+    let binary = omp_transport::sidecar::resolve_omp_binary();
+    let mut command = tokio::process::Command::new(binary);
+    command
+        .arg("ps")
+        .arg("--json")
+        .arg("--dir")
+        .arg(cwd)
+        .current_dir(cwd)
+        .kill_on_drop(true)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let output = tokio::time::timeout(Duration::from_secs(2), command.output())
+        .await
+        .map_err(|_| "`omp ps` did not answer during shutdown".to_string())?
+        .map_err(|error| format!("could not run `omp ps` during shutdown: {error}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "`omp ps` exited with {} during shutdown: {}",
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    let expected = std::fs::canonicalize(cwd).unwrap_or_else(|_| Path::new(cwd).to_path_buf());
+    Ok(decode_scopes(&output.stdout)?.into_iter().find(|scope| {
+        scope.kind == "project"
+            && std::fs::canonicalize(&scope.project_dir)
+                .unwrap_or_else(|_| Path::new(&scope.project_dir).to_path_buf())
+                == expected
+    }))
+}
+
+#[cfg(target_os = "linux")]
+fn daemon_broker_is_running(pid: u64) -> bool {
+    let command_line = match std::fs::read(format!("/proc/{pid}/cmdline")) {
+        Ok(command_line) => command_line,
+        Err(_) => return false,
+    };
+    command_line
+        .split(|byte| *byte == 0)
+        .any(|argument| argument == b"__omp_worker_daemon_broker")
+}
 
 /// Every broker-scoped process the engine knows about, across all projects.
 ///

@@ -7,7 +7,7 @@
  * verb, because the verb is a UI decision: the app's own config file is reached by the app's
  * own raw-config section rather than by handing the path to the OS, and the approval mode is
  * changed where its confirmation lives — the mode popover, which writes the key *and* restarts
- * the sidecar, so a change here does not drop a running turn silently.
+ * the sidecar after any running turn finishes.
  *
  * An action this build has never heard of says so, in place of a button. A control that did
  * nothing when pressed would be indistinguishable from one that worked.

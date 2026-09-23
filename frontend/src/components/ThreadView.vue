@@ -10,7 +10,7 @@
  * the rows arrive as patches, the dialogs and the command list arrive as sets. Nothing is
  * remembered separately, so a chip cannot disagree with the session it describes.
  */
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
 import {
   availableCommands,
   type SearchHit,
@@ -38,9 +38,18 @@ import Composer from "./Composer.vue";
 import ConversationRow from "./ConversationRow.vue";
 import DialogPanel from "./DialogPanel.vue";
 import Icon from "./ui/Icon.vue";
+import TurnFiles from "./TurnFiles.vue";
+import TurnActivity from "./TurnActivity.vue";
+import MeasuredTurn from "./MeasuredTurn.vue";
+import type { TurnFileSummary } from "../lib/panel";
+import { initialProjection, projectTranscript, type TranscriptProjection } from "../lib/transcriptCache";
+import { estimatedTurnHeight, turnContainingRow, turnLayout, visibleTurns } from "../lib/virtualTurns";
+import { createDisclosureMemory } from "../lib/disclosureMemory";
 
 const props = defineProps<{
   thread: string;
+  /** Whether this mounted thread is the conversation currently on screen. */
+  active: boolean;
   /** App-wide model state, which the chips render from. */
   models: ModelOption[];
   refreshing: boolean;
@@ -75,10 +84,13 @@ const emit = defineEmits<{
   /** The folder chip asked for a terminal: the app's own shell, in this session's directory. */
   terminal: [path: string];
   favourites: [keys: string[]];
+  review: [summary: TurnFileSummary];
 }>();
 
 const status = ref<SessionStatus | null>(null);
-const rows = ref<RowSnapshot[]>([]);
+const rows = shallowRef<RowSnapshot[]>([]);
+const projection = shallowRef<TranscriptProjection>({ turns: [], summaries: new Map() });
+const disclosureMemory = createDisclosureMemory();
 const dialogs = ref<UiRequestSnapshot[]>([]);
 const activity = ref<ActivitySnapshot[]>([]);
 const commands = ref<CommandEntry[]>([]);
@@ -98,6 +110,25 @@ const STATUS_INTERVAL = 250;
 let unlisten: UnlistenFn[] = [];
 let lastStatusRead = 0;
 let trailing: ReturnType<typeof setTimeout> | null = null;
+
+/** A reset discards measurements; a patch retains the untouched turn prefix. */
+function replaceTranscript(next: RowSnapshot[]): void {
+  rows.value = next;
+  projection.value = initialProjection(next, streaming.value);
+  measuredHeights.value = new Map();
+}
+
+function patchTranscript(next: RowSnapshot[], from: number): void {
+  const previousTurns = projection.value.turns;
+  const affected = turnContainingRow(previousTurns, Math.min(from, Math.max(0, rows.value.length - 1)));
+  if (affected >= 0 && affected < previousTurns.length - 1) {
+    const cutoff = previousTurns[affected].start;
+    const stable = new Map([...measuredHeights.value].filter(([start]) => start < cutoff));
+    measuredHeights.value = stable;
+  }
+  projection.value = projectTranscript(projection.value, next, streaming.value, from);
+  rows.value = next;
+}
 
 onMounted(async () => {
   unlisten = await Promise.all([
@@ -121,7 +152,11 @@ onMounted(async () => {
   // command list at startup, before this window can hear either.
   try {
     status.value = await threadStatus(props.thread);
-    rows.value = await readTranscript(props.thread);
+    replaceTranscript(await readTranscript(props.thread));
+    // A resumed conversation is rendered above the composer; open at its latest
+    // message, after Vue has put the restored rows into the scroll container.
+    await nextTick();
+    if (props.active) scrollToLatest();
     dialogs.value = await readUiRequests(props.thread);
     commands.value = await availableCommands(props.thread).catch(() => []);
   } catch (cause) {
@@ -145,14 +180,14 @@ async function applyPatch(patch: RowPatch): Promise<void> {
   const outcome = applyRowPatch(rows.value, patch);
   if (!outcome.stale) {
     const follow = isAtBottom();
-    rows.value = outcome.rows;
+    patchTranscript(outcome.rows, patch.from);
     if (follow) followAfterRender();
     return;
   }
 
   const recovered = await readTranscript(props.thread).catch(() => rows.value);
   const follow = isAtBottom();
-  rows.value = recovered;
+  replaceTranscript(recovered);
   if (follow) followAfterRender();
 }
 
@@ -187,7 +222,7 @@ async function refreshStatus(): Promise<void> {
 async function onChanged(): Promise<void> {
   try {
     status.value = await threadStatus(props.thread);
-    rows.value = await readTranscript(props.thread);
+    replaceTranscript(await readTranscript(props.thread));
     activity.value = [];
   } catch (cause) {
     emit("failed", describe(cause));
@@ -227,6 +262,11 @@ const chips = computed<ChipRow>(() => ({
 /** What the composer needs to know about the turn in flight. */
 const streaming = computed(() => status.value?.control.isStreaming ?? false);
 const queued = computed(() => status.value?.control.queuedMessageCount ?? 0);
+const fileSummaries = computed(() => projection.value.summaries);
+const turns = computed(() => projection.value.turns);
+watch(streaming, () => {
+  if (rows.value.length > 0) projection.value = projectTranscript(projection.value, rows.value, streaming.value, rows.value.length);
+});
 /** The turn has started, but the engine has not produced a row the reader can follow yet. */
 const waitingForOutput = computed(
   () => streaming.value && !rows.value.some((row) => row.streaming),
@@ -246,14 +286,12 @@ watch(waitingForOutput, (waiting) => {
 async function reload(): Promise<void> {
   try {
     status.value = await threadStatus(props.thread);
-    rows.value = await readTranscript(props.thread);
+    replaceTranscript(await readTranscript(props.thread));
   } catch (cause) {
     emit("failed", describe(cause));
   }
 }
 
-/** The rendered row elements, so a search hit can be scrolled to. */
-const rowElements = ref<(HTMLElement | null)[]>([]);
 /** The row a jump landed on, flashed briefly so the eye can find it. */
 const flashed = ref<number | null>(null);
 
@@ -313,12 +351,46 @@ async function revealRow(at: number | null): Promise<void> {
     }
   }
 
+  const turnIndex = turnContainingRow(turns.value, at);
+  const el = conversationRef.value;
+  if (turnIndex < 0 || !el) return;
+  viewportTop.value = layout.value.offsets[turnIndex];
+  el.scrollTop = viewportTop.value;
   await nextTick();
-  rowElements.value[at]?.scrollIntoView({ block: "center" });
+  const turnRoot = el.querySelector<HTMLElement>(`[data-turn-start="${turns.value[turnIndex].start}"]`);
+  if (!turnRoot) return;
+  const activityItem = turns.value[turnIndex].items.find((item) =>
+    item.kind === "group" ? item.group.rows.some((entry) => entry.index === at) : item.entry.index === at);
+  if (activityItem) {
+    const work = turnRoot.querySelector<HTMLDetailsElement>("[data-turn-activity]");
+    if (work) openDetails(work);
+    await nextTick();
+  }
+  const group = activityItem?.kind === "group" ? activityItem : null;
+  if (group && group.kind === "group") {
+    const groupElement = turnRoot.querySelector<HTMLDetailsElement>(`[data-group-index="${group.index}"]`);
+    if (groupElement) openDetails(groupElement);
+    await nextTick();
+  }
+  const target = el.querySelector<HTMLElement>(`[data-row-index="${at}"]`);
+  if (!target) return;
+  if (target instanceof HTMLDetailsElement) openDetails(target);
+  for (let parent = target.parentElement; parent && parent !== conversationRef.value; parent = parent.parentElement) {
+    if (parent instanceof HTMLDetailsElement) openDetails(parent);
+  }
+  await nextTick();
+  target.scrollIntoView({ block: "center" });
   flashed.value = at;
   setTimeout(() => {
     if (flashed.value === at) flashed.value = null;
   }, 1500);
+}
+
+/** Programmatic jumps must wake lazily mounted details before locating their row. */
+function openDetails(element: HTMLDetailsElement): void {
+  if (element.open) return;
+  element.open = true;
+  element.dispatchEvent(new Event("toggle"));
 }
 
 /** The composer, for the one op that has to reach into it. */
@@ -337,6 +409,57 @@ function setDraft(text: string): void {
 
 const conversationRef = ref<HTMLElement | null>(null);
 const isScrolledUp = ref(false);
+const viewportTop = ref(0);
+const viewportHeight = ref(800);
+const measuredHeights = shallowRef<Map<number, number>>(new Map());
+const layout = computed(() => turnLayout(turns.value, measuredHeights.value, (end) => fileSummaries.value.has(end)));
+const visible = computed(() => visibleTurns(layout.value, viewportTop.value, viewportHeight.value));
+const visibleTurnEntries = computed(() => turns.value.slice(visible.value.start, visible.value.end));
+let viewportObserver: ResizeObserver | null = null;
+
+onMounted(() => {
+  const el = conversationRef.value;
+  if (!el) return;
+  viewportHeight.value = el.clientHeight || viewportHeight.value;
+  if (typeof ResizeObserver !== "undefined") {
+    viewportObserver = new ResizeObserver(() => {
+      viewportHeight.value = el.clientHeight || viewportHeight.value;
+      viewportTop.value = el.scrollTop;
+    });
+    viewportObserver.observe(el);
+  }
+});
+onUnmounted(() => viewportObserver?.disconnect());
+
+function onTurnMeasured(start: number, height: number): void {
+  const index = turnContainingRow(turns.value, start);
+  if (index < 0) return;
+  const previous = measuredHeights.value.get(start)
+    ?? estimatedTurnHeight(turns.value[index], fileSummaries.value.has(turns.value[index].end));
+  if (Math.abs(previous - height) < 0.5) return;
+  const above = layout.value.offsets[index + 1] <= viewportTop.value;
+  const next = new Map(measuredHeights.value);
+  next.set(start, height);
+  measuredHeights.value = next;
+  const el = conversationRef.value;
+  if (!el) return;
+  if (above && isScrolledUp.value) {
+    el.scrollTop += height - previous;
+    viewportTop.value = el.scrollTop;
+  } else if (!isScrolledUp.value) followAfterRender();
+}
+
+// Live views remain mounted while hidden. Returning to one should show its latest
+// message even if its old scroll position was somewhere in the history.
+watch(
+  () => props.active,
+  async (active) => {
+    if (!active) return;
+    await nextTick();
+    if (props.active) scrollToLatest();
+  },
+  { flush: "post" },
+);
 
 /** A little tolerance absorbs fractional layout pixels without treating a reader as scrolled. */
 const BOTTOM_TOLERANCE = 2;
@@ -348,7 +471,24 @@ function isAtBottom(): boolean {
 }
 
 function onScroll(): void {
+  const el = conversationRef.value;
+  if (el) {
+    viewportTop.value = el.scrollTop;
+    viewportHeight.value = el.clientHeight || viewportHeight.value;
+  }
   isScrolledUp.value = !isAtBottom();
+}
+
+/** Opening a conversation jumps immediately; the button below keeps its smooth scroll. */
+function scrollToLatest(): void {
+  const el = conversationRef.value;
+  if (!el) return;
+  viewportTop.value = Math.max(0, layout.value.total - viewportHeight.value);
+  void nextTick(() => {
+    el.scrollTop = el.scrollHeight;
+    viewportTop.value = el.scrollTop;
+  });
+  isScrolledUp.value = false;
 }
 
 /** Keep a reader who was at the tail pinned there as streamed rows change height. */
@@ -356,13 +496,20 @@ function followAfterRender(): void {
   void nextTick(() => {
     if (isScrolledUp.value) return;
     const el = conversationRef.value;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el) {
+      viewportTop.value = Math.max(0, layout.value.total - viewportHeight.value);
+      void nextTick(() => {
+        el.scrollTop = el.scrollHeight;
+        viewportTop.value = el.scrollTop;
+      });
+    }
   });
 }
 
 function scrollToBottom(): void {
   const el = conversationRef.value;
   if (!el) return;
+  viewportTop.value = Math.max(0, layout.value.total - viewportHeight.value);
   el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
 }
 
@@ -415,21 +562,37 @@ defineExpose({
         <p class="mt-2 text-[13px] text-faint">A fresh thread — nothing said yet.</p>
       </div>
 
-      <div v-else class="mx-auto flex w-full max-w-[46rem] flex-col gap-3 py-4">
-        <!--
-          Each row is wrapped so a search hit has an element to scroll to: a component ref hands
-          back its exposed proxy, not the node, and `scrollIntoView` needs the node.
-        -->
-        <div
-          v-for="(row, index) in rows"
-          :key="index"
-          :ref="(element) => (rowElements[index] = (element as HTMLElement | null))"
-          class="shrink-0 rounded-[8px] transition-colors duration-500"
-          :class="flashed === index ? 'bg-accent/10 ring-1 ring-accent' : ''"
-          :data-flash="flashed === index ? 'on' : null"
-        >
-          <ConversationRow :row="row" @failed="emit('failed', $event)" />
-        </div>
+      <div v-else class="mx-auto w-full max-w-[46rem] py-4">
+        <div aria-hidden="true" :style="{ height: `${visible.before}px` }" />
+        <MeasuredTurn v-for="turn in visibleTurnEntries" :key="turn.start" :start="turn.start" @measured="onTurnMeasured">
+        <article class="flex min-w-0 flex-col gap-2 border-line/50" :class="turn.start === turns[0]?.start ? '' : 'border-t pt-4'">
+          <div
+            v-if="turn.user"
+            class="shrink-0 rounded-[8px] transition-colors duration-500"
+            :class="flashed === turn.user.index ? 'bg-accent/10 ring-1 ring-accent' : ''"
+            :data-row-index="turn.user.index"
+          >
+            <ConversationRow :row="turn.user.row" @failed="emit('failed', $event)" />
+          </div>
+          <TurnActivity :turn="turn" :flashed="flashed" :memory="disclosureMemory" @failed="emit('failed', $event)" />
+          <div
+            v-if="turn.answer"
+            class="shrink-0 rounded-[8px] transition-colors duration-500"
+            :class="flashed === turn.answer.index ? 'bg-accent/10 ring-1 ring-accent' : ''"
+            :data-row-index="turn.answer.index"
+          >
+            <ConversationRow :row="turn.answer.row" @failed="emit('failed', $event)" />
+          </div>
+          <TurnFiles
+            v-if="fileSummaries.get(turn.end)"
+            :summary="fileSummaries.get(turn.end)!"
+            :workspace="status?.workspace ?? null"
+            @jump="revealRow"
+            @review="emit('review', $event)"
+          />
+        </article>
+        </MeasuredTurn>
+        <div aria-hidden="true" :style="{ height: `${visible.after}px` }" />
 
         <p
           v-if="waitingForOutput"

@@ -11,8 +11,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   APPROVE,
-  allowEffect,
   approvalOf,
+  commandProgram,
   formatRemaining,
   parseApprovalPrompt,
   remainingMs,
@@ -20,6 +20,20 @@ import {
 
 const BASH = "Allow tool: bash\nCommand: touch /tmp/probe-bash.txt";
 const WRITE = "Allow tool: write\nPath: /tmp/probe-write.txt\nContent:\nhello probe";
+
+describe("commandProgram", () => {
+  test("names the executable, not the shell tool or its arguments", () => {
+    expect(commandProgram('node check-index.js; echo "exit:$?"')).toBe("node");
+    expect(commandProgram("/usr/bin/node check-index.js")).toBe("node");
+    expect(commandProgram("'node' check-index.js")).toBe("node");
+  });
+
+  test("does not offer a program grant for ambiguous command prefixes", () => {
+    for (const command of ["", "VAR=1 node index.js", "| node index.js", "$(node index.js)"]) {
+      expect(commandProgram(command)).toBeNull();
+    }
+  });
+});
 
 describe("parseApprovalPrompt", () => {
   test("reads the bash approval the engine sent", () => {
@@ -142,16 +156,5 @@ describe("formatRemaining", () => {
   test("seconds while the wait is short, minutes when it is long", () => {
     expect(formatRemaining(42_000)).toBe("resolves itself in 42s unless you answer");
     expect(formatRemaining(600_000)).toBe("resolves itself in 10m unless you answer");
-  });
-});
-
-describe("allowEffect", () => {
-  test("says both halves: saved for new sessions, still asking in this one", () => {
-    // The measured behaviour (the write is not live) is the whole reason this copy
-    // exists: a single promise would be a lie the next prompt exposes.
-    const copy = allowEffect("bash");
-    expect(copy).toContain("bash");
-    expect(copy).toContain("new sessions");
-    expect(copy).toContain("keeps asking");
   });
 });

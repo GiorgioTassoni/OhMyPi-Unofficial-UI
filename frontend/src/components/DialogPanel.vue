@@ -14,12 +14,11 @@
  * the engine's `formatApprovalDetails` is the decision about what a user needs to
  * see (`lib/approval.ts` reads it).
  *
- * "Always allow" is the one action that outlives its dialog, and the one with a
- * caveat: the write is not live (`docs/12` §10), so the grant is kept on screen
- * after the decision, saying what it will and will not change.
+ * Tool-level "Always allow" persists in OMP; executable grants stay on this conversation.
  */
 import { computed, onUnmounted, ref, watch } from "vue";
 import {
+  allowCommand as grantCommand,
   allowTool,
   respondUiRequest,
   type UiAnswer,
@@ -27,8 +26,8 @@ import {
 } from "../bridge";
 import {
   APPROVE,
-  allowEffect,
   approvalOf,
+  commandProgram,
   formatRemaining,
   remainingMs,
 } from "../lib/approval";
@@ -52,20 +51,18 @@ const now = ref(Date.now());
 const answering = ref<Record<string, boolean>>({});
 /** The dialog whose "always allow" write is in flight. */
 const writing = ref<string | null>(null);
-/** Tool names allowed from the next session, in the order they were granted. */
-const granted = ref<string[]>([]);
 
 /**
  * The two buttons a dialog has.
  *
- * A dialog answers an engine question, so one of them *is* the answer: the first option the
- * engine sent takes the accent, and everything else stays quiet until it is hovered — which is
- * also what keeps an unfamiliar prompt from being answered by accident.
+ * A generic dialog answers an engine question using the engine's own options.
  */
 const PRIMARY =
   "rounded-[6px] bg-accent px-2.5 py-1 text-[12px] font-medium text-canvas disabled:opacity-40";
 const SECONDARY =
   "rounded-[6px] px-2.5 py-1 text-[12px] text-dim hover:bg-raised hover:text-fg disabled:opacity-40";
+const APPROVAL_BUTTON =
+  "min-h-[38px] rounded-[7px] px-3 py-1.5 text-[12px] font-medium transition-colors hover:bg-line-strong/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40";
 
 watch(
   () => props.dialogs,
@@ -140,18 +137,23 @@ onUnmounted(() => {
 const cards = computed(() =>
   props.dialogs.map((dialog) => {
     const left = remainingMs(dialog.timeoutMs, seenAt.value[dialog.id] ?? now.value, now.value);
+    const approval = approvalOf(dialog);
+    const command = approval?.fields.find((field) => field.label === "Command")?.value ?? null;
     return {
       dialog,
-      approval: approvalOf(dialog),
+      approval,
+      command,
+      program: approval !== null && isCommandApproval(approval.tool) && command !== null
+        ? commandProgram(command)
+        : null,
       deadline: left === null ? null : formatRemaining(left),
       busy: answering.value[dialog.id] === true,
     };
   }),
 );
 
-/** The engine's labels, shown as ours: the wire value is sent back verbatim. */
-function label(option: string): string {
-  return option === APPROVE ? "approve" : "deny";
+function isCommandApproval(tool: string): boolean {
+  return tool === "bash" || tool === "bash_interactive";
 }
 
 async function answer(dialog: UiRequestSnapshot, reply: UiAnswer): Promise<void> {
@@ -174,20 +176,32 @@ async function answer(dialog: UiRequestSnapshot, reply: UiAnswer): Promise<void>
 }
 
 /**
- * Answer this call *and* stop the next one asking.
+ * Answer this call and later matching requests in this session.
  *
  * The write goes first: if it fails, nothing has been approved and the dialog is
- * still there for the user to decide on its own. The grant is then recorded and
- * stays on screen after the dialog is gone, because the running session keeps
- * asking — the one thing the user cannot see for themselves.
+ * still there for the user to decide on its own.
  */
 async function allow(dialog: UiRequestSnapshot, tool: string): Promise<void> {
   writing.value = dialog.id;
   try {
-    const outcome = await allowTool(tool);
-    if (!granted.value.includes(outcome.tool)) {
-      granted.value = [...granted.value, outcome.tool];
-    }
+    await allowTool(props.thread, tool);
+  } catch (cause) {
+    emit("failed", describe(cause));
+    return;
+  } finally {
+    writing.value = null;
+  }
+  await answer(dialog, { value: APPROVE });
+}
+
+/** Store a conversation-local executable grant before approving this call. */
+async function allowCommandForConversation(
+  dialog: UiRequestSnapshot,
+  command: string,
+): Promise<void> {
+  writing.value = dialog.id;
+  try {
+    await grantCommand(props.thread, command);
   } catch (cause) {
     emit("failed", describe(cause));
     return;
@@ -208,30 +222,33 @@ function describe(cause: unknown): string {
 </script>
 
 <template>
-  <!--
-    A grant outlives the dialog that produced it, so the panel cannot be keyed on the
-    pending set alone: answering the last dialog would take the one line explaining
-    what was just granted with it.
-  -->
-  <div v-if="cards.length > 0 || granted.length > 0" class="flex flex-col gap-3 select-text" data-dialog-panel>
+  <div v-if="cards.length > 0" class="flex flex-col gap-3 select-text" data-dialog-panel>
     <section
       v-for="(card, index) in cards"
       :key="card.dialog.id"
-      class="rounded-[10px] border border-warn/40 bg-warn/5 p-3.5"
+      class="rounded-[10px] border p-3.5"
+      :class="card.approval && isCommandApproval(card.approval.tool)
+        ? 'border-line-strong/70 bg-selected/60'
+        : 'border-warn/40 bg-warn/5'"
     >
-      <!-- An approval's first line is its subject, so that is what leads the card. -->
-      <header class="mb-2.5 flex items-center gap-2">
-        <span class="text-[10.5px] font-medium uppercase tracking-[0.09em] text-warn">
-          needs you
+      <header class="mb-3 flex items-center gap-2">
+        <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
+        <span v-if="card.command && card.approval && isCommandApproval(card.approval.tool)" class="text-[12.5px] font-medium text-fg">
+          The agent wants to run
         </span>
-        <span v-if="card.approval" class="font-mono text-[12px] text-accent">
-          {{ card.approval.tool }}
-        </span>
-        <span v-else class="text-[12px] text-dim">{{ card.dialog.kind }}</span>
-        <span v-if="cards.length > 1" class="text-[11px] text-faint">
+        <template v-else>
+          <span class="text-[11px] font-medium text-warn">Needs approval</span>
+          <span v-if="card.approval" class="text-[12.5px] font-medium text-fg">
+            {{ card.approval.tool }}
+          </span>
+          <span v-else class="text-[12px] text-dim">{{ card.dialog.kind }}</span>
+        </template>
+        <span v-if="cards.length > 1" class="ml-auto text-[11px] text-faint">
           {{ index + 1 }} of {{ cards.length }}
         </span>
-        <span class="ml-auto font-mono text-[10.5px] text-faint">{{ card.dialog.id }}</span>
+        <span v-else-if="!card.approval" class="ml-auto font-mono text-[10.5px] text-faint">
+          {{ card.dialog.id }}
+        </span>
       </header>
 
       <!-- An approval, as the engine laid it out. -->
@@ -244,14 +261,26 @@ function describe(cause: unknown): string {
         </p>
 
         <!-- The engine's own argument field names, one readout per line. -->
-        <dl class="mt-1 flex flex-col">
+        <dl class="flex flex-col gap-2">
           <div
             v-for="(field, position) in card.approval.fields"
             :key="position"
-            class="flex items-start justify-between gap-4 py-1.5"
+            :class="
+              field.label === 'Command' && isCommandApproval(card.approval.tool)
+                ? 'rounded-[7px] bg-canvas/70 px-3 py-2.5'
+                : 'flex items-start justify-between gap-4 py-1'
+            "
           >
-            <dt class="text-[12.5px] text-fg">{{ field.label }}</dt>
-            <dd class="break-all font-mono text-[11.5px] text-dim">{{ field.value }}</dd>
+            <template v-if="field.label === 'Command' && isCommandApproval(card.approval.tool)">
+              <dt class="sr-only">Command</dt>
+              <dd class="whitespace-pre-wrap break-words font-mono not-italic text-[12px] leading-relaxed text-fg">
+                {{ field.value }}
+              </dd>
+            </template>
+            <template v-else>
+              <dt class="text-[12.5px] text-fg">{{ field.label }}</dt>
+              <dd class="max-w-[82%] break-all font-mono text-[11.5px] text-dim">{{ field.value }}</dd>
+            </template>
           </div>
         </dl>
 
@@ -273,37 +302,47 @@ function describe(cause: unknown): string {
           {{ note }}
         </p>
 
-        <div class="mt-3 flex flex-wrap items-center gap-1.5">
-          <!-- The engine's own labels decide the order, and are sent back verbatim. -->
+        <div class="mt-3 flex flex-wrap items-center gap-2">
           <button
-            v-for="(option, position) in card.dialog.options"
-            :key="option"
-            :disabled="card.busy"
-            :class="
-              position === 0
-                ? PRIMARY
-                : 'rounded-[6px] px-2.5 py-1 text-[12px] text-dim hover:bg-raised hover:text-err disabled:opacity-40'
-            "
-            @click="answer(card.dialog, { value: option })"
-          >
-            {{ label(option) }}
-          </button>
-
-          <button
+            v-if="isCommandApproval(card.approval.tool) && card.program && card.command"
             :disabled="card.busy || writing === card.dialog.id"
-            class="rounded-[6px] px-2 py-1 text-[11.5px] text-dim hover:bg-raised hover:text-fg disabled:opacity-40"
+            :class="[APPROVAL_BUTTON, 'inline-flex items-center text-fg']"
+            @click="allowCommandForConversation(card.dialog, card.command)"
+          >
+            <span class="inline-flex items-baseline gap-2">
+              <span>Always allow</span>
+              <span class="font-mono font-medium not-italic text-warn/80">{{ card.program }}</span>
+            </span>
+          </button>
+          <button
+            v-if="!isCommandApproval(card.approval.tool)"
+            :disabled="card.busy || writing === card.dialog.id"
+            :class="[APPROVAL_BUTTON, 'text-fg']"
             @click="allow(card.dialog, card.approval.tool)"
           >
-            always allow {{ card.approval.tool }}
+            Always allow {{ card.approval.tool }}
           </button>
-
           <button
-            class="ml-auto rounded-[6px] px-2 py-1 text-[11.5px] text-faint hover:bg-raised hover:text-fg"
-            @click="answer(card.dialog, { cancelled: true })"
+            :disabled="card.busy || writing === card.dialog.id"
+            :class="[APPROVAL_BUTTON, 'text-fg']"
+            @click="answer(card.dialog, { value: APPROVE })"
           >
-            dismiss
+            Allow once
+          </button>
+          <button
+            :disabled="card.busy || writing === card.dialog.id"
+            :class="[APPROVAL_BUTTON, 'text-err/80']"
+            @click="answer(card.dialog, { value: card.dialog.options[1] })"
+          >
+            Deny
           </button>
         </div>
+        <p
+          v-if="isCommandApproval(card.approval.tool) && card.program"
+          class="mt-1.5 text-[11px] text-dim"
+        >
+          Always allow applies to this conversation.
+        </p>
       </template>
 
       <!-- Any other dialog: the engine's text, and a control that answers it. -->
@@ -384,20 +423,5 @@ function describe(cause: unknown): string {
       </p>
     </section>
 
-    <!--
-      What "always allow" did. It outlives the dialog because the running session
-      keeps asking (measured): a user told nothing would read the next prompt as the
-      button having failed.
-    -->
-    <div v-if="granted.length > 0" class="rounded-[10px] border border-line bg-surface p-3.5">
-      <p class="text-[10.5px] font-medium uppercase tracking-[0.09em] text-faint">recorded</p>
-      <p
-        v-for="tool in granted"
-        :key="tool"
-        class="mt-1.5 text-[12px] leading-relaxed text-dim"
-      >
-        {{ allowEffect(tool) }}
-      </p>
-    </div>
   </div>
 </template>

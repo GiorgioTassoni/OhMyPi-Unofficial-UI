@@ -136,7 +136,8 @@ function commitAddition(): void {
         v-if="roles"
         :open="picking === entry.key"
         :label="`${entry.key} model`"
-        :width="360"
+        side="below"
+        :match-trigger-width="true"
         @close="picking = null"
       >
         <template #trigger>

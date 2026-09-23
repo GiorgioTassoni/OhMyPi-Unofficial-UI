@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { artifacts, changedFiles, relativeTo, taskRow } from "./panel";
+import { artifacts, changedFiles, fileReview, relativeTo, taskRow, turnFileSummaries } from "./panel";
 import { row } from "./rows.fixture";
 import type { ToolSnapshot } from "../bridge";
 
@@ -144,6 +144,129 @@ describe("the changed files", () => {
 
     expect(files.map((file) => file.path)).toEqual(["/from-file-path.ts"]);
     expect(files[0]?.diff).toBeNull();
+  });
+});
+
+describe("file summaries at the end of a turn", () => {
+  test("each completed user turn gets only its own files and absolute jump rows", () => {
+    const rows = [
+      row({ role: "user", text: "First" }),
+      row({ tool: tool({ args: '{"path":"/app/first.ts"}', details: '{"path":"/app/first.ts","diff":"@@ -1 +1 @@\\n-old\\n+new"}' }) }),
+      row({ text: "Done" }),
+      row({ role: "user", text: "Second" }),
+      row({ tool: tool({ args: '{"path":"/app/second.ts"}', details: '{"path":"/app/second.ts","diff":"@@ -1 +1 @@\\n-a\\n+b"}' }) }),
+      row({ text: "Done again" }),
+    ];
+
+    const summaries = turnFileSummaries(rows, false);
+    expect(summaries.map((summary) => [summary.after, summary.files.map((file) => [file.path, file.row])])).toEqual([
+      [2, [["/app/first.ts", 1]]],
+      [5, [["/app/second.ts", 4]]],
+    ]);
+    expect(summaries.map((summary) => summary.lines)).toEqual([
+      { added: 1, removed: 1 },
+      { added: 1, removed: 1 },
+    ]);
+    expect(summaries.map((summary) => summary.changes.map((change) => change.row))).toEqual([[1], [4]]);
+  });
+
+  test("the current turn waits for completion; an earlier one remains visible", () => {
+    const rows = [
+      row({ role: "user" }),
+      row({ tool: tool({ args: '{"path":"/done.ts"}' }) }),
+      row({ role: "user" }),
+      row({ tool: tool({ args: '{"path":"/running.ts"}' }) }),
+    ];
+
+    expect(turnFileSummaries(rows, true).map((summary) => summary.files[0]?.path)).toEqual(["/done.ts"]);
+    expect(turnFileSummaries(rows, false).map((summary) => summary.files[0]?.path)).toEqual([
+      "/done.ts",
+      "/running.ts",
+    ]);
+  });
+
+  test("multiple single-file diffs add up, but writes and batch diffs have no invented totals", () => {
+    const rows = [
+      row({ role: "user" }),
+      row({ tool: tool({ args: '{"path":"/a.ts"}', details: '{"path":"/a.ts","diff":"--- a.ts\\n+++ a.ts\\n@@ -1 +1 @@\\n-old\\n+new"}' }) }),
+      row({ tool: tool({ args: '{"path":"/a.ts"}', details: '{"path":"/a.ts","diff":"@@ -2,0 +2,1 @@\\n+another"}' }) }),
+      row({ tool: tool({ toolName: "write", args: '{"path":"/b.ts","content":"new"}' }) }),
+    ];
+
+    const [summary] = turnFileSummaries(rows, false);
+    expect(summary?.files.map((file) => [file.path, file.lines])).toEqual([
+      ["/a.ts", { added: 2, removed: 1 }],
+      ["/b.ts", null],
+    ]);
+    expect(summary?.lines).toBeNull();
+    expect(summary?.changes.map((change) => [change.row, change.diff === null])).toEqual([
+      [1, false],
+      [2, false],
+      [3, true],
+    ]);
+    expect(summary?.changes.filter((change) => change.paths.includes("/a.ts")).map((change) => change.diff)).toEqual([
+      "--- a.ts\n+++ a.ts\n@@ -1 +1 @@\n-old\n+new",
+      "@@ -2,0 +2,1 @@\n+another",
+    ]);
+    expect(fileReview(summary!, "/a.ts")).toEqual({
+      pieces: [
+        { kind: "diff", text: "-old\n+new\n+another" },
+      ],
+      withoutDiff: [],
+      includesBatch: false,
+    });
+    expect(fileReview(summary!, "/b.ts")).toEqual({
+      pieces: [],
+      withoutDiff: [3],
+      includesBatch: false,
+    });
+  });
+
+  test("a batch diff remains visible but is flagged as shared with other files", () => {
+    const summary = turnFileSummaries([
+      row({ role: "user" }),
+      row({ tool: tool({
+        args: '{"edits":[]}',
+        details: '{"diff":"@@ first @@\\n+a\\n@@ second @@\\n+b","perFileResults":[{"path":"/a.ts"},{"path":"/b.ts"}]}',
+      }) }),
+    ], false)[0]!;
+
+    expect(fileReview(summary, "/a.ts")).toEqual({
+      pieces: [{ kind: "diff", text: "+a\n+b" }],
+      withoutDiff: [],
+      includesBatch: true,
+    });
+  });
+
+  test("a context-only payload links back to its tool call instead of showing unchanged code", () => {
+    const summary = turnFileSummaries([
+      row({ role: "user" }),
+      row({ tool: tool({ args: '{"path":"/a.ts"}', details: '{"path":"/a.ts","diff":"12|unchanged\\n13|unchanged"}' }) }),
+    ], false)[0]!;
+
+    expect(fileReview(summary, "/a.ts")).toEqual({
+      pieces: [],
+      withoutDiff: [1],
+      includesBatch: false,
+    });
+  });
+
+  test("failed and unfinished calls do not create a file summary", () => {
+    expect(turnFileSummaries([
+      row({ role: "user" }),
+      row({ tool: tool({ args: '{"path":"/a.ts"}', isError: true }) }),
+      row({ tool: tool({ args: '{"path":"/b.ts"}', finished: false }) }),
+    ], false)).toEqual([]);
+  });
+
+  test("a stopped turn still summarizes completed edits beside an unfinished tool", () => {
+    const rows = [
+      row({ role: "user" }),
+      row({ tool: tool({ args: '{"path":"/done.ts"}' }) }),
+      row({ tool: tool({ args: '{"path":"/pending.ts"}', finished: false }) }),
+    ];
+    expect(turnFileSummaries(rows, true)).toEqual([]);
+    expect(turnFileSummaries(rows, false)[0]?.files.map((file) => file.path)).toEqual(["/done.ts"]);
   });
 });
 

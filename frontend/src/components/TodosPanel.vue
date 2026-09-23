@@ -55,11 +55,12 @@ interface Mark {
   /** The icon for this status, or null for the empty circle the unknown states share. */
   icon: IconName | null;
   tone: string;
+  pulsing?: boolean;
 }
 
 const MARKS: Record<string, Mark> = {
   completed: { icon: "check", tone: "text-ok" },
-  in_progress: { icon: "play", tone: "text-accent" },
+  in_progress: { icon: null, tone: "text-warn", pulsing: true },
   blocked: { icon: "alert", tone: "text-warn" },
   abandoned: { icon: "close", tone: "text-faint" },
 };
@@ -196,8 +197,12 @@ async function flip(phase: TodoPhaseSnapshot, content: string): Promise<void> {
                 :disabled="busy || !props.live"
                 @click="flip(phase, task.content)"
               >
+                <span
+                  v-if="mark(task.status).pulsing"
+                  class="size-2 rounded-full bg-warn animate-pulse"
+                />
                 <Icon
-                  v-if="mark(task.status).icon !== null"
+                  v-else-if="mark(task.status).icon !== null"
                   :name="mark(task.status).icon as IconName"
                   class="h-3.5 w-3.5"
                 />

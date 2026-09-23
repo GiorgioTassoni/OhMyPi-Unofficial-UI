@@ -54,16 +54,6 @@
   src: url("./assets/fonts/Inter-SemiBold.woff2") format("woff2");
 }
 
-@font-face {
-  font-family: "JetBrains Mono";
-  font-style: normal;
-  font-weight: 100 800;
-  font-display: swap;
-  src:
-    url("./assets/fonts/JetBrainsMonoVariable.woff2") format("woff2-variations"),
-    url("./assets/fonts/JetBrainsMonoVariable.woff2") format("woff2");
-}
-
 @theme {
   --color-canvas: #1f1e33;
   --color-rail: #1a1a2a;
@@ -88,12 +78,133 @@
   --font-sans:
     "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --font-mono:
-    "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+    ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
 
   --radius-card: 10px;
   --radius-bubble: 16px;
   --radius-control: 6px;
   --radius-pill: 9999px;
+}
+
+/* The same semantic tokens style the whole shell and each theme card's miniature preview.
+   Keep the original palette explicit so its preview remains correct under another active theme. */
+[data-omp-theme="midnight-violet"] {
+  --color-canvas: #1f1e33;
+  --color-rail: #1a1a2a;
+  --color-surface: #1c1c2f;
+  --color-raised: #242443;
+  --color-selected: #28283e;
+  --color-line: #2b2a42;
+  --color-line-strong: #4a4966;
+  --color-fg: #eceaf6;
+  --color-dim: #a9a7c6;
+  --color-faint: #7b799c;
+  --color-accent: #a397e9;
+  --color-accent-bright: #ccc4fc;
+  --color-accent-deep: #6f5fc4;
+  --color-ok: #7fd7a5;
+  --color-warn: #f5c86b;
+  --color-err: #f58a8a;
+}
+
+[data-omp-theme="graphite-amber"] {
+  --color-canvas: #202124;
+  --color-rail: #191a1d;
+  --color-surface: #1c1d20;
+  --color-raised: #2a2b2e;
+  --color-selected: #353431;
+  --color-line: #343539;
+  --color-line-strong: #595a60;
+  --color-fg: #f0eee8;
+  --color-dim: #bbb8af;
+  --color-faint: #93918b;
+  --color-accent: #e9bd58;
+  --color-accent-bright: #f6da92;
+  --color-accent-deep: #b58735;
+  --color-ok: #86d7a4;
+  --color-warn: #f3c66b;
+  --color-err: #f28f8a;
+}
+
+[data-omp-theme="deep-ocean"] {
+  --color-canvas: #192535;
+  --color-rail: #121c2a;
+  --color-surface: #162130;
+  --color-raised: #24364b;
+  --color-selected: #2b425b;
+  --color-line: #2c4055;
+  --color-line-strong: #4c6881;
+  --color-fg: #e8f1fb;
+  --color-dim: #b1c5d7;
+  --color-faint: #839caf;
+  --color-accent: #79bbf0;
+  --color-accent-bright: #b9ddfa;
+  --color-accent-deep: #4887bd;
+  --color-ok: #83d7ba;
+  --color-warn: #f1c77e;
+  --color-err: #f18d9a;
+}
+
+[data-omp-theme="forest-mint"] {
+  --color-canvas: #1c2926;
+  --color-rail: #15211e;
+  --color-surface: #182521;
+  --color-raised: #293a34;
+  --color-selected: #30463d;
+  --color-line: #334740;
+  --color-line-strong: #537064;
+  --color-fg: #ecf5ef;
+  --color-dim: #b7cabe;
+  --color-faint: #89a497;
+  --color-accent: #7bd9b3;
+  --color-accent-bright: #b7f1d8;
+  --color-accent-deep: #429e79;
+  --color-ok: #90dcac;
+  --color-warn: #efc67b;
+  --color-err: #ef9494;
+}
+
+[data-omp-theme="espresso-coral"] {
+  --color-canvas: #29221f;
+  --color-rail: #201a18;
+  --color-surface: #251e1b;
+  --color-raised: #392c29;
+  --color-selected: #45332f;
+  --color-line: #483630;
+  --color-line-strong: #70534b;
+  --color-fg: #f5ede8;
+  --color-dim: #d1bab0;
+  --color-faint: #a98d82;
+  --color-accent: #ef9d87;
+  --color-accent-bright: #f8c8b9;
+  --color-accent-deep: #b86955;
+  --color-ok: #94d5a7;
+  --color-warn: #f1c67d;
+  --color-err: #f08e91;
+}
+
+/* Catppuccin Macchiato's named colors follow the official palette. */
+[data-omp-theme="catppuccin-macchiato"] {
+  --color-canvas: #24273a; /* Base */
+  --color-rail: #181926; /* Crust */
+  --color-surface: #1e2030; /* Mantle */
+  --color-raised: #363a4f; /* Surface 0 */
+  --color-selected: #494d64; /* Surface 1 */
+  --color-line: #363a4f; /* Surface 0 */
+  --color-line-strong: #5b6078; /* Surface 2 */
+  --color-fg: #cad3f5; /* Text */
+  --color-dim: #a5adcb; /* Subtext 0 */
+  --color-faint: #8087a2; /* Overlay 1 */
+  --color-accent: #c6a0f6; /* Mauve */
+  --color-accent-bright: #e1c9ff;
+  --color-accent-deep: #a177d5;
+  --color-ok: #a6da95; /* Green */
+  --color-warn: #eed49f; /* Yellow */
+  --color-err: #ed8796; /* Red */
+}
+
+.streaming-dot {
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-accent) 50%, transparent);
 }
 
 html,
@@ -200,6 +311,25 @@ samp {
   -webkit-user-select: text !important;
 }
 
+/* Collapse the right column itself so the conversation reclaims its space smoothly. */
+.right-panel-column {
+  width: var(--right-panel-width);
+}
+
+.right-panel-column:not(.right-panel-dragging),
+.right-panel-enter-active,
+.right-panel-leave-active {
+  transition:
+    width 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 160ms ease;
+}
+
+.right-panel-column.right-panel-enter-from,
+.right-panel-column.right-panel-leave-to {
+  width: 0;
+  opacity: 0;
+}
+
 /* Toasts enter from the edge they are anchored to, then the stack closes smoothly when one
    leaves. Kept global because Vue's TransitionGroup adds these classes at runtime. */
 .toast-enter-active,
@@ -232,6 +362,9 @@ samp {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .right-panel-column:not(.right-panel-dragging),
+  .right-panel-enter-active,
+  .right-panel-leave-active,
   .toast-enter-active,
   .toast-leave-active,
   .toast-move {

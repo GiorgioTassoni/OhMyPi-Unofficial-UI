@@ -10,11 +10,12 @@
  */
 import { computed, ref } from "vue";
 import { readArtifact, type ArtifactSnapshot, type RowSnapshot } from "../bridge";
-import { artifacts, changedFiles, formatBytes, relativeTo } from "../lib/panel";
+import { artifacts, changedFiles, formatBytes, relativeTo, type TurnReviewRequest } from "../lib/panel";
 import { parseObject } from "../lib/toolView";
 import DiffView from "./DiffView.vue";
 import FileTree from "./FileTree.vue";
 import Icon from "./ui/Icon.vue";
+import TurnFiles from "./TurnFiles.vue";
 
 const props = defineProps<{
   thread: string | null;
@@ -22,11 +23,13 @@ const props = defineProps<{
   /** The thread's working directory: the tree's root, and what paths are shown against. */
   cwd: string | null;
   live: boolean;
+  review: TurnReviewRequest | null;
 }>();
 
 const emit = defineEmits<{
   jump: [row: number];
   failed: [message: string];
+  closeReview: [];
 }>();
 
 type View = "changed" | "tree" | "artifacts";
@@ -148,14 +151,36 @@ async function copy(text: string): Promise<void> {
         :aria-pressed="view === tab"
         @click="view = tab"
       >
-        {{ tab }}
-        <span v-if="tab === 'changed' && changed.length" class="font-mono text-[10.5px] text-faint">{{ changed.length }}</span>
+        {{ tab === 'changed' && props.review ? 'review' : tab }}
+        <span v-if="tab === 'changed' && !props.review && changed.length" class="font-mono text-[10.5px] text-faint">{{ changed.length }}</span>
         <span v-else-if="tab === 'artifacts' && spilled.length" class="font-mono text-[10.5px] text-faint">{{ spilled.length }}</span>
       </button>
     </div>
 
+    <!-- One turn's complete review, opened from its transcript card. -->
+    <div v-if="view === 'changed' && props.review" class="min-h-0 flex-1 overflow-auto pb-2">
+      <div class="flex items-center justify-between px-3 py-2">
+        <span class="text-[11.5px] text-dim">Turn review</span>
+        <button
+          type="button"
+          class="rounded-[5px] px-2 py-1 text-[11.5px] text-faint hover:bg-raised hover:text-fg"
+          @click="emit('closeReview')"
+        >
+          Back to files
+        </button>
+      </div>
+      <div class="px-2">
+        <TurnFiles
+          :summary="props.review.summary"
+          :workspace="props.cwd"
+          sidebar
+          @jump="emit('jump', $event)"
+        />
+      </div>
+    </div>
+
     <!-- Changed: this session's own edits, in the order it made them. -->
-    <div v-if="view === 'changed'" class="flex min-h-0 flex-1 flex-col overflow-auto pb-2">
+    <div v-else-if="view === 'changed'" class="flex min-h-0 flex-1 flex-col overflow-auto pb-2">
       <p
         v-if="changed.length === 0"
         class="mx-auto max-w-sm px-4 py-8 text-center text-[12.5px] leading-relaxed text-faint"

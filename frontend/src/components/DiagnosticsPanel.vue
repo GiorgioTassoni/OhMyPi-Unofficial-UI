@@ -19,14 +19,12 @@ const props = defineProps<{
   activity: ActivitySnapshot[];
   /** The agent is waiting on a dialog, so the run is parked. */
   blocked: boolean;
-  busy?: boolean;
   workspace?: string | null;
   terminals?: boolean;
 }>();
 
 const emit = defineEmits<{
   close: [];
-  newThread: [];
   toggleTerminals: [];
   togglePanel: [];
 }>();
@@ -58,21 +56,6 @@ const BUTTON =
     >
       <span class="text-[12.5px] font-semibold tracking-tight text-fg/80 pl-1">Diagnostics</span>
       <div class="ml-auto flex items-center gap-0.5 shrink-0">
-        <button
-          :class="BUTTON"
-          :disabled="props.busy || props.workspace === null"
-          :title="
-            props.workspace === null
-              ? 'no project open — add one in the sidebar'
-              : `new thread in ${props.workspace}`
-          "
-          aria-label="new thread"
-          data-action="new-thread"
-          type="button"
-          @click="emit('newThread')"
-        >
-          <Icon name="plus" />
-        </button>
         <button
           :class="[BUTTON, props.terminals ? 'bg-raised text-accent hover:text-accent' : '']"
           :disabled="props.workspace === null"

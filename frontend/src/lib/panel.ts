@@ -13,6 +13,7 @@
 
 import type { RowSnapshot, ToolSnapshot } from "../bridge";
 import { parseObject, touchedFiles, toolView } from "./toolView";
+import { batchReviewPiece, orderedReviewPieces, type ReviewPiece } from "./reviewDiff";
 
 export interface ChangedFile {
   /** Absolute whenever the engine resolved one, which it does for every write and edit. */
@@ -76,6 +77,151 @@ export function changedFiles(rows: RowSnapshot[]): ChangedFile[] {
   });
 
   return [...byPath.values()];
+}
+
+export interface TurnChangedFile extends ChangedFile {
+  /** Null when the tool gave no per-file diff (a write or a batched edit). */
+  lines: { added: number; removed: number } | null;
+}
+
+export interface TurnFileSummary {
+  /** Render after this transcript row, keeping search and panel row indices unchanged. */
+  after: number;
+  files: TurnChangedFile[];
+  /** Shown only if every changed file has complete per-file counts. */
+  lines: { added: number; removed: number } | null;
+  /** Each successful mutating call, in order, for the Review disclosure. */
+  changes: { row: number; paths: string[]; diff: string | null }[];
+}
+
+/** A request to show one turn's complete review in the right-hand Files panel. */
+export interface TurnReviewRequest {
+  thread: string;
+  id: number;
+  summary: TurnFileSummary;
+}
+
+export interface FileReview {
+  /** Source-ordered hunks, with quiet markers for the untouched spans between them. */
+  pieces: ReviewPiece[];
+  /** Tool calls that changed the file but supplied no diff (notably whole-file writes). */
+  withoutDiff: number[];
+  /** A batch diff may also contain hunks for other files. */
+  includesBatch: boolean;
+}
+
+export function fileReview(summary: TurnFileSummary, path: string): FileReview {
+  const changes = summary.changes.filter((change) => change.paths.includes(path));
+  const singleFileDiffs = changes
+    .filter((change) => change.paths.length === 1)
+    .map((change) => change.diff?.trimEnd())
+    .filter((diff): diff is string => typeof diff === "string" && diff !== "");
+  // A batch diff may contain several files. Keep that payload whole and in arrival order;
+  // sorting its hunks as if they all belonged to this file would be misleading.
+  const batchPieces: ReviewPiece[] = changes
+    .filter((change) => change.paths.length > 1 && change.diff)
+    .flatMap((change) => {
+      const piece = batchReviewPiece(change.diff!);
+      return piece === null ? [] : [piece];
+    });
+
+  return {
+    pieces: [...orderedReviewPieces(singleFileDiffs), ...batchPieces],
+    withoutDiff: changes
+      .filter((change) => !change.diff || (
+        change.paths.length === 1
+          ? orderedReviewPieces([change.diff]).length === 0
+          : batchReviewPiece(change.diff) === null
+      ))
+      .map((change) => change.row),
+    includesBatch: changes.some((change) => change.diff !== null && change.paths.length > 1),
+  };
+}
+
+/** Files changed between one user message and the next (or the settled transcript tail). */
+export function turnFileSummaries(rows: RowSnapshot[], streaming: boolean): TurnFileSummary[] {
+  const summaries: TurnFileSummary[] = [];
+  let start = 0;
+
+  function finish(end: number): void {
+    if (end < start) return;
+    const turn = rows.slice(start, end + 1);
+    const files = changedFilesInTurn(turn).map((file) => ({ ...file, row: file.row + start }));
+    if (files.length === 0) return;
+
+    summaries.push({
+      after: end,
+      files,
+      changes: turn.flatMap((row, index) => {
+        const tool = row.tool;
+        if (tool === null || !tool.finished || tool.isError) return [];
+        const paths = touchedFiles(tool).map((file) => file.path);
+        return paths.length === 0
+          ? []
+          : [{ row: index + start, paths, diff: diffOf(tool) }];
+      }),
+      lines: files.every((file) => file.lines !== null)
+        ? files.reduce(
+            (sum, file) => ({
+              added: sum.added + (file.lines?.added ?? 0),
+              removed: sum.removed + (file.lines?.removed ?? 0),
+            }),
+            { added: 0, removed: 0 },
+          )
+        : null,
+    });
+  }
+
+  rows.forEach((row, index) => {
+    if (row.role !== "user" || index === start) return;
+    finish(index - 1);
+    start = index;
+  });
+
+  // The session status, not a tool's row, decides whether the turn ended: stopped turns
+  // can retain an unfinished card even though their completed edits should be summarized.
+  if (!streaming) finish(rows.length - 1);
+  return summaries;
+}
+
+/** Keep counts honest: a joined batch diff or a whole-file write has no per-file line total. */
+function changedFilesInTurn(rows: RowSnapshot[]): TurnChangedFile[] {
+  const counts = new Map<string, { added: number; removed: number } | null>();
+
+  for (const row of rows) {
+    const tool = row.tool;
+    if (tool === null || !tool.finished || tool.isError) continue;
+    const touched = touchedFiles(tool);
+    if (touched.length === 0) continue;
+    const diff = touched.length === 1 ? diffOf(tool) : null;
+    const next = diff === null ? null : diffLineCounts(diff);
+
+    for (const file of touched) {
+      const previous = counts.get(file.path);
+      counts.set(
+        file.path,
+        previous === null || next === null
+          ? null
+          : {
+              added: (previous?.added ?? 0) + next.added,
+              removed: (previous?.removed ?? 0) + next.removed,
+            },
+      );
+    }
+  }
+
+  return changedFiles(rows).map((file) => ({ ...file, lines: counts.get(file.path) ?? null }));
+}
+
+function diffLineCounts(diff: string): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++ ") || line.startsWith("--- ")) continue;
+    if (line.startsWith("+")) added += 1;
+    else if (line.startsWith("-")) removed += 1;
+  }
+  return { added, removed };
 }
 
 /** The rows whose results spilled to an artifact, newest last. */

@@ -12,7 +12,7 @@
  * "resume this session" and "this live thread" are one key rather than two identity systems
  * that would have to be kept in step.
  */
-import { computed, nextTick, onMounted, onUnmounted, ref, shallowReactive, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowReactive, shallowRef, watch } from "vue";
 import {
   closeThread,
   deleteSession,
@@ -54,6 +54,7 @@ import {
   type UiRequestSnapshot,
 } from "./bridge";
 import { activeCount } from "./lib/agents";
+import { readAppTheme, setAppTheme, type AppTheme } from "./lib/appTheme";
 import { applyChrome, chromeFor, draftTarget, type ThreadChrome } from "./lib/chrome";
 import {
   addNotice,
@@ -66,8 +67,15 @@ import {
   showsNotice,
   type Notice,
 } from "./lib/notify";
+import {
+  playNotificationSound,
+  readNotificationSoundEnabled,
+  saveNotificationSoundEnabled,
+  soundForNotification,
+} from "./lib/notificationSound";
 import { selectAfterClose, selectFrom, tabsFrom, type TerminalTab } from "./lib/terminals";
 import { sidebarModel, type ProjectGroup } from "./lib/threads";
+import type { TurnFileSummary, TurnReviewRequest } from "./lib/panel";
 import type { ThreadContext } from "./lib/thread-menu";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -215,6 +223,17 @@ const diagnostics = ref(false);
 const settings = ref(false);
 /** `docs/12` §1: the panel owns the right column, and the diagnostics borrow it when toggled. */
 const panelOpen = ref(true);
+const turnReview = shallowRef<TurnReviewRequest | null>(null);
+let reviewSerial = 0;
+
+watch(activeId, () => { turnReview.value = null; });
+
+function openTurnReview(thread: string, summary: TurnFileSummary): void {
+  if (thread !== activeId.value) return;
+  turnReview.value = { thread, id: ++reviewSerial, summary };
+  diagnostics.value = false;
+  panelOpen.value = true;
+}
 
 /** Resizable sidebars & collapse thresholds */
 const DEFAULT_SIDEBAR_WIDTH = 288;
@@ -223,9 +242,10 @@ const MAX_SIDEBAR_WIDTH = 520;
 const SIDEBAR_COLLAPSE_THRESHOLD = 140;
 
 const DEFAULT_RIGHT_PANEL_WIDTH = 320;
-const MIN_RIGHT_PANEL_WIDTH = 200;
+// The tabs (including the todo count) and header actions need room to stay on one row.
+const MIN_RIGHT_PANEL_WIDTH = 280;
 const MAX_RIGHT_PANEL_WIDTH = 600;
-const RIGHT_PANEL_COLLAPSE_THRESHOLD = 160;
+const RIGHT_PANEL_COLLAPSE_THRESHOLD = 220;
 
 /** A forgiving drag target around the quiet one-pixel divider the user sees. */
 const RESIZE_HANDLE_CLASS =
@@ -244,7 +264,15 @@ function readStorageNumber(key: string, fallback: number): number {
 
 const sidebarWidth = ref(readStorageNumber("omp:sidebar-width", DEFAULT_SIDEBAR_WIDTH));
 const sidebarCollapsed = ref(localStorage.getItem("omp:sidebar-collapsed") === "true");
-const rightPanelWidth = ref(readStorageNumber("omp:right-panel-width", DEFAULT_RIGHT_PANEL_WIDTH));
+const notificationSoundEnabled = ref(readNotificationSoundEnabled());
+const appTheme = ref(readAppTheme());
+setAppTheme(appTheme.value);
+const rightPanelWidth = ref(
+  Math.min(
+    MAX_RIGHT_PANEL_WIDTH,
+    Math.max(MIN_RIGHT_PANEL_WIDTH, readStorageNumber("omp:right-panel-width", DEFAULT_RIGHT_PANEL_WIDTH)),
+  ),
+);
 
 const isDraggingLeft = ref(false);
 const isDraggingRight = ref(false);
@@ -260,6 +288,16 @@ watch(sidebarCollapsed, (next) => {
     localStorage.setItem("omp:sidebar-collapsed", String(next));
   } catch {}
 });
+
+function setNotificationSoundEnabled(enabled: boolean): void {
+  notificationSoundEnabled.value = enabled;
+  saveNotificationSoundEnabled(enabled);
+}
+
+function changeAppTheme(theme: AppTheme): void {
+  setAppTheme(theme);
+  appTheme.value = theme;
+}
 
 watch(rightPanelWidth, (next) => {
   try {
@@ -943,6 +981,13 @@ function markRead(id: string): void {
  * answers meet the window's state. Nothing here rewrites the host's sentences.
  */
 function onNotification(event: NotificationEvent): void {
+  const sound = soundForNotification(event.kind);
+  if (notificationSoundEnabled.value && sound !== null) {
+    void playNotificationSound(sound).catch(() => {
+      // A webview may refuse audio before its first user interaction; visual notices still work.
+    });
+  }
+
   // The row already shows the name the engine recorded for this thread (a user or auto title
   // from the catalogue). The host's own `title` is that name when it has one and the session id
   // when it does not — measured: a fresh session's banner read `01a0c0f7-…`. So the catalogue's
@@ -1136,9 +1181,13 @@ function describe(cause: unknown): string {
       :favourites="favourites"
       :refreshing="refreshing"
       :mode="activeStatus?.approvalMode ?? null"
+      :notification-sound-enabled="notificationSoundEnabled"
+      :app-theme="appTheme"
       @back="openSettings(false)"
       @changed="onSettingsChanged"
       @favourites="onFavourites"
+      @notification-sound="setNotificationSoundEnabled"
+      @app-theme="changeAppTheme"
     />
 
     <!--
@@ -1232,6 +1281,7 @@ function describe(cause: unknown): string {
               v-show="id === activeId"
               :ref="(view) => registerView(id, view)"
               :thread="id"
+              :active="id === activeId"
               :chrome="chromeFor(chrome, id)"
               :models="models"
               :refreshing="refreshing"
@@ -1244,6 +1294,7 @@ function describe(cause: unknown): string {
               @terminal="openTerminal"
               @favourites="onFavourites"
               @app-action="onAppAction"
+              @review="openTurnReview(id, $event)"
             />
           </template>
 
@@ -1296,6 +1347,7 @@ function describe(cause: unknown): string {
           :tabs="terminals"
           :active="activeTerminal"
           :visible="terminalsOpen && !settings"
+          :theme="appTheme"
           @select="selectTerminal"
           @close="closeTerminal"
           @open="openTerminalBeside"
@@ -1304,62 +1356,62 @@ function describe(cause: unknown): string {
       </div>
 
       <!-- Resizable Right Panel Column (full-height to window top, matching Sidebar) -->
-      <div
-        v-if="panelOpen || diagnostics"
-        class="relative flex h-full shrink-0"
-        :style="{ width: `${rightPanelWidth}px` }"
-        :class="{ 'transition-[width] duration-150 ease-out': !isDraggingRight }"
-      >
-        <!-- Resize border handle on left edge of right panel -->
+      <Transition name="right-panel">
         <div
-          class="absolute top-0 -left-1"
-          :class="[RESIZE_HANDLE_CLASS, isDraggingRight ? 'after:opacity-100' : '']"
-          title="Drag to resize, double-click to reset"
-          @pointerdown="startRightResize"
-          @dblclick="resetRightWidth"
-        />
+          v-if="panelOpen || diagnostics"
+          class="right-panel-column relative flex h-full shrink-0"
+          :style="{ '--right-panel-width': `${rightPanelWidth}px` }"
+          :class="{ 'right-panel-dragging': isDraggingRight }"
+        >
+          <!-- Resize border handle on left edge of right panel -->
+          <div
+            class="absolute top-0 -left-1"
+            :class="[RESIZE_HANDLE_CLASS, isDraggingRight ? 'after:opacity-100' : '']"
+            title="Drag to resize, double-click to reset"
+            @pointerdown="startRightResize"
+            @dblclick="resetRightWidth"
+          />
 
-        <div class="h-full w-full overflow-hidden">
-          <DiagnosticsPanel
-            v-if="diagnostics"
-            class="h-full w-full min-w-0"
-            :thread="activeId"
-            :ready="activeStatus?.ready ?? null"
-            :status="activeStatus"
-            :counters="activeStatus?.counters ?? null"
-            :activity="activeActivity"
-            :blocked="blocked"
-            :busy="busy"
-            :workspace="workspace"
-            :terminals="terminalsOpen"
-            @close="diagnostics = false"
-            @new-thread="workspace !== null && open(workspace)"
-            @toggle-terminals="terminalsOpen = !terminalsOpen"
-            @toggle-panel="diagnostics = false; panelOpen = true"
-          />
-          <RightPanel
-            v-else-if="panelOpen"
-            class="h-full w-full min-w-0"
-            :thread="activeId"
-            :label="activeRow?.title ?? null"
-            :phases="activePhases"
-            :rows="activeRows"
-            :cwd="activeRow?.project ?? null"
-            :live="activeLive"
-            :busy="busy"
-            :workspace="workspace"
-            :terminals="terminalsOpen"
-            :diagnostics="diagnostics"
-            @jump="revealRow"
-            @written="onPlanWritten"
-            @failed="error = $event"
-            @close="panelOpen = false"
-            @new-thread="workspace !== null && open(workspace)"
-            @toggle-terminals="terminalsOpen = !terminalsOpen"
-            @toggle-diagnostics="diagnostics = !diagnostics"
-          />
+          <div class="h-full w-full overflow-hidden">
+            <DiagnosticsPanel
+              v-if="diagnostics"
+              class="h-full w-full min-w-0"
+              :thread="activeId"
+              :ready="activeStatus?.ready ?? null"
+              :status="activeStatus"
+              :counters="activeStatus?.counters ?? null"
+              :activity="activeActivity"
+              :blocked="blocked"
+              :workspace="workspace"
+              :terminals="terminalsOpen"
+              @close="diagnostics = false"
+              @toggle-terminals="terminalsOpen = !terminalsOpen"
+              @toggle-panel="diagnostics = false; panelOpen = true"
+            />
+            <RightPanel
+              v-else-if="panelOpen"
+              class="h-full w-full min-w-0"
+              :thread="activeId"
+              :label="activeRow?.title ?? null"
+              :phases="activePhases"
+              :rows="activeRows"
+              :cwd="activeRow?.project ?? null"
+              :live="activeLive"
+              :review="turnReview?.thread === activeId ? turnReview : null"
+              :workspace="workspace"
+              :terminals="terminalsOpen"
+              :diagnostics="diagnostics"
+              @jump="revealRow"
+              @written="onPlanWritten"
+              @failed="error = $event"
+              @close="panelOpen = false"
+              @close-review="turnReview = null"
+              @toggle-terminals="terminalsOpen = !terminalsOpen"
+              @toggle-diagnostics="diagnostics = !diagnostics"
+            />
+          </div>
         </div>
-      </div>
+      </Transition>
     </div>
 
     <!--

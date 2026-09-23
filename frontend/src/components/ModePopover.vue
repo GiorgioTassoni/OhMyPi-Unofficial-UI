@@ -4,8 +4,8 @@
  *
  * Three rows and nothing else — no Plan mode row (D4). The engine has no runtime
  * setter for this, so the host writes `tools.approvalMode` and restarts the sidecar
- * on the same session file; the popover says so before it happens, because the one
- * thing a mode change must not do is silently drop a running turn.
+ * on the same session file. The host waits for a running turn (including queued
+ * follow-ups) before restarting, while keeping approval dialogs answerable.
  */
 import { onMounted, onUnmounted, ref } from "vue";
 import { setApprovalMode } from "../bridge";
@@ -120,8 +120,8 @@ function describe(cause: unknown): string {
     </button>
 
     <p class="px-2.5 pb-0.5 pt-1.5 text-[11px] text-faint">
-      changing this restarts the session on the same file — the conversation is kept,
-      a turn in flight is not
+      If the agent is responding, the new mode takes effect when it finishes.
+      Your conversation stays intact.
     </p>
   </div>
 </template>

@@ -8,7 +8,10 @@
  * screen model, so this renderer contains no second ordering policy.
  */
 import type { SettingsRow as SettingsRowModel, SettingsSection } from "../../bridge";
+import type { AppTheme } from "../../lib/appTheme";
 import { rowId } from "../../lib/settings";
+import AppThemeSetting from "./AppThemeSetting.vue";
+import NotificationSoundSetting from "./NotificationSoundSetting.vue";
 import SettingsRow from "./SettingsRow.vue";
 
 const props = defineProps<{
@@ -23,6 +26,8 @@ const props = defineProps<{
   highlight: string | null;
   /** Where a gated row's `needs` key lives, resolved against the whole catalog. */
   locate: (key: string) => { sectionId: string; title: string } | null;
+  notificationSoundEnabled: boolean;
+  appTheme: AppTheme;
 }>();
 
 const emit = defineEmits<{
@@ -32,6 +37,8 @@ const emit = defineEmits<{
   (event: "navigate", sectionId: string, rowId: string): void;
   (event: "action", action: string): void;
   (event: "changed"): void;
+  (event: "notificationSound", enabled: boolean): void;
+  (event: "appTheme", theme: AppTheme): void;
 }>();
 
 /** A gated row's link target, or `null` when the host named no key to reach. */
@@ -47,6 +54,18 @@ function needsFor(row: SettingsRowModel): { sectionId: string; title: string } |
     <p v-if="props.section.blurb !== ''" class="mt-1.5 text-[13px] leading-relaxed text-dim">
       {{ props.section.blurb }}
     </p>
+
+    <NotificationSoundSetting
+      v-if="props.section.id === 'notifications'"
+      :enabled="props.notificationSoundEnabled"
+      @change="emit('notificationSound', $event)"
+    />
+
+    <AppThemeSetting
+      v-if="props.section.id === 'appearance'"
+      :theme="props.appTheme"
+      @change="emit('appTheme', $event)"
+    />
 
     <section v-for="group in props.section.groups" :key="group.name" class="mt-8">
       <div class="flex items-center gap-3 border-b border-line/50 pb-2">

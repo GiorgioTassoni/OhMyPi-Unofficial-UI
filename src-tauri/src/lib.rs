@@ -150,6 +150,7 @@ pub fn run() {
             bridge::index_status,
             bridge::reindex,
             bridge::allow_tool,
+            bridge::allow_command,
             bridge::open_external,
             bridge::launch_context,
             bridge::models,

@@ -5,8 +5,8 @@
  * Teleported and measured rather than nested: the composer lives inside a scrolling
  * column, and an absolutely-positioned child of it would be clipped by that column's
  * `overflow` exactly when the popover is tall enough to matter. So the trigger is
- * measured on open, the panel is placed in viewport coordinates above it, and its
- * height is capped by the space that actually exists above the trigger.
+ * measured on open, the panel is placed in viewport coordinates, and its height
+ * is capped by the space available on the requested side of the trigger.
  *
  * One at a time is the parent's job, not this component's: the parent owns *which*
  * chip is open, which is also what makes reopening the same chip a toggle rather than
@@ -24,6 +24,10 @@ const props = defineProps<{
   label: string;
   /** Panel width in pixels; the popovers are wide enough for a model name and a tag. */
   width?: number;
+  /** Settings pickers open below their selector; composer chips keep opening above. */
+  side?: "above" | "below";
+  /** Use the selector's measured width instead of a fixed panel width. */
+  matchTriggerWidth?: boolean;
   /** Focus the first control on open — right for a popover you came to type in. */
   focusOnOpen?: boolean;
 }>();
@@ -34,8 +38,9 @@ const trigger = ref<HTMLElement | null>(null);
 const panel = ref<HTMLElement | null>(null);
 
 /** Viewport coordinates, recomputed whenever the panel opens or the window moves. */
-const placement = ref<{ left: string; bottom: string; width: string; maxHeight: string }>({
+const placement = ref<{ left: string; top: string; bottom: string; width: string; maxHeight: string }>({
   left: "0px",
+  top: "auto",
   bottom: "0px",
   width: "320px",
   maxHeight: "60vh",
@@ -52,17 +57,19 @@ function place(event?: Event): void {
   if (rect === undefined) {
     return;
   }
-  const width = props.width ?? 320;
+  const width = props.matchTriggerWidth === true ? rect.width : (props.width ?? 320);
   // Inside the viewport on both sides: a chip near the right edge would otherwise
   // open a panel that runs off it.
   const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - width - 8));
   placement.value = {
     left: `${left}px`,
-    bottom: `${window.innerHeight - rect.top + 8}px`,
+    top: props.side === "below" ? `${rect.bottom + 8}px` : "auto",
+    bottom: props.side === "below" ? "auto" : `${window.innerHeight - rect.top + 8}px`,
     width: `${width}px`,
-    // The space above the trigger, so a short window scrolls the panel instead of
-    // pushing its content off the top.
-    maxHeight: `${Math.max(160, rect.top - 16)}px`,
+    // The panel scrolls within the space on its chosen side of the trigger.
+    maxHeight: `${props.side === "below"
+      ? Math.max(0, window.innerHeight - rect.bottom - 16)
+      : Math.max(160, rect.top - 16)}px`,
   };
 }
 

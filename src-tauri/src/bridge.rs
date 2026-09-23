@@ -278,14 +278,10 @@ async fn scan<T: Send + 'static>(
 
 /// Change the session's approval mode (`docs/12` §7.2).
 ///
-/// Two halves, in this order: record the choice for the sessions that follow, then
-/// restart this thread's sidecar so it takes effect now. The restart is a *resume* — same
-/// session file, new `--approval-mode` — and it is the only way: measured in 8b, the engine
-/// has no runtime setter, and the config record is read when a session is constructed.
-///
-/// What it costs is stated rather than hidden: the conversation comes back (the host
-/// hydrates it through the same path any resume takes — `session::open`, which restores
-/// history whenever the spec resumes a file), a turn in flight does not.
+/// Stop accepting new turns, wait for the current turn and its queued follow-ups,
+/// then record the choice and restart the sidecar on the same session file. OMP has
+/// no runtime setter for this mode, but waiting means a switch no longer cuts a
+/// turn short. Approval dialogs remain answerable while the switch is pending.
 #[tauri::command]
 pub async fn set_approval_mode(
     app: AppHandle,
@@ -293,21 +289,25 @@ pub async fn set_approval_mode(
     thread: String,
     mode: String,
 ) -> Result<SessionStatus, String> {
-    // Validated before anything is written or stopped, so a typo cannot leave the
-    // config changed and the session restarted for nothing.
+    // Validate before making the switch pending or writing config.
     policy::validate_mode(&mode)?;
-    policy::record_mode(&mode).await?;
-
     let live = thread_of(&state, &thread)?;
+    let _switch = live.begin_mode_switch().await?;
+    live.wait_for_turn_to_finish().await?;
 
     let workspace = live.workspace.clone();
     let session_file = live.session_file().ok_or_else(|| {
         "the engine did not name a session file, so this session cannot be resumed".to_string()
     })?;
 
+    policy::record_mode(&mode).await?;
+
     // The registry loses the thread before its sidecar is stopped: a command arriving
     // mid-restart is refused rather than written to a pipe that is going away.
-    state.threads.remove(&thread);
+    state
+        .threads
+        .remove_if_same(&thread, &live)
+        .ok_or_else(|| "the session changed while its mode switch was pending".to_string())?;
     live.shutdown(SHUTDOWN_GRACE).await;
 
     let spec = SidecarSpec::omp(&workspace)
@@ -471,11 +471,7 @@ async fn ask(
     what: &str,
 ) -> Result<(), String> {
     let live = thread_of(state, thread)?;
-    let client = live
-        .client()
-        .ok_or_else(|| "the session is shutting down".to_string())?;
-
-    session::send(&client, command, what).await
+    live.send_user_turn(command, what).await
 }
 
 /// The commands the palette offers (`docs/12` §7.3).
@@ -692,15 +688,30 @@ pub fn set_favourites(
     state.favourites.set(keys)
 }
 
-/// Record "always allow" for one tool, so the next session stops asking about it.
-///
-/// The engine reads its policy record when it builds a session, so this cannot
-/// quieten the dialog that is open right now — [`crate::policy`] carries the
-/// measurement. What comes back is the write itself, and the dialog tells the user
-/// that it applies from the next session on rather than pretending otherwise.
+/// Record "always allow" for one tool and apply it to this running session.
+/// OMP picks up the persisted policy on the next launch; this session's pump
+/// answers only later matching approval requests for the granted tool.
 #[tauri::command]
-pub async fn allow_tool(tool: String) -> Result<PolicyOutcome, String> {
-    crate::policy::allow_tool(&tool).await
+pub async fn allow_tool(
+    state: State<'_, AppState>,
+    thread: String,
+    tool: String,
+) -> Result<PolicyOutcome, String> {
+    let live = thread_of(&state, &thread)?;
+    let outcome = crate::policy::allow_tool(&tool).await?;
+    live.grant_tool(&tool)?;
+    Ok(outcome)
+}
+
+/// Allow one executable for the lifetime of this conversation, without changing OMP config.
+#[tauri::command]
+pub fn allow_command(
+    state: State<'_, AppState>,
+    thread: String,
+    command: String,
+) -> Result<String, String> {
+    let live = thread_of(&state, &thread)?;
+    live.grant_command(&command)
 }
 
 /// Open a URL in the user's default application.
@@ -1465,11 +1476,24 @@ pub fn terminate(app: &AppHandle) {
         return;
     };
 
-    for live in state.threads.drain() {
+    let live_sessions = state.threads.drain();
+    let mut workspaces: Vec<_> = live_sessions
+        .iter()
+        .map(|live| live.workspace.clone())
+        .collect();
+    workspaces.sort();
+    workspaces.dedup();
+
+    for live in live_sessions {
         tauri::async_runtime::block_on(live.shutdown(SHUTDOWN_GRACE));
     }
 
     state.terminals.shutdown();
+
+    // On Linux AppImages the OMP daemon broker is a separate worker and normally exits
+    // after its idle grace. Let it finish before Tauri's exit tears down the temporary
+    // AppImage mount; this is bounded and never kills broker-owned work.
+    tauri::async_runtime::block_on(agents::wait_for_appimage_brokers(&workspaces));
 }
 
 /// Where a terminal's events go: the window, through the handle every other event uses.

@@ -7,7 +7,7 @@
  * tool the view does not know still renders: its arguments and its result are
  * what every tool has.
  */
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import type { ToolSnapshot } from "../bridge";
 import { touchedFiles, toolView } from "../lib/toolView";
 import DiffView from "./DiffView.vue";
@@ -28,7 +28,28 @@ const isMutation = computed(
   () => touched.value.length > 0 || view.value.body.kind === "diff",
 );
 
-const expanded = ref(!props.tool.finished || props.tool.isError || isMutation.value);
+const denied = computed(
+  () => props.tool.finished && /^Tool call denied by user(?::|$)/i.test(props.tool.output.trim()),
+);
+const failedOrDenied = computed(() => props.tool.finished && (props.tool.isError || denied.value));
+const expanded = ref(!props.tool.finished || failedOrDenied.value);
+
+// Live edits start open while the tool runs, then settle into the compact card.
+watch(
+  () => props.tool.finished,
+  (finished) => {
+    if (finished && !failedOrDenied.value && isMutation.value) expanded.value = false;
+  },
+);
+
+const mutationTitle = computed(() => {
+  const files = touched.value;
+  if (files.length === 0) return "Edited files";
+  const verb = files[0].kind === "written" ? "Wrote" : "Edited";
+  if (files.length !== 1) return `${verb} ${files.length} files`;
+  const filename = files[0].path.split(/[\\/]/).filter(Boolean).pop() || files[0].path;
+  return `${verb} ${filename}`;
+});
 
 const diffStats = computed(() => {
   if (view.value.body.kind !== "diff") return null;
@@ -36,44 +57,38 @@ const diffStats = computed(() => {
   let added = 0;
   let removed = 0;
   for (const line of lines) {
-    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+++ ") || line.startsWith("--- ")) continue;
     if (line.startsWith("+")) added += 1;
     else if (line.startsWith("-")) removed += 1;
   }
   return { added, removed };
 });
-
-const status = computed(() => {
-  if (!props.tool.finished) {
-    return { label: "running", tint: "bg-ok/15 text-ok border border-ok/30" };
-  }
-  if (props.tool.isError) {
-    return { label: "failed", tint: "bg-err/15 text-err border border-err/30" };
-  }
-
-  return { label: "done", tint: "bg-raised text-faint" };
-});
 </script>
 
 <template>
   <div class="my-1 overflow-hidden rounded-[10px] border border-line/60 bg-surface shadow-sm">
-    <!-- Case 1: File Mutations (Changes card matching reference 07-chats.png) -->
+    <!-- Case 1: File Mutations -->
     <div v-if="isMutation">
-      <header
-        class="flex cursor-pointer select-none items-center justify-between border-b border-line/40 px-3 py-2 transition-colors hover:bg-raised/40"
+      <button
+        type="button"
+        class="flex w-full cursor-pointer select-none items-center justify-between gap-2 px-3 py-2 text-left transition-colors hover:bg-raised/40"
+        :class="expanded ? 'border-b border-line/40' : ''"
+        :aria-expanded="expanded"
         @click="expanded = !expanded"
       >
         <div class="flex min-w-0 items-center gap-2">
-          <Icon name="pencil" class="h-3.5 w-3.5 text-accent" />
-          <span class="text-[12.5px] font-medium text-fg">Changes</span>
-          <span v-if="diffStats" class="flex items-center gap-1 font-mono text-[11px]">
-            <span v-if="diffStats.added > 0" class="font-semibold text-ok">+{{ diffStats.added }}</span>
-            <span v-if="diffStats.removed > 0" class="font-semibold text-err">-{{ diffStats.removed }}</span>
+          <Icon name="pencil" class="h-3.5 w-3.5 shrink-0 text-accent" />
+          <span class="flex min-w-0 flex-col gap-0.5">
+            <span class="truncate text-[12.5px] font-medium text-fg" :title="mutationTitle">{{ mutationTitle }}</span>
+            <span v-if="diffStats" class="flex items-center gap-1 font-mono text-[11px] leading-none">
+              <span v-if="diffStats.added > 0" class="font-semibold text-ok">+{{ diffStats.added }}</span>
+              <span v-if="diffStats.removed > 0" class="font-semibold text-err">-{{ diffStats.removed }}</span>
+            </span>
           </span>
         </div>
-        <div class="flex items-center gap-2">
-          <span class="rounded-full px-2 py-0.5 text-[10.5px]" :class="status.tint">
-            {{ status.label }}
+        <div class="flex shrink-0 items-center gap-2">
+          <span v-if="failedOrDenied" class="text-err" role="img" :aria-label="denied ? 'Tool call denied' : 'Tool call failed'" :title="denied ? 'Tool call denied' : 'Tool call failed'">
+            <Icon name="close" class="h-3.5 w-3.5" />
           </span>
           <Icon
             name="chevron-right"
@@ -81,23 +96,17 @@ const status = computed(() => {
             :class="expanded ? 'rotate-90' : ''"
           />
         </div>
-      </header>
+      </button>
 
-      <!-- Files list -->
-      <div v-if="touched.length > 0" class="flex flex-col divide-y divide-line/30 px-3 py-1.5 text-[12px] select-text">
+      <!-- Full paths belong to the expanded view, never the compact header. -->
+      <div v-if="expanded && touched.length > 0" class="flex flex-col divide-y divide-line/30 px-3 py-1.5 text-[12px] select-text">
         <div
           v-for="file in touched"
           :key="file.path"
-          class="flex items-center justify-between py-1 font-mono"
+          class="flex items-start gap-2 py-1 font-mono text-dim"
         >
-          <div class="flex min-w-0 items-center gap-2 text-fg/90">
-            <Icon name="file" class="h-3.5 w-3.5 shrink-0 text-faint select-none" />
-            <span class="truncate">{{ file.path }}</span>
-          </div>
-          <span v-if="diffStats" class="ml-2 flex shrink-0 items-center gap-1 text-[11px] select-none">
-            <span v-if="diffStats.added > 0" class="text-ok">+{{ diffStats.added }}</span>
-            <span v-if="diffStats.removed > 0" class="text-err">-{{ diffStats.removed }}</span>
-          </span>
+          <Icon name="file" class="mt-0.5 h-3.5 w-3.5 shrink-0 text-faint select-none" />
+          <span class="min-w-0 break-all">{{ file.path }}</span>
         </div>
       </div>
 
@@ -105,10 +114,6 @@ const status = computed(() => {
       <div v-if="expanded && view.body.kind === 'diff'" class="border-t border-line/40">
         <DiffView :diff="view.body.text" />
       </div>
-      <pre
-        v-else-if="expanded && view.body.text"
-        class="max-h-80 overflow-auto whitespace-pre-wrap break-words border-t border-line/40 px-3 py-2 font-mono text-[11.5px] text-dim select-text"
-      >{{ view.body.text }}</pre>
     </div>
 
     <!-- Case 2: Command Execution (Run command card matching reference 07-chats.png) -->
@@ -129,8 +134,8 @@ const status = computed(() => {
           </code>
         </div>
         <div class="flex shrink-0 items-center gap-2">
-          <span class="rounded-full px-2 py-0.5 text-[10.5px]" :class="status.tint">
-            {{ status.label }}
+          <span v-if="failedOrDenied" class="text-err" role="img" :aria-label="denied ? 'Tool call denied' : 'Tool call failed'" :title="denied ? 'Tool call denied' : 'Tool call failed'">
+            <Icon name="close" class="h-3.5 w-3.5" />
           </span>
           <Icon
             name="chevron-right"
@@ -170,8 +175,8 @@ const status = computed(() => {
           </span>
         </div>
         <div class="flex shrink-0 items-center gap-2">
-          <span class="rounded-full px-2 py-0.5 text-[10.5px]" :class="status.tint">
-            {{ status.label }}
+          <span v-if="failedOrDenied" class="text-err" role="img" :aria-label="denied ? 'Tool call denied' : 'Tool call failed'" :title="denied ? 'Tool call denied' : 'Tool call failed'">
+            <Icon name="close" class="h-3.5 w-3.5" />
           </span>
           <Icon
             name="chevron-right"

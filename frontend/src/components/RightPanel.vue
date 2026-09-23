@@ -10,8 +10,9 @@
  * built in v1: `docs/12` §8.1 describes the per-thread plan, and a merged list needs its own
  * design for grouping and for jumping between columns.
  */
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import type { RowSnapshot, TodoPhaseSnapshot } from "../bridge";
+import type { TurnReviewRequest } from "../lib/panel";
 import FilesPanel from "./FilesPanel.vue";
 import TodosPanel from "./TodosPanel.vue";
 import Icon from "./ui/Icon.vue";
@@ -24,7 +25,7 @@ const props = defineProps<{
   rows: RowSnapshot[];
   cwd: string | null;
   live: boolean;
-  busy?: boolean;
+  review: TurnReviewRequest | null;
   workspace?: string | null;
   terminals?: boolean;
   diagnostics?: boolean;
@@ -35,13 +36,21 @@ const emit = defineEmits<{
   written: [];
   failed: [message: string];
   close: [];
-  newThread: [];
+  closeReview: [];
   toggleTerminals: [];
   toggleDiagnostics: [];
 }>();
 
 /** `docs/12` §8 opens on the plan, which is the sketch's order. */
 const tab = ref<"todos" | "files">("todos");
+
+watch(
+  () => props.review?.id,
+  (id) => {
+    if (id !== undefined) tab.value = "files";
+  },
+  { immediate: true },
+);
 
 const BUTTON =
   "grid h-7 w-7 place-items-center rounded-[6px] text-dim transition-colors hover:bg-raised hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-dim";
@@ -78,21 +87,6 @@ const BUTTON =
       </div>
 
       <div class="ml-auto flex items-center gap-0.5 shrink-0">
-        <button
-          :class="BUTTON"
-          :disabled="props.busy || props.workspace === null"
-          :title="
-            props.workspace === null
-              ? 'no project open — add one in the sidebar'
-              : `new thread in ${props.workspace}`
-          "
-          aria-label="new thread"
-          data-action="new-thread"
-          type="button"
-          @click="emit('newThread')"
-        >
-          <Icon name="plus" />
-        </button>
         <button
           :class="[BUTTON, props.terminals ? 'bg-raised text-accent hover:text-accent' : '']"
           :disabled="props.workspace === null"
@@ -146,12 +140,15 @@ const BUTTON =
       />
       <FilesPanel
         v-else
+        :key="props.review?.id ?? 'session-files'"
         :thread="props.thread"
         :rows="props.rows"
         :cwd="props.cwd"
         :live="props.live"
+        :review="props.review"
         @jump="emit('jump', $event)"
         @failed="emit('failed', $event)"
+        @close-review="emit('closeReview')"
       />
     </template>
   </aside>

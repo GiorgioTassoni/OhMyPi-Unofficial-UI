@@ -19,9 +19,9 @@
 //! Measured both directions with a real agent: recording `tools.approval.bash:
 //! allow` **mid-session** does not stop the next approval prompt in that session,
 //! while a session started afterwards does not prompt at all. The engine reads the
-//! record when it constructs the session, so the click takes effect from the
-//! *next* session onwards — which is what the dialog has to tell the user, and why
-//! [`PolicyOutcome`] says what was written rather than claiming the prompt is gone.
+//! record when it constructs the session, so OMP itself takes the write into
+//! account from the next launch. The host separately remembers a grant made from
+//! the dialog and answers later matching approvals in the current session.
 //! (A debounce was ruled out: an 8-second window behaves the same.)
 //!
 //! A project-level `<workspace>/.omp/config.yml` carrying the same record *is*
@@ -127,9 +127,8 @@ pub fn merge_record(
 
 /// Record `tools.approval.<tool> = allow` in the engine's config.
 ///
-/// Takes effect the next time a session starts, not in the one that is asking —
-/// see the module docs. The outcome reports the write, not a promise about the
-/// running agent.
+/// OMP reads this record when a session starts; the caller applies the grant to
+/// the live session separately. The outcome reports the persisted write.
 pub async fn allow_tool(tool: &str) -> Result<PolicyOutcome, String> {
     validate_tool_name(tool)?;
 

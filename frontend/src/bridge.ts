@@ -107,6 +107,8 @@ export interface AttachmentSnapshot {
 export interface RowSnapshot {
   /** `user`, `assistant`, `tool`, or `notice:<level>`. */
   role: string;
+  /** Engine-stamped Unix milliseconds when this row is a message. */
+  timestamp?: number | null;
   text: string;
   thinking: string | null;
   streaming: boolean;
@@ -390,13 +392,16 @@ export async function stopTurnAndSend(
 /**
  * Record "always allow" for a tool in the engine's own config (`docs/12` §10).
  *
- * Writes `tools.approval.<tool> = allow` so the *next* session runs that tool
- * without asking. It cannot affect the running session — measured, and the reason
- * the dialog says so — so a rejection here means the write failed, never that the
- * setting was ignored.
+ * Persists `tools.approval.<tool> = allow` for future sessions and enables the
+ * same grant in the running host session.
  */
-export async function allowTool(tool: string): Promise<PolicyOutcome> {
-  return invoke<PolicyOutcome>("allow_tool", { tool });
+export async function allowTool(thread: string, tool: string): Promise<PolicyOutcome> {
+  return invoke<PolicyOutcome>("allow_tool", { thread, tool });
+}
+
+/** Allow a simple command executable for this conversation only. */
+export async function allowCommand(thread: string, command: string): Promise<string> {
+  return invoke<string>("allow_command", { thread, command });
 }
 
 /** Mirrors `dto::CommandSnapshot`: one row of the command palette (`docs/12` §7.3). */
@@ -473,10 +478,9 @@ export async function setFavourites(keys: string[]): Promise<string[]> {
  * Change the session's approval mode.
  *
  * The engine has no runtime setter, so the host writes `tools.approvalMode` and
- * restarts the sidecar on the same session file — which is why this returns the new
- * `SessionStatus` rather than nothing: the session the caller was watching is gone,
- * and a turn that was running with it. The *thread id* is unchanged: same session file,
- * so the registry entry is the one that was already there.
+ * waits for the current turn and queued follow-ups, then restarts the sidecar on
+ * the same session file. The returned `SessionStatus` describes the replacement
+ * process; the thread id and conversation are unchanged.
  */
 export async function setApprovalMode(thread: string, mode: string): Promise<SessionStatus> {
   return invoke<SessionStatus>("set_approval_mode", { thread, mode });

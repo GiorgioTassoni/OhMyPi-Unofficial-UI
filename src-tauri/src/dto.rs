@@ -283,6 +283,8 @@ pub struct ImageIn {
 #[serde(rename_all = "camelCase")]
 pub struct RowSnapshot {
     pub role: String,
+    /// Engine-stamped Unix milliseconds for a message; tools and notices have none.
+    pub timestamp: Option<u64>,
     /// What was said. Markdown for an assistant turn (`docs/12` §3.1).
     pub text: String,
     /// The reasoning behind an assistant turn, absent when there was none.

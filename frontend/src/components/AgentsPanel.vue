@@ -99,6 +99,13 @@ const transcriptNote = ref<string | null>(null);
 let cursor = 0;
 
 const scopes = ref<BrokerScope[]>([]);
+/** OMP retains exited daemons in `ps`; this panel is for processes still active. */
+const activeScopes = computed(() => scopes.value
+  .map((entry) => ({
+    ...entry,
+    daemons: entry.daemons.filter((daemon) => daemon.state !== "exited" && daemon.state !== "failed"),
+  }))
+  .filter((entry) => entry.daemons.length > 0));
 const jobNotice = ref<string | null>(null);
 
 type ParkedAgentLike = Awaited<ReturnType<typeof parkedAgents>>[number];
@@ -476,10 +483,10 @@ function title(thread: string): string {
           <h3 class="px-1 text-[10.5px] font-medium uppercase tracking-[0.09em] text-faint">
             broker-owned processes (`omp ps`)
           </h3>
-          <p v-if="scopes.every((entry) => entry.daemons.length === 0)" class="px-1 py-1 text-[11.5px] text-faint">
-            no supervised process in this scope
+          <p v-if="activeScopes.length === 0" class="px-1 py-1 text-[11.5px] text-faint">
+            no active broker-owned processes
           </p>
-          <template v-for="entry in scopes" :key="entry.runtimeDir">
+          <template v-for="entry in activeScopes" :key="entry.runtimeDir">
             <div
               v-for="daemon in entry.daemons"
               :key="`${entry.runtimeDir}-${daemon.name}`"

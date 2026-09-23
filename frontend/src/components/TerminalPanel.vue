@@ -33,6 +33,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
 import { onTerminalOutput, terminalResize, terminalWrite } from "../bridge";
+import type { AppTheme } from "../lib/appTheme";
 import { decodeOutput, Pending, type TerminalTab } from "../lib/terminals";
 import Icon from "./ui/Icon.vue";
 
@@ -42,6 +43,8 @@ const props = defineProps<{
   active: string | null;
   /** Whether the drawer is on screen at all; a hidden emulator is not worth mounting. */
   visible: boolean;
+  /** The app palette, so already-mounted xterm instances change with the window. */
+  theme: AppTheme;
 }>();
 
 const emit = defineEmits<{
@@ -76,6 +79,15 @@ function token(name: string, fallback: string): string {
   return value === "" ? fallback : value;
 }
 
+function terminalTheme(): { background: string; foreground: string; cursor: string; selectionBackground: string } {
+  return {
+    background: token("--color-canvas", "#1f1e33"),
+    foreground: token("--color-fg", "#eceaf6"),
+    cursor: token("--color-accent", "#a397e9"),
+    selectionBackground: token("--color-selected", "#28283e"),
+  };
+}
+
 /**
  * Mount an emulator for a tab, and hand it whatever output was waiting for it.
  *
@@ -92,12 +104,7 @@ function mount(tab: TerminalTab, element: HTMLElement): void {
     cursorBlink: true,
     // The shell wraps its own lines. An emulator that also wraps double-wraps every long line.
     convertEol: false,
-    theme: {
-      background: token("--color-canvas", "#1f1e33"),
-      foreground: token("--color-fg", "#eceaf6"),
-      cursor: token("--color-accent", "#a397e9"),
-      selectionBackground: token("--color-selected", "#28283e"),
-    },
+    theme: terminalTheme(),
   });
 
   const fit = new FitAddon();
@@ -231,6 +238,9 @@ onUnmounted(() => {
 // re-created: what changes is the tabs, and a new one needs a box before it can be mounted.
 watch(() => props.tabs, () => void nextTick(sync), { flush: "post" });
 watch(() => props.visible, () => void nextTick(sync), { flush: "post" });
+watch(() => props.theme, () => {
+  for (const { term } of emulators.values()) term.options.theme = terminalTheme();
+}, { flush: "post" });
 watch(
   () => props.active,
   () =>

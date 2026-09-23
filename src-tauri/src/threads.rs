@@ -198,6 +198,26 @@ impl Threads {
         Some(session)
     }
 
+    /// Remove only the sidecar a caller inspected before an async wait.
+    /// A mode switch must not stop a different session that took the same id
+    /// while it was waiting for the old one's turn to finish.
+    pub fn remove_if_same(
+        &self,
+        id: &str,
+        expected: &Arc<LiveSession>,
+    ) -> Option<Arc<LiveSession>> {
+        let session = {
+            let mut live = self.live.lock().ok()?;
+            if !Arc::ptr_eq(live.get(id)?, expected) {
+                return None;
+            }
+            live.remove(id)?
+        };
+        self.remember(id, &session);
+        self.clear_suspension(id);
+        Some(session)
+    }
+
     /// Mark a thread as released: the app stopped its sidecar to give the process back.
     ///
     /// Called by the supervisor *after* the thread has left the registry and its engine has

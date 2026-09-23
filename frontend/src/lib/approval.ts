@@ -50,6 +50,20 @@ export interface ApprovalPrompt {
   notes: string[];
 }
 
+/**
+ * The executable named by a command approval, for a narrowly scoped session grant.
+ * This is only a display/intent helper; the host parses and validates it again.
+ */
+export function commandProgram(command: string): string | null {
+  const first = command.trim().match(/^(?:"([^"\n]+)"|'([^'\n]+)'|([^\s;|&<>()[\]{}$`*?\\]+))/);
+  const executable = first?.[1] ?? first?.[2] ?? first?.[3];
+  if (executable === undefined) return null;
+  const program = executable.split(/[\\/]/).at(-1);
+  return program !== undefined && /^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/.test(program)
+    ? program
+    : null;
+}
+
 /** The engine's own option labels for an approval (`wrapper.ts` mints both). */
 export const APPROVE = "Approve";
 export const DENY = "Deny";
@@ -169,15 +183,4 @@ export function formatRemaining(ms: number): string {
     return `resolves itself in ${Math.round(seconds / 60)}m unless you answer`;
   }
   return `resolves itself in ${seconds}s unless you answer`;
-}
-
-/**
- * What "always allow" does, said exactly — both halves.
- *
- * The write is *not* live: measured on v18.2.6, a session keeps asking after the
- * record changes, and the next session honours it. Copy that promised "won't ask
- * again" would read as a broken button the moment the next `bash` call asked again.
- */
-export function allowEffect(tool: string): string {
-  return `saved — new sessions run ${tool} without asking; this one keeps asking until it restarts`;
 }

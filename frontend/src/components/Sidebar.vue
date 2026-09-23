@@ -355,7 +355,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
                 :class="{
                   'border border-line-strong': row.dot === 'cold',
                   'bg-faint/60': row.dot === 'idle',
-                  'animate-pulse bg-accent shadow-[0_0_6px_rgba(163,151,233,0.5)]': row.dot === 'streaming',
+                  'animate-pulse bg-accent streaming-dot': row.dot === 'streaming',
                   'bg-warn': row.dot === 'attention',
                   'bg-err': row.dot === 'error',
                 }"

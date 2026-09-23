@@ -17,6 +17,7 @@
 //! below (the transport) knows nothing about windows.
 
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -30,6 +31,7 @@ use omp_transport::protocol::{self, commands, ImageContent};
 use omp_transport::{ClientOptions, OmpClient, SessionEvent, SidecarSpec};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 
 use crate::dialogs::Dialogs;
@@ -50,6 +52,10 @@ use crate::notify::{Facts, Notifier};
 /// waiting a tick: a patch always starts at the earliest change, so a quiet tick
 /// sends nothing at all.
 const ROWS_PUBLISH_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Two idle samples avoid mistaking the gap between an accepted RPC prompt and
+/// OMP's `agent_start` for a finished turn.
+const MODE_SWITCH_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// How long the engine gets to finish cleanly before it is killed.
 ///
@@ -176,9 +182,16 @@ pub struct LiveSession {
     pub thread: ThreadId,
     /// The approval mode this process was launched with, from the spec.
     pub approval_mode: Option<String>,
+    /// Serializes user turn submissions with a mode switch becoming pending.
+    turn_gate: AsyncMutex<()>,
+    mode_switch_pending: AtomicBool,
     pub transcript: Arc<Mutex<Transcript>>,
     pub control: Arc<Mutex<SessionControl>>,
     pub dialogs: Arc<Dialogs>,
+    /// Tool grants made while this sidecar is running. OMP reads config only at launch.
+    granted_tools: Arc<Mutex<HashSet<String>>>,
+    /// Executables the user chose to allow for this conversation only.
+    granted_commands: Arc<Mutex<HashSet<String>>>,
     pub counters: Arc<Counters>,
     /// The palette's list, as the engine last advertised it (`docs/12` §7.3).
     ///
@@ -211,7 +224,103 @@ pub struct LiveSession {
     pub pump: Mutex<Option<JoinHandle<()>>>,
 }
 
+/// Releases a pending switch if the request fails or the caller goes away.
+pub struct ModeSwitchGuard<'a> {
+    pending: &'a AtomicBool,
+}
+
+impl Drop for ModeSwitchGuard<'_> {
+    fn drop(&mut self) {
+        self.pending.store(false, Ordering::SeqCst);
+    }
+}
+
 impl LiveSession {
+    /// Stop admitting new user turns while a mode switch waits for this one to finish.
+    /// Existing turns and their approval dialogs remain usable until they settle.
+    pub async fn begin_mode_switch(&self) -> Result<ModeSwitchGuard<'_>, String> {
+        let _gate = self.turn_gate.lock().await;
+        if self.mode_switch_pending.swap(true, Ordering::SeqCst) {
+            return Err("an approval mode switch is already pending".to_string());
+        }
+        Ok(ModeSwitchGuard {
+            pending: &self.mode_switch_pending,
+        })
+    }
+
+    /// Send a turn-starting command only while no mode switch is pending.
+    pub async fn send_user_turn(
+        &self,
+        command: serde_json::Value,
+        what: &str,
+    ) -> Result<(), String> {
+        let _gate = self.turn_gate.lock().await;
+        self.ensure_turn_admitted()?;
+        let client = self
+            .client()
+            .ok_or_else(|| "the session is shutting down".to_string())?;
+        send(&client, command, what).await
+    }
+
+    /// Wait for the foreground turn (and anything already queued behind it) to finish.
+    /// A fresh engine snapshot is needed here: a cached `is_streaming: false` may
+    /// precede `agent_start` for a prompt OMP has accepted but not begun yet.
+    pub async fn wait_for_turn_to_finish(&self) -> Result<(), String> {
+        let mut idle_samples = 0;
+        loop {
+            let client = self
+                .client()
+                .ok_or_else(|| "the session closed before its turn finished".to_string())?;
+            let response = call(&client, commands::get_state(), None, "session state").await?;
+            let fresh = SessionControl::decode(&response["data"])
+                .ok_or_else(|| "the agent's state payload had no session id".to_string())?;
+            let idle = {
+                let cached = self
+                    .control
+                    .lock()
+                    .map_err(|_| "the control state lock was poisoned".to_string())?;
+                mode_switch_idle(&fresh, &cached, self.dialogs.count())
+            };
+
+            if idle {
+                idle_samples += 1;
+                if idle_samples >= 2 {
+                    return Ok(());
+                }
+            } else {
+                idle_samples = 0;
+            }
+            tokio::time::sleep(MODE_SWITCH_POLL_INTERVAL).await;
+        }
+    }
+
+    fn ensure_turn_admitted(&self) -> Result<(), String> {
+        if self.mode_switch_pending.load(Ordering::SeqCst) {
+            Err("the approval mode will change after the current turn finishes".to_string())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Make a persisted tool grant effective for subsequent approvals in this session.
+    pub fn grant_tool(&self, tool: &str) -> Result<(), String> {
+        self.granted_tools
+            .lock()
+            .map_err(|_| "the session's tool grants were unavailable".to_string())?
+            .insert(tool.to_string());
+        Ok(())
+    }
+
+    /// Remember the direct executable from this approved command for this session only.
+    pub fn grant_command(&self, command: &str) -> Result<String, String> {
+        let program = command_program(command)?;
+        self.granted_commands
+            .lock()
+            .map_err(|_| "the session's command grants were unavailable".to_string())?
+            .insert(program.clone());
+        Ok(program)
+    }
+
     /// Snapshot everything the UI shows.
     ///
     /// Fallible rather than infallible: a poisoned lock means a thread panicked
@@ -377,6 +486,8 @@ impl LiveSession {
         message: String,
         images: &[ImageContent],
     ) -> Result<(), String> {
+        let _gate = self.turn_gate.lock().await;
+        self.ensure_turn_admitted()?;
         self.end_turn(commands::abort_and_prompt(message, images), "stop-and-send")
             .await
     }
@@ -684,6 +795,19 @@ impl LiveSession {
     }
 }
 
+fn mode_switch_idle(
+    fresh: &SessionControl,
+    cached: &SessionControl,
+    pending_dialogs: usize,
+) -> bool {
+    !fresh.is_streaming
+        && !fresh.is_compacting
+        && fresh.queued_message_count == 0
+        && !cached.is_streaming
+        && !cached.is_compacting
+        && pending_dialogs == 0
+}
+
 /// One page of a subagent's transcript, as the engine served it.
 pub struct AgentPage {
     /// The file the page came from, per the engine.
@@ -985,6 +1109,8 @@ pub async fn open(
         roster: Arc::clone(&roster),
     };
     let dialogs = Arc::new(Dialogs::new(reporting.clone(), Arc::clone(&transcript)));
+    let granted_tools = Arc::new(Mutex::new(HashSet::new()));
+    let granted_commands = Arc::new(Mutex::new(HashSet::new()));
     let commands = Arc::new(Mutex::new(Vec::new()));
 
     let agents = Arc::new(Mutex::new(AgentRoster::new()));
@@ -997,6 +1123,8 @@ pub async fn open(
             transcript: Arc::clone(&transcript),
             control: Arc::clone(&control_state),
             dialogs: Arc::clone(&dialogs),
+            granted_tools: Arc::clone(&granted_tools),
+            granted_commands: Arc::clone(&granted_commands),
             counters: Arc::clone(&counters),
             commands: Arc::clone(&commands),
             agents: Arc::clone(&agents),
@@ -1011,9 +1139,13 @@ pub async fn open(
         workspace,
         thread,
         approval_mode: spec.approval_mode().map(str::to_string),
+        turn_gate: AsyncMutex::new(()),
+        mode_switch_pending: AtomicBool::new(false),
         transcript,
         control: control_state,
         dialogs,
+        granted_tools,
+        granted_commands,
         counters,
         commands,
         agents,
@@ -1135,11 +1267,8 @@ pub async fn prompt(
     message: String,
     images: &[ImageContent],
 ) -> Result<(), String> {
-    let client = live
-        .client()
-        .ok_or_else(|| "the session is shutting down".to_string())?;
-
-    send(&client, commands::prompt(message, images, None), "prompt").await
+    live.send_user_turn(commands::prompt(message, images, None), "prompt")
+        .await
 }
 
 /// Ask OMP to name an existing unnamed session, without blocking the conversation.
@@ -1255,6 +1384,7 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
     match row {
         omp_session::Row::Message(message) => RowSnapshot {
             role: message.role().to_string(),
+            timestamp: message.timestamp,
             text: message.text(),
             thinking: None,
             streaming: false,
@@ -1265,6 +1395,7 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
         },
         omp_session::Row::Assistant { message, streaming } => RowSnapshot {
             role: "assistant".to_string(),
+            timestamp: message.timestamp,
             text: message.text(),
             thinking: optional(message.thinking()),
             streaming: *streaming,
@@ -1275,6 +1406,7 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
         },
         omp_session::Row::Tool(card) => RowSnapshot {
             role: "tool".to_string(),
+            timestamp: None,
             text: String::new(),
             thinking: None,
             streaming: !card.is_finished(),
@@ -1306,6 +1438,7 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
         },
         omp_session::Row::Notice { level, text, .. } => RowSnapshot {
             role: format!("notice:{level}"),
+            timestamp: None,
             text: text.clone(),
             thinking: None,
             streaming: false,
@@ -1540,10 +1673,108 @@ pub struct Reducers {
     pub transcript: Arc<Mutex<Transcript>>,
     pub control: Arc<Mutex<SessionControl>>,
     pub dialogs: Arc<Dialogs>,
+    pub granted_tools: Arc<Mutex<HashSet<String>>>,
+    pub granted_commands: Arc<Mutex<HashSet<String>>>,
     pub counters: Arc<Counters>,
     pub commands: Arc<Mutex<Vec<AdvertisedCommand>>>,
     pub agents: Arc<Mutex<AgentRoster>>,
     pub title_generation_in_flight: Arc<AtomicBool>,
+}
+
+/// A tool grant answers only that tool's exact approval. A command grant answers only a
+/// simple shell invocation of the selected executable; shell operators still require approval.
+/// Extension dialogs and changed approval shapes still reach the user.
+fn auto_approval_frame(
+    incoming: &ui::Incoming,
+    granted_tools: &Mutex<HashSet<String>>,
+    granted_commands: &Mutex<HashSet<String>>,
+) -> Option<serde_json::Value> {
+    let ui::Incoming::Request(request) = incoming else {
+        return None;
+    };
+    if request.kind != ui::UiRequestKind::Select || request.options != ["Approve", "Deny"] {
+        return None;
+    }
+    let tool = request
+        .title
+        .lines()
+        .next()?
+        .strip_prefix("Allow tool: ")?
+        .trim();
+    if crate::policy::validate_tool_name(tool).is_err() {
+        return None;
+    }
+
+    let tool_granted = granted_tools.lock().ok()?.contains(tool);
+    let command_granted = if matches!(tool, "bash" | "bash_interactive") {
+        command_from_approval(&request.title)
+            .and_then(simple_command_program)
+            .is_some_and(|program| {
+                granted_commands
+                    .lock()
+                    .is_ok_and(|set| set.contains(&program))
+            })
+    } else {
+        false
+    };
+    if !tool_granted && !command_granted {
+        return None;
+    }
+    UiResponse::Value("Approve".to_string()).frame(request.kind, &request.id)
+}
+
+/// The executable at the beginning of a command, normalized to its basename.
+/// This is a display/grant identity only; it never executes or rewrites the command.
+pub fn command_program(command: &str) -> Result<String, String> {
+    let words = shell_words::split(command)
+        .map_err(|_| "the command could not be parsed safely".to_string())?;
+    let executable = words
+        .first()
+        .filter(|word| !word.is_empty())
+        .ok_or_else(|| "the command has no executable".to_string())?;
+    let program = Path::new(executable)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "the command executable has no readable name".to_string())?;
+    crate::policy::validate_tool_name(program)?;
+    Ok(program.to_string())
+}
+
+fn command_from_approval(title: &str) -> Option<&str> {
+    title
+        .lines()
+        .skip(1)
+        .find_map(|line| line.strip_prefix("Command:").map(str::trim))
+        .filter(|command| !command.is_empty())
+}
+
+/// Reject shell syntax that can invoke another program or expand into a different call.
+/// False negatives are intentional: commands with operators continue to prompt.
+fn simple_command_program(command: &str) -> Option<String> {
+    if command.chars().any(|character| {
+        matches!(
+            character,
+            ';' | '|'
+                | '&'
+                | '<'
+                | '>'
+                | '$'
+                | '`'
+                | '('
+                | ')'
+                | '{'
+                | '}'
+                | '*'
+                | '?'
+                | '['
+                | ']'
+                | '\n'
+                | '\r'
+        )
+    }) {
+        return None;
+    }
+    command_program(command).ok()
 }
 
 pub fn spawn_pump(
@@ -1555,6 +1786,8 @@ pub fn spawn_pump(
         transcript,
         control,
         dialogs,
+        granted_tools,
+        granted_commands,
         counters,
         commands,
         agents,
@@ -1815,6 +2048,19 @@ pub fn spawn_pump(
                             continue;
                         };
 
+                        if let Some(frame) = auto_approval_frame(
+                            &incoming,
+                            &granted_tools,
+                            &granted_commands,
+                        ) {
+                            match client.send(&frame).await {
+                                Ok(()) => continue,
+                                Err(error) => eprintln!(
+                                    "[omp-desktop] could not answer granted approval: {error}"
+                                ),
+                            }
+                        }
+
                         if let ui::Incoming::Request(request) = &incoming {
                             let facts =
                                 facts(&reporting.thread.current(), &control, &transcript);
@@ -1949,6 +2195,145 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mode_switch_waits_for_running_queued_and_blocked_work() {
+        let idle = SessionControl::decode(&serde_json::json!({
+            "sessionId": "thread-1",
+            "isStreaming": false,
+            "isCompacting": false,
+            "queuedMessageCount": 0
+        }))
+        .expect("control snapshot");
+        assert!(mode_switch_idle(&idle, &idle, 0));
+
+        let mut active = idle.clone();
+        active.is_streaming = true;
+        assert!(!mode_switch_idle(&active, &idle, 0));
+        assert!(!mode_switch_idle(&idle, &active, 0));
+
+        let mut queued = idle.clone();
+        queued.queued_message_count = 1;
+        assert!(!mode_switch_idle(&queued, &idle, 0));
+
+        let mut compacting = idle.clone();
+        compacting.is_compacting = true;
+        assert!(!mode_switch_idle(&compacting, &idle, 0));
+        assert!(!mode_switch_idle(&idle, &compacting, 0));
+        assert!(!mode_switch_idle(&idle, &idle, 1));
+    }
+
+    #[test]
+    fn a_live_grant_only_answers_the_matching_engine_approval() {
+        let granted = Mutex::new(HashSet::from(["bash".to_string()]));
+        let granted_commands = Mutex::new(HashSet::new());
+        let approval = ui::Incoming::Request(ui::UiRequest {
+            id: "ui_1".to_string(),
+            kind: ui::UiRequestKind::Select,
+            title: "Allow tool: bash\nCommand: echo hello".to_string(),
+            message: String::new(),
+            options: vec!["Approve".to_string(), "Deny".to_string()],
+            prefill: None,
+            placeholder: None,
+            timeout_ms: None,
+        });
+
+        assert_eq!(
+            auto_approval_frame(&approval, &granted, &granted_commands),
+            Some(serde_json::json!({
+                "type": "extension_ui_response", "id": "ui_1", "value": "Approve"
+            }))
+        );
+
+        let ui::Incoming::Request(original) = approval else {
+            unreachable!()
+        };
+        for altered in [
+            ui::UiRequest {
+                title: "Allow tool: write".to_string(),
+                ..original.clone()
+            },
+            ui::UiRequest {
+                options: vec!["Approve".to_string(), "Later".to_string()],
+                ..original.clone()
+            },
+            ui::UiRequest {
+                kind: ui::UiRequestKind::Confirm,
+                ..original.clone()
+            },
+            ui::UiRequest {
+                title: "Allow tool: bash/other".to_string(),
+                ..original.clone()
+            },
+        ] {
+            assert_eq!(
+                auto_approval_frame(&ui::Incoming::Request(altered), &granted, &granted_commands),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn a_conversation_command_grant_only_answers_simple_calls_of_that_program() {
+        let granted_tools = Mutex::new(HashSet::new());
+        let granted_commands = Mutex::new(HashSet::from(["node".to_string()]));
+        let approval = |command: &str| {
+            ui::Incoming::Request(ui::UiRequest {
+                id: "ui_1".to_string(),
+                kind: ui::UiRequestKind::Select,
+                title: format!("Allow tool: bash\nCommand: {command}"),
+                message: String::new(),
+                options: vec!["Approve".to_string(), "Deny".to_string()],
+                prefill: None,
+                placeholder: None,
+                timeout_ms: None,
+            })
+        };
+
+        assert!(auto_approval_frame(
+            &approval("node check-index.js"),
+            &granted_tools,
+            &granted_commands,
+        )
+        .is_some());
+        assert!(auto_approval_frame(
+            &approval("/usr/bin/node check-index.js"),
+            &granted_tools,
+            &granted_commands,
+        )
+        .is_some());
+        for command in [
+            "npm test",
+            "node check-index.js; rm -rf /tmp/probe",
+            "node $(touch /tmp/probe)",
+            "node check-index.js | tee output.log",
+            "NODE_OPTIONS=--inspect node check-index.js",
+        ] {
+            assert_eq!(
+                auto_approval_frame(&approval(command), &granted_tools, &granted_commands),
+                None,
+                "compound or different command must still ask: {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_command_grant_uses_the_direct_executable_name() {
+        assert_eq!(
+            command_program("node check-index.js; echo done").unwrap(),
+            "node"
+        );
+        assert_eq!(
+            command_program("/usr/bin/node check-index.js").unwrap(),
+            "node"
+        );
+        assert!(command_program("NODE_OPTIONS=--inspect node check-index.js").is_err());
+        assert_eq!(
+            simple_command_program("node check-index.js").as_deref(),
+            Some("node")
+        );
+        assert_eq!(simple_command_program("node a.js; echo done"), None);
+    }
+
+    #[test]
     fn automatic_title_receipts_are_hidden_but_other_command_output_is_not() {
         assert!(is_generated_title_receipt(
             "Could not generate a session title. Use /rename <title> to set one."
@@ -2024,6 +2409,7 @@ mod tests {
         let row = row_snapshot(&omp_session::Row::Message(message));
 
         assert_eq!(row.role, "user");
+        assert_eq!(row.timestamp, Some(1));
         assert_eq!(row.text, "what is this");
         assert_eq!(row.attachments.len(), 1);
         assert_eq!(row.attachments[0].mime_type, "image/png");
