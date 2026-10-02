@@ -277,6 +277,12 @@ export interface ProjectSnapshot {
   hidden: boolean;
 }
 
+/** The sidebar's sessions and project groups from the same store scan. */
+export interface SidebarSnapshot {
+  sessions: SessionSummary[];
+  projects: ProjectSnapshot[];
+}
+
 /**
  * One session-scoped event.
  *
@@ -322,14 +328,9 @@ export async function closeThread(thread: string): Promise<void> {
   return invoke<void>("close_thread", { thread });
 }
 
-/** Every session the engine has on disk, newest first. Works with no thread open. */
-export async function sessions(): Promise<SessionSummary[]> {
-  return invoke<SessionSummary[]>("sessions");
-}
-
-/** The working directories the store knows, with their session counts. */
-export async function projects(): Promise<ProjectSnapshot[]> {
-  return invoke<ProjectSnapshot[]>("projects");
+/** Every saved session and its project group, from one store scan. */
+export async function sidebarSnapshot(): Promise<SidebarSnapshot> {
+  return invoke<SidebarSnapshot>("sidebar_snapshot");
 }
 
 /** What the app was launched with. */
@@ -399,9 +400,14 @@ export async function allowTool(thread: string, tool: string): Promise<PolicyOut
   return invoke<PolicyOutcome>("allow_tool", { thread, tool });
 }
 
-/** Allow a simple command executable for this conversation only. */
-export async function allowCommand(thread: string, command: string): Promise<string> {
-  return invoke<string>("allow_command", { thread, command });
+/** Grant the next unapproved executable in a supported command chain. */
+export async function allowCommand(thread: string, title: string): Promise<string> {
+  return invoke<string>("allow_command", { thread, title });
+}
+
+/** The exact executable an "always allow" click would grant next, if safe to parse. */
+export async function nextCommandGrant(thread: string, title: string): Promise<string | null> {
+  return invoke<string | null>("next_command_grant", { thread, title });
 }
 
 /** Mirrors `dto::CommandSnapshot`: one row of the command palette (`docs/12` §7.3). */
@@ -1426,4 +1432,61 @@ export async function settingsBackup(): Promise<string> {
 /** Restart every live session so a written setting is in effect now. */
 export async function settingsRestartSessions(): Promise<SettingsRestartReport> {
   return invoke<SettingsRestartReport>("settings_restart_sessions");
+}
+
+export interface ProviderAccountDto {
+  id?: number | null;
+  provider: string;
+  credentialType: string;
+  isCustom: boolean;
+  baseUrl?: string | null;
+  models: string[];
+  createdAt?: number | null;
+}
+
+export interface CatalogProviderDto {
+  id: string;
+  name: string;
+  authType: string;
+  envVar?: string | null;
+  description?: string | null;
+}
+
+export interface CustomProviderInput {
+  id: string;
+  baseUrl: string;
+  apiKey?: string | null;
+  api?: string | null;
+  modelId: string;
+  modelName?: string | null;
+}
+
+/** Get the catalog of supported OMP providers. */
+export async function getCatalogProviders(): Promise<CatalogProviderDto[]> {
+  return invoke<CatalogProviderDto[]>("get_catalog_providers");
+}
+
+/** Get currently configured provider credentials and custom endpoints. */
+export async function getConfiguredProviders(): Promise<ProviderAccountDto[]> {
+  return invoke<ProviderAccountDto[]>("get_configured_providers");
+}
+
+/** Store an API key for a catalog provider in agent.db. */
+export async function addProviderApiKey(provider: string, apiKey: string): Promise<void> {
+  return invoke<void>("add_provider_api_key", { provider, apiKey });
+}
+
+/** Remove an authenticated credential from agent.db by SQLite ID. */
+export async function removeProviderCredential(id: number): Promise<void> {
+  return invoke<void>("remove_provider_credential", { id });
+}
+
+/** Add or update a custom provider in models.yml. */
+export async function addCustomProvider(input: CustomProviderInput): Promise<void> {
+  return invoke<void>("add_custom_provider", { input });
+}
+
+/** Remove a custom provider from models.yml. */
+export async function removeCustomProvider(providerId: string): Promise<void> {
+  return invoke<void>("remove_custom_provider", { providerId });
 }

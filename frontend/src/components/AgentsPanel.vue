@@ -1,32 +1,20 @@
 <script setup lang="ts">
 /**
- * The agents panel (`docs/12` §9): every subagent this window can account for, their
- * transcripts, and the processes the engine's broker supervises.
+ * The agents panel (`docs/12` §9): a concise view of work still in flight,
+ * plus the processes the engine's broker supervises.
  *
  * Global rather than scoped to one thread, because a subagent is work that runs *beside* the
  * conversation: a reader looking for "what is running right now" is asking about the app, not
  * about the thread on screen.
  *
- * Three things about the engine shape this:
- *
- * - **The roster is live-only.** Its registry forgets a settled subagent immediately, so the
- *   threads' live rosters (pushed by the host) are joined with what is on disk — the
- *   transcript each subagent wrote — and an agent that finished before this window opened
- *   still gets a row.
- * - **A transcript is read by byte cursor.** The engine serves it while it owns the id;
- *   afterwards the host reads the same file itself. A page whose `reset` is set *replaces*
- *   what is shown, which is the engine's own rule for a file that shrank.
- * - **Jobs are derived, not listed.** The engine exposes no command to list or cancel one —
- *   `hub` is a tool the *agent* calls — so the rows here come from the cards that started
- *   them and the deliveries that finished them, and the panel says so instead of implying a
- *   control it does not have.
+ * The roster also remembers settled agents, but this window deliberately excludes them.
+ * Jobs are derived from their starting cards and delivery messages; only undelivered jobs
+ * belong in the live list.
  */
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 
 import {
-  agentMessages,
   brokerProcesses,
-  parkedAgents,
   stopBrokerProcess,
   type BrokerScope,
   type RowSnapshot,
@@ -34,14 +22,13 @@ import {
 } from "../bridge";
 import {
   activeCount,
-  age,
+  agentInFlight,
   context,
   cost,
-  duration,
   entries,
   jobs,
   label,
-  spawnRow,
+  modelFor,
   stats,
   statusLabel,
   subtitle,
@@ -51,7 +38,6 @@ import {
   type AgentEntry,
   type AgentTone,
 } from "../lib/agents";
-import ConversationRow from "./ConversationRow.vue";
 import Modal from "./Modal.vue";
 
 const props = defineProps<{
@@ -72,31 +58,26 @@ const props = defineProps<{
   live: string[];
   /** The active thread's conversation, for the task text and the jump back. */
   rows: RowSnapshot[];
+  /** A spawn notice can open this panel directly on its agent. */
+  focus: { thread: string; id: string } | null;
 }>();
 
 const emit = defineEmits<{
   /** Reveal a conversation row: the spawning `task` call, or a job's card. */
   reveal: [thread: string, index: number];
+  openAgent: [thread: string, id: string];
   close: [];
 }>();
 
 type Tab = "agents" | "jobs";
 
 const tab = ref<Tab>("agents");
-const now = ref(Date.now());
 const failure = ref<string | null>(null);
 
-/** The thread whose detail pane is open. */
-const scope = ref<string | null>(props.activeId ?? props.rosters[0]?.thread ?? null);
+/** The thread whose agent summaries are in view. */
+const scope = ref<string | null>(props.focus?.thread ?? props.activeId ?? props.rosters[0]?.thread ?? null);
 
-/** Every parked transcript for the threads the panel is looking at. */
-const parked = ref<Record<string, ParkedAgentLike[]>>({});
-
-/** The selected agent, and its transcript. */
-const selected = ref<AgentEntry | null>(null);
-const transcript = ref<RowSnapshot[]>([]);
-const transcriptNote = ref<string | null>(null);
-let cursor = 0;
+const agentList = ref<HTMLElement | null>(null);
 
 const scopes = ref<BrokerScope[]>([]);
 /** OMP retains exited daemons in `ps`; this panel is for processes still active. */
@@ -108,16 +89,12 @@ const activeScopes = computed(() => scopes.value
   .filter((entry) => entry.daemons.length > 0));
 const jobNotice = ref<string | null>(null);
 
-type ParkedAgentLike = Awaited<ReturnType<typeof parkedAgents>>[number];
-
-/** The threads this panel lists: the ones with agents, and the one being looked at. */
+/** Only threads with agents still in flight get a section. */
 const listed = computed(() => {
   const threads = new Set<string>();
   for (const roster of props.rosters) {
-    if (roster.agents.length > 0 || roster.error !== null) threads.add(roster.thread);
+    if (props.live.includes(roster.thread) && roster.agents.some(agentInFlight)) threads.add(roster.thread);
   }
-  if (scope.value !== null) threads.add(scope.value);
-
   return [...threads];
 });
 
@@ -140,15 +117,25 @@ function rowStatus(entry: AgentEntry): string {
   return running(entry.thread) ? statusLabel(entry.agent) : "this session's engine is gone";
 }
 
-/** The rows of one thread: its live roster joined with the files on disk. */
+/** The rows of one thread: only agents the running engine still lists. */
 function rowsFor(thread: string): AgentEntry[] {
+  if (!running(thread)) return [];
   const roster = props.rosters.find((entry) => entry.thread === thread) ?? null;
+  return entries(thread, roster ? { ...roster, agents: roster.agents.filter(agentInFlight) } : null, []);
+}
 
-  return entries(thread, roster, parked.value[thread] ?? []);
+function model(entry: AgentEntry): string | null {
+  return entry.agent?.progress?.resolvedModel ?? modelFor(props.rows, entry.id);
+}
+
+function assignment(entry: AgentEntry): string | null {
+  return entry.agent?.assignment ?? taskFor(props.rows, entry.id);
 }
 
 /** The conversation's background jobs, from the cards and the deliveries. */
 const derived = computed(() => jobs(props.rows));
+const runningJobs = computed(() => props.activeId !== null && props.live.includes(props.activeId)
+  ? derived.value.filter((job) => !job.delivered) : []);
 
 /** The dot's colour, per tone. */
 function toneClass(which: AgentTone): string {
@@ -182,14 +169,6 @@ function statusClass(which: AgentTone): string {
   }
 }
 
-async function loadParked(thread: string): Promise<void> {
-  try {
-    parked.value = { ...parked.value, [thread]: await parkedAgents(thread) };
-  } catch (error) {
-    failure.value = String(error);
-  }
-}
-
 async function loadScopes(thread: string | null): Promise<void> {
   try {
     scopes.value = await brokerProcesses(thread);
@@ -198,83 +177,31 @@ async function loadScopes(thread: string | null): Promise<void> {
   }
 }
 
-/**
- * Read the selected agent's transcript, from the beginning or from the cursor.
- *
- * The engine is asked first and the host falls back to the file, so this says which of the
- * two answered: a page the engine served and a page read from a file it has forgotten are
- * different claims about the same conversation.
- */
-async function readTranscript(entry: AgentEntry, from: number): Promise<void> {
-  const page = await agentMessages(entry.thread, entry.id, from);
+const requestedEntry = computed(() => {
+  const target = props.focus;
+  return target ? rowsFor(target.thread).find((entry) => entry.id === target.id) ?? null : null;
+});
+let focusRevealed = false;
 
-  if (page.reset) transcript.value = page.rows;
-  else transcript.value = [...transcript.value, ...page.rows];
-
-  cursor = page.nextByte;
-  transcriptNote.value =
-    page.source === "engine"
-      ? `${page.rows.length} rows read from the engine (through byte ${page.nextByte})`
-      : `${page.rows.length} rows read from ${page.path} — the engine no longer serves this agent's transcript`;
-}
-
-async function select(entry: AgentEntry): Promise<void> {
-  selected.value = entry;
-  transcript.value = [];
-  cursor = 0;
-  transcriptNote.value = null;
-  failure.value = null;
-
-  try {
-    await readTranscript(entry, 0);
-  } catch (error) {
-    failure.value = String(error);
+async function revealFocusedAgent(): Promise<void> {
+  if (focusRevealed) return;
+  const target = requestedEntry.value;
+  if (!target) return;
+  await nextTick();
+  const row = [...(agentList.value?.querySelectorAll<HTMLElement>("[data-agent-id]") ?? [])]
+    .find((element) => element.dataset.agentId === target.id);
+  if (row) {
+    row.scrollIntoView({ block: "nearest" });
+    focusRevealed = true;
   }
 }
 
-/** Follow a live agent: the engine writes as it goes, and the cursor is the delta. */
-async function tick(): Promise<void> {
-  now.value = Date.now();
-
-  const entry = selected.value;
-  if (entry === null || !entry.agent?.status || entry.agent.status === "completed") return;
-  if (entry.agent.status === "failed" || entry.agent.status === "aborted") return;
-
-  try {
-    await readTranscript(entry, cursor);
-  } catch {
-    // A read that fails mid-run is not worth a banner: the next tick tries again, and the
-    // transcript already on screen stays readable.
-  }
-}
-
-let poll: ReturnType<typeof setInterval> | null = null;
+watch(requestedEntry, () => void revealFocusedAgent(), { flush: "post" });
 
 onMounted(async () => {
-  poll = setInterval(() => void tick(), 2000);
-  if (scope.value !== null) {
-    await Promise.all([loadParked(scope.value), loadScopes(scope.value)]);
-  }
+  await loadScopes(scope.value);
+  await revealFocusedAgent();
 });
-
-onUnmounted(() => {
-  if (poll !== null) clearInterval(poll);
-});
-
-watch(scope, async (thread) => {
-  if (thread === null || parked.value[thread] !== undefined) return;
-  await loadParked(thread);
-});
-
-watch(
-  () => props.rosters.map((roster) => roster.thread).join(","),
-  async () => {
-    if (scope.value === null || !props.rosters.some((roster) => roster.thread === scope.value)) {
-      scope.value = props.activeId ?? props.rosters[0]?.thread ?? scope.value;
-    }
-    if (scope.value !== null) await loadParked(scope.value);
-  },
-);
 
 /** The card a job started from, for the jump into the conversation. */
 function jobRow(toolCallId: string): number {
@@ -316,19 +243,13 @@ function title(thread: string): string {
           :class="tab === option ? 'bg-raised text-fg' : 'text-dim hover:text-fg'"
           @click="tab = option"
         >
-          {{ option === "agents" ? `agents ${active}` : `jobs ${derived.filter((job) => !job.delivered).length}` }}
+          {{ option === "agents" ? `agents ${active}` : `jobs ${runningJobs.length}` }}
         </button>
-
-        <span v-if="selected && tab === 'agents'" class="ml-auto font-mono text-[10.5px] text-faint">
-          {{ selected.id }}
-        </span>
       </div>
 
-      <div v-if="tab === 'agents'" class="grid min-h-0 flex-1 grid-cols-2 gap-3">
-        <div class="flex min-h-0 flex-col gap-1 overflow-auto">
+      <div v-if="tab === 'agents'" ref="agentList" class="flex min-h-0 flex-1 flex-col gap-1 overflow-auto">
           <p v-if="listed.length === 0" class="px-1 py-3 text-[12px] leading-relaxed text-faint">
-            no thread is running an agent. This lists subagents the engine is reporting and the
-            transcripts sessions have left behind.
+            No agents running.
           </p>
 
           <section v-for="thread in listed" :key="thread" class="flex flex-col gap-px">
@@ -348,128 +269,83 @@ function title(thread: string): string {
               </span>
             </button>
 
-            <p
-              v-for="roster in rosters.filter((entry) => entry.thread === thread && entry.error)"
-              :key="`${thread}-error`"
-              class="px-2.5 py-1 text-[11.5px] text-warn"
-            >
-              this session's engine is not publishing a roster: {{ roster.error }}
-            </p>
-
             <button
               v-for="entry in rowsFor(thread)"
               :key="entry.key"
               type="button"
-              class="flex w-full items-start gap-2 rounded-[6px] px-2 py-1.5 text-left hover:bg-raised"
+              :data-agent-id="entry.id"
+              class="flex w-full min-w-0 items-start gap-2 rounded-[6px] px-2 py-2 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              :class="focus?.thread === thread && focus.id === entry.id ? 'bg-accent/10 ring-1 ring-accent/50' : 'hover:bg-raised/45'"
               :style="{ paddingLeft: `${0.5 + entry.depth * 0.75}rem` }"
-              @click="select(entry)"
+              :disabled="!entry.agent"
+              :title="entry.agent ? `Open ${label(entry)} agent activity` : undefined"
+              @click="entry.agent && emit('openAgent', thread, entry.id)"
             >
               <span
                 class="mt-1 size-1.5 shrink-0 rounded-full"
                 :class="entry.agent ? toneClass(rowTone(entry)) : 'bg-faint'"
               />
-              <span class="min-w-0 flex-1">
-                <span class="flex items-baseline gap-2">
-                  <span class="truncate text-[12.5px] text-fg">{{ label(entry) }}</span>
+              <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span class="flex min-w-0 items-baseline gap-2">
+                  <span class="shrink-0 text-[12.5px] text-fg">{{ label(entry) }}</span>
+                  <span v-if="entry.agent" class="min-w-0 truncate font-mono text-[10.5px] text-faint" :title="entry.id">{{ entry.id }}</span>
                   <span
                     v-if="entry.agent"
-                    class="shrink-0 text-[11.5px]"
+                    class="ml-auto shrink-0 text-[11.5px]"
                     :class="statusClass(rowTone(entry))"
                   >
                     {{ rowStatus(entry) }}
                   </span>
-                  <span
-                    v-else-if="entry.parked?.advisor"
-                    class="shrink-0 text-[11.5px] text-faint"
-                  >
-                    advisor
-                  </span>
-                  <span v-else class="shrink-0 font-mono text-[10.5px] text-faint">
-                    {{ age(entry.parked?.modifiedMs ?? 0, now) }}
-                  </span>
                 </span>
-                <span v-if="subtitle(entry)" class="mt-0.5 block truncate text-[11.5px] text-dim">
+                <span v-if="assignment(entry)" class="block truncate text-[11.5px] text-dim">
+                  {{ assignment(entry) }}
+                </span>
+                <span v-if="subtitle(entry)" class="block truncate text-[11.5px] text-dim">
                   {{ subtitle(entry) }}
                 </span>
-                <span v-if="stats(entry)" class="mt-0.5 block font-mono text-[10.5px] text-faint">
+                <span class="min-w-0 truncate font-mono text-[10.5px] text-dim" :title="model(entry) ?? 'Model not reported'">
+                  Model: <span :class="model(entry) ? 'text-fg' : 'text-faint'">{{ model(entry) ?? 'not reported' }}</span>
+                </span>
+                <span v-if="stats(entry)" class="block font-mono text-[10.5px] text-faint">
                   {{ stats(entry)!.tools }} tools · {{ stats(entry)!.requests }} req ·
                   {{ tokens(stats(entry)!.tokens) }} tokens · {{ cost(stats(entry)!.cost) }}
                   <template v-if="context(entry.agent!)"> · {{ context(entry.agent!) }}</template>
-                  <template v-if="entry.agent && running(entry.thread) && !entry.agent.listed">
-                    · no longer listed
-                  </template>
                 </span>
               </span>
             </button>
           </section>
-        </div>
-
-        <div class="flex min-h-0 flex-col overflow-auto rounded-[6px] bg-raised/40 p-2.5">
-          <p v-if="selected === null" class="px-1 py-2 text-[12.5px] text-faint">
-            pick an agent to read its transcript
-          </p>
-
-          <template v-else>
-            <div class="mb-2 flex flex-col gap-1 border-b border-line pb-2.5">
-              <span class="font-mono text-[11.5px] text-fg">{{ selected.id }}</span>
-              <span class="text-[12px] text-dim">
-                {{ taskFor(props.rows, selected.id) ?? selected.agent?.task ?? "no task recorded for it" }}
-              </span>
-              <span v-if="transcriptNote" class="text-[10.5px] text-faint">
-                {{ transcriptNote }}
-              </span>
-              <button
-                v-if="selected.agent && spawnRow(props.rows, selected.agent) !== null"
-                type="button"
-                class="mt-1 self-start rounded-[6px] px-2 py-1 text-[12px] text-dim hover:bg-raised hover:text-fg"
-                @click="emit('reveal', selected.thread, spawnRow(props.rows, selected.agent!)!)"
-              >
-                show the task call
-              </button>
-            </div>
-
-            <div v-for="(row, index) in transcript" :key="index" class="mb-2">
-              <ConversationRow :row="row" @failed="failure = $event" />
-            </div>
-
-            <p v-if="transcript.length === 0" class="px-1 py-2 text-[12.5px] text-faint">
-              this transcript is empty
-            </p>
-          </template>
-        </div>
       </div>
 
       <div v-else class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto">
         <p class="px-1 text-[11.5px] leading-relaxed text-faint">
           The engine has no command that lists or cancels a background job — `hub` is a tool the
-          agent calls — so these rows come from the calls that started them and the deliveries
-          that finished them.
+          agent calls — so active rows come from calls that started them, minus jobs whose
+          results have been delivered.
         </p>
 
         <p v-if="jobNotice" class="rounded-[6px] bg-raised px-2.5 py-2 text-[12px] text-dim">
           {{ jobNotice }}
         </p>
 
-        <section v-if="derived.length > 0" class="flex flex-col gap-1">
+        <section v-if="runningJobs.length > 0" class="flex flex-col gap-1">
           <h3 class="px-1 text-[10.5px] font-medium uppercase tracking-[0.09em] text-faint">
             background jobs in this conversation
           </h3>
           <button
-            v-for="job in derived"
+            v-for="job in runningJobs"
             :key="job.id"
             type="button"
             class="flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-left hover:bg-raised"
             @click="jobRow(job.toolCallId) >= 0 && emit('reveal', props.activeId ?? '', jobRow(job.toolCallId))"
           >
             <span
-              class="size-1.5 shrink-0 rounded-full"
-              :class="job.delivered ? 'bg-ok' : 'bg-accent animate-pulse'"
+              class="size-1.5 shrink-0 animate-pulse rounded-full bg-accent"
             />
             <span class="min-w-0 flex-1">
               <span class="flex items-baseline gap-2">
                 <span class="font-mono text-[12.5px] text-fg">{{ job.id }}</span>
                 <span class="shrink-0 text-[11.5px] text-dim">
-                  {{ job.kind }} · {{ job.delivered ? `delivered in ${duration(job.durationMs ?? 0)}` : "running" }}
+                  {{ job.kind }} · running
                 </span>
               </span>
               <span v-if="job.detail" class="mt-0.5 block truncate font-mono text-[10.5px] text-faint">
@@ -522,10 +398,6 @@ function title(thread: string): string {
         </section>
       </div>
 
-      <p v-if="selected && tab === 'agents'" class="px-1 text-[11.5px] leading-relaxed text-faint">
-        A subagent's transcript can be read after it finishes; steering or cancelling one cannot,
-        because the engine exposes no command for either — ask the agent that spawned it.
-      </p>
     </div>
   </Modal>
 </template>

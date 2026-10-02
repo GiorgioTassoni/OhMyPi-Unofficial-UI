@@ -13,6 +13,7 @@ import type { AgentSnapshot, BrokerDaemon, ParkedAgent, ThreadAgents } from "../
 import { row } from "./rows.fixture";
 import {
   activeCount,
+  agentInFlight,
   age,
   context,
   cost,
@@ -20,7 +21,7 @@ import {
   entries,
   jobs,
   label,
-  spawnRow,
+  modelFor,
   stats,
   statusLabel,
   subtitle,
@@ -69,6 +70,12 @@ function thread(agents: AgentSnapshot[]): ThreadAgents {
 }
 
 describe("a row's state", () => {
+  test("only listed queued and running agents are in flight", () => {
+    expect(agentInFlight(agent({ status: "running" }))).toBe(true);
+    expect(agentInFlight(agent({ status: "pending" }))).toBe(true);
+    expect(agentInFlight(agent({ status: "completed" }))).toBe(false);
+    expect(agentInFlight(agent({ status: "running", listed: false }))).toBe(false);
+  });
   test("the engine's five statuses map to four tones", () => {
     expect(tone(agent({ status: "running" }))).toBe("running");
     expect(tone(agent({ status: "pending" }))).toBe("queued");
@@ -191,7 +198,7 @@ describe("the task behind an agent", () => {
       intent: null,
       args: '{"tasks":[{"agent":"scout","task":"Measure the wire"}]}',
       details: JSON.stringify({
-        progress: [{ id: "RosterProbe", agent: "scout", status: "running", task: "Measure the wire" }],
+        progress: [{ id: "RosterProbe", agent: "scout", status: "running", task: "Measure the wire", resolvedModel: "anthropic/sonnet" }],
         async: { jobId: "bg_2", state: "running", type: "task" },
       }),
       output: "",
@@ -203,13 +210,10 @@ describe("the task behind an agent", () => {
   test("the spawning card is the source, joined by the engine's own id", () => {
     expect(taskFor([card], "RosterProbe")).toBe("Measure the wire");
     expect(taskFor([card], "someone-else")).toBeNull();
+    expect(modelFor([card], "RosterProbe")).toBe("anthropic/sonnet");
+    expect(modelFor([card], "someone-else")).toBeNull();
   });
 
-  test("the jump back finds the card by the tool call id the frames carried", () => {
-    expect(spawnRow([row(), card], agent())).toBe(1);
-    expect(spawnRow([card], agent({ parentToolCallId: null }))).toBeNull();
-    expect(spawnRow([card], agent({ parentToolCallId: "call_9" }))).toBeNull();
-  });
 });
 
 describe("background jobs", () => {

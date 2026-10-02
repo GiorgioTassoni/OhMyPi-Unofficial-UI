@@ -10,7 +10,7 @@
  * the rows arrive as patches, the dialogs and the command list arrive as sets. Nothing is
  * remembered separately, so a chip cannot disagree with the session it describes.
  */
-import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, triggerRef, watch } from "vue";
 import {
   availableCommands,
   type SearchHit,
@@ -50,6 +50,8 @@ const props = defineProps<{
   thread: string;
   /** Whether this mounted thread is the conversation currently on screen. */
   active: boolean;
+  /** Only these spawned agents still have an in-flight engine roster row. */
+  activeAgents: string[];
   /** App-wide model state, which the chips render from. */
   models: ModelOption[];
   refreshing: boolean;
@@ -85,6 +87,8 @@ const emit = defineEmits<{
   terminal: [path: string];
   favourites: [keys: string[]];
   review: [summary: TurnFileSummary];
+  /** A spawned agent was selected from this conversation. */
+  agent: [id: string];
 }>();
 
 const status = ref<SessionStatus | null>(null);
@@ -120,14 +124,14 @@ function replaceTranscript(next: RowSnapshot[]): void {
 
 function patchTranscript(next: RowSnapshot[], from: number): void {
   const previousTurns = projection.value.turns;
-  const affected = turnContainingRow(previousTurns, Math.min(from, Math.max(0, rows.value.length - 1)));
+  const affected = turnContainingRow(previousTurns, Math.min(from, Math.max(0, previousTurns.at(-1)?.end ?? 0)));
   if (affected >= 0 && affected < previousTurns.length - 1) {
     const cutoff = previousTurns[affected].start;
     const stable = new Map([...measuredHeights.value].filter(([start]) => start < cutoff));
     measuredHeights.value = stable;
   }
   projection.value = projectTranscript(projection.value, next, streaming.value, from);
-  rows.value = next;
+  triggerRef(rows);
 }
 
 onMounted(async () => {
@@ -344,13 +348,6 @@ const nothingSaidYet = computed(
 async function revealRow(at: number | null): Promise<void> {
   if (at === null || at < 0 || at >= rows.value.length) return;
 
-  if (rows.value.length === 0) {
-    const deadline = Date.now() + 2000;
-    while (rows.value.length === 0 && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-  }
-
   const turnIndex = turnContainingRow(turns.value, at);
   const el = conversationRef.value;
   if (turnIndex < 0 || !el) return;
@@ -416,6 +413,8 @@ const layout = computed(() => turnLayout(turns.value, measuredHeights.value, (en
 const visible = computed(() => visibleTurns(layout.value, viewportTop.value, viewportHeight.value));
 const visibleTurnEntries = computed(() => turns.value.slice(visible.value.start, visible.value.end));
 let viewportObserver: ResizeObserver | null = null;
+let pendingHeightCorrection = 0;
+let heightCorrectionScheduled = false;
 
 onMounted(() => {
   const el = conversationRef.value;
@@ -444,8 +443,22 @@ function onTurnMeasured(start: number, height: number): void {
   const el = conversationRef.value;
   if (!el) return;
   if (above && isScrolledUp.value) {
-    el.scrollTop += height - previous;
-    viewportTop.value = el.scrollTop;
+    // The virtual spacer changes on Vue's next render. Correct after that render, so a
+    // growing spacer cannot clamp the scroll position against its old height first.
+    const correction = height - previous;
+    pendingHeightCorrection += correction;
+    viewportTop.value = Math.max(0, viewportTop.value + correction);
+    if (!heightCorrectionScheduled) {
+      heightCorrectionScheduled = true;
+      void nextTick(() => {
+        heightCorrectionScheduled = false;
+        const correction = pendingHeightCorrection;
+        pendingHeightCorrection = 0;
+        if (!isScrolledUp.value) return;
+        el.scrollTop += correction;
+        viewportTop.value = el.scrollTop;
+      });
+    }
   } else if (!isScrolledUp.value) followAfterRender();
 }
 
@@ -575,6 +588,18 @@ defineExpose({
             <ConversationRow :row="turn.user.row" @failed="emit('failed', $event)" />
           </div>
           <TurnActivity :turn="turn" :flashed="flashed" :memory="disclosureMemory" @failed="emit('failed', $event)" />
+          <button
+            v-for="agent in turn.spawnedAgents.filter((id) => activeAgents.includes(id))"
+            :key="agent"
+            type="button"
+            class="flex min-w-0 items-center gap-2 self-start rounded-[6px] px-2 py-1 text-left text-[12px] text-dim transition-colors hover:bg-raised/65 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            :aria-label="`Open ${agent} agent activity in a tab`"
+            @click="emit('agent', agent)"
+          >
+            <Icon name="bot" class="h-3.5 w-3.5 shrink-0 text-accent" />
+            <span class="min-w-0 truncate">Spawned <span class="font-medium text-fg">“{{ agent }}”</span> agent</span>
+            <Icon name="chevron-right" class="h-3 w-3 shrink-0 text-faint" />
+          </button>
           <div
             v-if="turn.answer"
             class="shrink-0 rounded-[8px] transition-colors duration-500"

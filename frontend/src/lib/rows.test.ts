@@ -22,8 +22,12 @@ describe("applying a conversation patch", () => {
   });
 
   test("a streaming rewrite replaces the trailing row instead of adding one", () => {
-    const outcome = applyRowPatch([said("one"), said("two")], { from: 1, rows: [said("two and more")] });
+    const rows = [said("one"), said("two")];
+    const first = rows[0];
+    const outcome = applyRowPatch(rows, { from: 1, rows: [said("two and more")] });
 
+    expect(outcome.rows).toBe(rows);
+    expect(outcome.rows[0]).toBe(first);
     expect(outcome.rows.map((entry) => entry.text)).toEqual(["one", "two and more"]);
   });
 

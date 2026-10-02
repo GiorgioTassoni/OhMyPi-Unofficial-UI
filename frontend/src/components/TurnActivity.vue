@@ -9,7 +9,7 @@ import Icon from "./ui/Icon.vue";
 const props = defineProps<{ turn: ConversationTurn; flashed: number | null; memory: DisclosureMemory }>();
 const emit = defineEmits<{ failed: [message: string] }>();
 const label = computed(() => workLabel(props.turn));
-const hasTools = computed(() => props.turn.items.some((item) => item.kind === "group"));
+const hasTools = computed(() => props.turn.items.some((item) => item.kind === "group" || item.kind === "agent-completion"));
 const showActivity = computed(() => hasTools.value || props.turn.working);
 const expanded = ref(props.memory.get("turn", props.turn.start, props.turn.working));
 const userInteracted = ref(false);
@@ -49,7 +49,7 @@ function icon(kind: GroupKind): "search" | "terminal" | "pencil" | "wrench" {
       <span class="ml-1 h-px min-w-0 flex-1 bg-line/70" />
     </summary>
     <div v-if="expanded" class="min-w-0 py-2">
-      <template v-for="item in turn.items" :key="item.index">
+      <template v-for="(item, position) in turn.items" :key="`${item.index}-${position}`">
         <details v-if="item.kind === 'group' && item.group.rows.length > 1" class="group/activity min-w-0" :open="groupExpanded(item.index)" :data-group-index="item.index" @toggle="groupToggled(item.index, $event)">
           <summary class="flex min-w-0 cursor-pointer list-none items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] text-dim select-none hover:bg-raised/65 hover:text-fg [&::-webkit-details-marker]:hidden">
             <Icon :name="icon(item.group.kind)" class="h-3.5 w-3.5 shrink-0 text-faint" />
@@ -76,6 +76,15 @@ function icon(kind: GroupKind): "search" | "terminal" | "pencil" | "wrench" {
           :memory="memory"
           standalone
         />
+        <div
+          v-else-if="item.kind === 'agent-completion'"
+          :data-row-index="item.entry.index"
+          class="flex min-w-0 items-center gap-2 rounded-[6px] px-2 py-1 text-[12px] text-dim"
+          :class="flashed === item.entry.index ? 'bg-accent/10 ring-1 ring-accent' : ''"
+        >
+          <Icon name="bot" class="h-3.5 w-3.5 shrink-0" :class="item.status === 'completed' ? 'text-ok' : 'text-err'" />
+          <span class="truncate">{{ item.status === 'completed' ? 'Completed' : item.status === 'failed' ? 'Failed' : 'Stopped' }} job <span class="font-medium text-fg">{{ item.name }}</span></span>
+        </div>
         <div
           v-else
           :data-row-index="item.entry.index"

@@ -69,4 +69,63 @@ describe("conversation turn activity", () => {
       .toEqual(["Read 2 files", "assistant", "Read 1 file", "Ran 1 command", "Read 1 file"]);
     expect(turns[0].items[0].kind === "group" ? turns[0].items[0].group.added : 0).toBeNull();
   });
+
+  test("records each confirmed task spawn once, even before the call finishes", () => {
+    const turns = conversationTurns([
+      row({ role: "user", text: "delegate" }),
+      call("task", "{}", JSON.stringify({ progress: [
+        { id: "Scout", status: "running" },
+        { id: "Reviewer", status: "pending" },
+        { id: "Scout", status: "running" },
+      ] }), { finished: false }),
+      call("task", "{\"task\":\"failed\"}", "{}", { isError: true }),
+      said("working", { thinking: "checking" }),
+      row({ role: "user", text: "next" }),
+      call("task", "{\"task\":\"next\"}", "{\"progress\":[{\"id\":\"Another\"}]}"),
+    ], true);
+    expect(turns[0].spawnedAgents).toEqual(["Scout", "Reviewer"]);
+    expect(turns[1].spawnedAgents).toEqual(["Another"]);
+  });
+
+  test("keeps a settled synchronous agent as one compact work entry", () => {
+    const turns = conversationTurns([
+      row({ role: "user", text: "delegate" }),
+      call("task", "{}", JSON.stringify({ progress: [{ id: "Scout", status: "completed" }] })),
+      said("Scout finished"),
+    ], false);
+    expect(turns[0].items.map((item) => item.kind)).toEqual(["group", "agent-completion"]);
+    expect(turns[0].items[1]).toMatchObject({ name: "Scout", status: "completed" });
+  });
+
+  test("puts an asynchronous task delivery in work without showing its notice text", () => {
+    const turns = conversationTurns([
+      row({ role: "user", text: "delegate", timestamp: 1_000 }),
+      call("task", "{}", JSON.stringify({
+        async: { jobId: "bg_1", type: "task" },
+        progress: [{ id: "Scout", status: "running" }],
+      })),
+      row({ role: "custom", customType: "async-result", text: "<system-notice>Large result</system-notice>", jobs: [
+        { jobId: "bg_1", kind: "task", durationMs: 4_000, label: null },
+      ] }),
+      said("Done", { timestamp: 6_000 }),
+    ], false);
+    expect(turns[0].items.map((item) => item.kind)).toEqual(["group", "agent-completion"]);
+    expect(turns[0].items[1]).toMatchObject({ name: "Scout", status: "completed" });
+    expect(turns[0].answer?.row.text).toBe("Done");
+  });
+
+  test("a later turn can name the agent whose background task just finished", () => {
+    const turns = conversationTurns([
+      row({ role: "user", text: "delegate" }),
+      call("task", "{}", JSON.stringify({ async: { jobId: "bg_2" }, progress: [{ id: "Reviewer" }] })),
+      said("It is running"),
+      row({ role: "user", text: "any update?" }),
+      row({ role: "custom", customType: "async-result", text: "Long delivery body", jobs: [
+        { jobId: "bg_2", kind: "task", durationMs: 10_000, label: null },
+      ] }),
+      said("Finished"),
+    ], false);
+    expect(turns[0].items.map((item) => item.kind)).toEqual(["group"]);
+    expect(turns[1].items).toMatchObject([{ kind: "agent-completion", name: "Reviewer" }]);
+  });
 });

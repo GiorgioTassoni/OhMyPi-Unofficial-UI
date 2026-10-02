@@ -6,11 +6,9 @@
  * as props, every operation goes back to the host as one command, and a failure is
  * reported upward rather than swallowed. The chips of §5.1 slot in below the row.
  *
- * Attachments take three routes, and the rule that decides between them is the one
- * worth keeping straight: **bytes the browser holds go as `prompt{images}`, anything
- * with a path goes in as its path.** So a paste and an image chosen through `+` send
- * bytes, while a file dropped from the file manager sends its path for the agent to
- * read — which is also why a dropped file gets no thumbnail here (`lib/attachments.ts`).
+ * Images travel in `prompt{images}`. A text file chosen through `+` is included as
+ * labelled UTF-8 text, since browser pickers do not expose its absolute path. A file
+ * dropped from the file manager sends its path for the agent to read.
  *
  * The keyboard map is `lib/composer.ts` — pure, and asserted — so this file only
  * arranges what it decides.
@@ -44,6 +42,7 @@ import {
   type Attachment,
 } from "../lib/attachments";
 import { readImage } from "../lib/image-encode";
+import { readTextAttachment } from "../lib/text-attachment";
 import { type ChipRow } from "../lib/chips";
 import AttachmentStrip from "./AttachmentStrip.vue";
 import Icon from "./ui/Icon.vue";
@@ -94,6 +93,7 @@ const emit = defineEmits<{
 const draft = ref("");
 /** One send at a time: two Enters must not become two prompts. */
 const sending = ref(false);
+const readingFiles = ref(false);
 const attachments = ref<Attachment[]>([]);
 
 /** `draft` is emptied by a send as much as by hand, so the height follows every path. */
@@ -150,9 +150,11 @@ watch(draft, () => {
 });
 
 const hasDraft = computed(() => draft.value.trim() !== "");
-/** Attachment alone is enough: measured, the engine starts a turn for an image and no words. */
+/** An attachment alone is enough to send a turn. */
 const hasInput = computed(() => hasDraft.value || attachments.value.length > 0);
-const canSend = computed(() => hasInput.value && !props.disabled && !sending.value);
+const canSend = computed(
+  () => hasInput.value && !props.disabled && !sending.value && !readingFiles.value,
+);
 /** The message as it would go out, paths included — which is what the frame carries. */
 const outbound = computed(() => messageFor(draft.value, attachments.value));
 
@@ -164,7 +166,7 @@ type Sendable = "prompt" | "steer" | "follow-up" | "stop-and-send";
  * The room it has to fit is measured against the message as it stands, so a second
  * image is budgeted after the first rather than against the frame on its own.
  */
-async function attach(blob: Blob, name: string): Promise<void> {
+async function attachImage(blob: Blob, name: string): Promise<void> {
   if (props.disabled) {
     refusal.value = "no session is open, so there is nothing to attach to";
     return;
@@ -182,6 +184,26 @@ async function attach(blob: Blob, name: string): Promise<void> {
   } catch (cause) {
     // Named, with both sizes, by `lib/attachments.ts` — an image that cannot be sent
     // is refused here rather than dropped quietly or discovered by a failed send.
+    refusal.value = cause instanceof Error ? cause.message : String(cause);
+  }
+}
+
+async function attachText(file: File): Promise<void> {
+  if (props.disabled) {
+    refusal.value = "no session is open, so there is nothing to attach to";
+    return;
+  }
+  try {
+    const attachment = await readTextAttachment(file, crypto.randomUUID());
+    const next = [...attachments.value, attachment];
+    const tooLarge = frameRefusal(props.frameLimit, draft.value, next);
+    if (tooLarge !== null) {
+      refusal.value = `${file.name} cannot be attached: ${tooLarge}`;
+      return;
+    }
+    attachments.value = next;
+    refusal.value = null;
+  } catch (cause) {
     refusal.value = cause instanceof Error ? cause.message : String(cause);
   }
 }
@@ -228,8 +250,19 @@ async function onPicked(event: Event): Promise<void> {
   // Cleared before the reads, so choosing the same file twice still fires a change.
   input.value = "";
 
-  for (const file of files) {
-    await attach(file, file.name);
+  readingFiles.value = true;
+  try {
+    for (const file of files) {
+      const raster = (file.type.startsWith("image/") && file.type !== "image/svg+xml")
+        || /\.(png|jpe?g|gif|webp)$/i.test(file.name);
+      if (raster) {
+        await attachImage(file, file.name);
+      } else {
+        await attachText(file);
+      }
+    }
+  } finally {
+    readingFiles.value = false;
   }
 }
 
@@ -253,7 +286,7 @@ async function onPaste(event: ClipboardEvent): Promise<void> {
 
   event.preventDefault();
   for (const image of images) {
-    await attach(image, "pasted image");
+    await attachImage(image, "pasted image");
   }
 }
 
@@ -623,14 +656,10 @@ defineExpose({ setDraft });
     <div
       class="flex items-start gap-2 rounded-[12px] border border-line-strong/80 bg-raised/90 px-3 py-2 transition-all focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/30 shadow-sm"
     >
-      <!--
-        `+` is the bytes route's discoverable door: an image chosen here travels with the
-        message. Anything else already has a path, so it goes in as one — drop it on this
-        card, or type the path — and the agent reads it.
-      -->
+      <!-- `+` accepts images and UTF-8 files; a drop carries an OS path instead. -->
       <button
         class="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-[6px] text-faint transition-colors hover:bg-surface hover:text-fg"
-        title="attach an image — or drop any file here to send its path"
+        title="attach an image or UTF-8 text file; drop other files to send their path"
         aria-label="attach"
         @click="picker?.click()"
       >
@@ -639,11 +668,12 @@ defineExpose({ setDraft });
       <input
         ref="picker"
         type="file"
-        accept="image/*"
         multiple
         class="hidden"
         @change="onPicked"
       />
+
+      <span v-if="readingFiles" class="self-center text-[11px] text-faint">Reading files…</span>
 
       <textarea
         ref="box"

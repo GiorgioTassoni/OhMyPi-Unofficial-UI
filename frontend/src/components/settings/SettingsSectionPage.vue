@@ -7,10 +7,23 @@
  * file owns the vertical rhythm between them. Their already-prioritized order arrives from the
  * screen model, so this renderer contains no second ordering policy.
  */
-import type { SettingsRow as SettingsRowModel, SettingsSection } from "../../bridge";
+import { onMounted, ref, watch } from "vue";
+import {
+  getCatalogProviders,
+  getConfiguredProviders,
+  refreshModels,
+  removeCustomProvider,
+  removeProviderCredential,
+  type CatalogProviderDto,
+  type ProviderAccountDto,
+  type SettingsRow as SettingsRowModel,
+  type SettingsSection,
+} from "../../bridge";
 import type { AppTheme } from "../../lib/appTheme";
 import { rowId } from "../../lib/settings";
+import AddProviderModal from "./AddProviderModal.vue";
 import AppThemeSetting from "./AppThemeSetting.vue";
+import ConfiguredProvidersCard from "./ConfiguredProvidersCard.vue";
 import NotificationSoundSetting from "./NotificationSoundSetting.vue";
 import SettingsRow from "./SettingsRow.vue";
 
@@ -39,7 +52,86 @@ const emit = defineEmits<{
   (event: "changed"): void;
   (event: "notificationSound", enabled: boolean): void;
   (event: "appTheme", theme: AppTheme): void;
+  (event: "terminalLogin", providerId?: string): void;
 }>();
+
+const configuredProviders = ref<ProviderAccountDto[]>([]);
+const catalogProviders = ref<CatalogProviderDto[]>([]);
+const loadingProviders = ref(false);
+const showAddModal = ref(false);
+
+async function loadProviders(): Promise<void> {
+  if (props.section.id !== "model-and-providers") return;
+  loadingProviders.value = true;
+  try {
+    const [conf, cat] = await Promise.all([
+      getConfiguredProviders(),
+      getCatalogProviders(),
+    ]);
+    configuredProviders.value = conf;
+    catalogProviders.value = cat;
+  } catch {
+    // best-effort
+  } finally {
+    loadingProviders.value = false;
+  }
+}
+
+watch(
+  () => props.section.id,
+  (id) => {
+    if (id === "model-and-providers") {
+      void loadProviders();
+    }
+  },
+  { immediate: true }
+);
+
+onMounted(() => {
+  if (props.section.id === "model-and-providers") {
+    void loadProviders();
+  }
+});
+
+async function onProviderAdded(): Promise<void> {
+  await loadProviders();
+  try {
+    await refreshModels();
+  } catch {
+    // ignore
+  }
+  emit("changed");
+}
+
+async function handleRemoveCredential(id: number): Promise<void> {
+  try {
+    await removeProviderCredential(id);
+    await loadProviders();
+    try {
+      await refreshModels();
+    } catch {
+      // ignore
+    }
+    emit("changed");
+  } catch {
+    // ignore
+  }
+}
+
+async function handleRemoveCustom(providerId: string): Promise<void> {
+  try {
+    await removeCustomProvider(providerId);
+    await loadProviders();
+    try {
+      await refreshModels();
+    } catch {
+      // ignore
+    }
+    emit("changed");
+  } catch {
+    // ignore
+  }
+}
 
 /** A gated row's link target, or `null` when the host named no key to reach. */
 function needsFor(row: SettingsRowModel): { sectionId: string; title: string } | null {
@@ -65,6 +157,26 @@ function needsFor(row: SettingsRowModel): { sectionId: string; title: string } |
       v-if="props.section.id === 'appearance'"
       :theme="props.appTheme"
       @change="emit('appTheme', $event)"
+    />
+
+    <div v-if="props.section.id === 'model-and-providers'" class="mt-6">
+      <ConfiguredProvidersCard
+        :providers="configuredProviders"
+        :loading="loadingProviders"
+        @add="showAddModal = true"
+        @remove-credential="handleRemoveCredential"
+        @remove-custom="handleRemoveCustom"
+        @refresh="loadProviders"
+        @open-terminal-login="emit('terminalLogin')"
+      />
+    </div>
+
+    <AddProviderModal
+      v-if="showAddModal"
+      :catalog="catalogProviders"
+      @close="showAddModal = false"
+      @added="onProviderAdded"
+      @open-terminal-login="emit('terminalLogin', $event)"
     />
 
     <section v-for="group in props.section.groups" :key="group.name" class="mt-8">

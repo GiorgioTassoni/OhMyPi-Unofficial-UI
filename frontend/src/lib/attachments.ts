@@ -1,11 +1,9 @@
 /**
  * What the composer attaches and how it fits (`docs/12` §5.1, "three routes, one rule").
  *
- * The rule: **an attachment never becomes prompt text.** Bytes the browser holds go to
- * the engine as `prompt{images}` — base64 in `message` would be text tokens, and one
- * screenshot is hundreds of thousands of them. Anything with a path goes in as its path,
- * because the agent can read a file and the engine's own pipeline (conversion, size
- * caps, resize, `?q=` vision questions) then applies to it.
+ * Images go to `prompt{images}` rather than becoming base64 prompt text. Files chosen
+ * through the browser picker have no usable absolute path, so small UTF-8 files are
+ * included as labelled text. OS drops do carry paths, which the agent can read itself.
  *
  * The size budget shapes the UI, so the arithmetic lives here rather than in a component:
  * an inbound command is one unchunked JSONL frame, the engine advertises the limit in
@@ -48,6 +46,14 @@ export type Attachment =
        * opens it, which is the same fact from the side that matters.
        */
       path: string;
+    }
+  | {
+      id: string;
+      kind: "text";
+      /** Browser-picked UTF-8 file, included in the outgoing message by filename. */
+      name: string;
+      content: string;
+      bytes: number;
     };
 
 /** The bytes route: the variant that goes to the engine as `prompt{images}`. */
@@ -82,8 +88,11 @@ export function estimateOverhead(message: string, imageCount: number): number {
   };
 
   // `+ 1` for the newline that ends the JSONL frame.
-  return JSON.stringify(envelope).length + 1;
+  return new TextEncoder().encode(JSON.stringify(envelope)).length + 1;
 }
+
+const imageCount = (attachments: readonly Attachment[]): number =>
+  attachments.filter((attachment) => attachment.kind === "image").length;
 
 /** What every attachment in a message costs the frame, as base64. */
 export function encodedSize(attachments: readonly Attachment[]): number {
@@ -123,7 +132,7 @@ export function roomForAnotherImage(
   attachments: readonly Attachment[],
 ): number {
   const claimed =
-    encodedSize(attachments) + estimateOverhead(message, attachments.length + 1);
+    encodedSize(attachments) + estimateOverhead(message, imageCount(attachments) + 1);
 
   return imageBudget(frameLimit - claimed);
 }
@@ -146,8 +155,8 @@ export function frameRefusal(
     return null;
   }
 
-  const total =
-    encodedSize(attachments) + estimateOverhead(message, attachments.length);
+  const total = encodedSize(attachments)
+    + estimateOverhead(messageFor(message, attachments), imageCount(attachments));
   const largest = attachments
     .filter((attachment): attachment is ImageAttachment => attachment.kind === "image")
     .reduce<ImageAttachment | null>(
@@ -157,7 +166,9 @@ export function frameRefusal(
     );
   const who =
     largest === null
-      ? " — the message text alone is over it"
+      ? attachments.some((attachment) => attachment.kind === "text")
+        ? " — attached text makes the message too large"
+        : " — the message text alone is over it"
       : `, and the largest image is ${largest.name} at ${describeBytes(largest.bytes)}`;
 
   return `this message needs ${describeBytes(total)} of the ${describeBytes(frameLimit)} frame${who}`;
@@ -170,8 +181,8 @@ export function fitsFrame(
   attachments: readonly Attachment[],
 ): boolean {
   return (
-    encodedSize(attachments) + estimateOverhead(message, attachments.length) <=
-    frameLimit
+    encodedSize(attachments)
+      + estimateOverhead(messageFor(message, attachments), imageCount(attachments)) <= frameLimit
   );
 }
 
@@ -188,27 +199,28 @@ export function imagesToSend(attachments: readonly Attachment[]): ImageIn[] {
 }
 
 /**
- * The message text that goes on the wire: the draft, then one line per attached path.
+ * The message text that goes on the wire: the draft, then paths and labelled UTF-8 files.
  *
- * Paths are appended here rather than shown in the box, so the strip stays the single
- * account of what is attached: removing a chip removes the path. A path the user typed
- * themselves is untouched — this only adds what the composer is holding.
+ * Additions stay out of the box, so the strip is the single account of what is attached:
+ * removing a chip removes its path or text. A path the user typed is left untouched.
  */
 export function messageFor(
   draft: string,
   attachments: readonly Attachment[],
 ): string {
-  const paths = attachments
-    .filter((attachment) => attachment.kind === "path")
-    .map((attachment) => attachment.path);
+  const paths = attachments.flatMap((attachment) => attachment.kind === "path" ? [attachment.path] : []);
+  const files = attachments.flatMap((attachment) => attachment.kind === "text" ? [textFileBlock(attachment)] : []);
+  const parts = [draft.trim(), paths.join("\n"), ...files].filter((part) => part !== "");
+  return parts.join("\n\n");
+}
 
-  if (paths.length === 0) {
-    return draft.trim();
+function textFileBlock(attachment: Extract<Attachment, { kind: "text" }>): string {
+  let longestFence = 2;
+  for (const [run] of attachment.content.matchAll(/`+/g)) {
+    longestFence = Math.max(longestFence, run.length);
   }
-
-  const text = draft.trim();
-
-  return text === "" ? paths.join("\n") : `${text}\n\n${paths.join("\n")}`;
+  const fence = "`".repeat(longestFence + 1);
+  return `Attached file: ${JSON.stringify(attachment.name)}\n${fence}text\n${attachment.content}\n${fence}`;
 }
 
 /** `184 KB`, `1.4 MB`, `812 B` — the size label on a chip. */

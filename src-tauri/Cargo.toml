@@ -30,3 +30,4 @@ tokio.workspace = true
 open = "5.4.4"
 portable-pty = "0.9"
 base64 = "0.22"
+serde_yaml = "0.9"

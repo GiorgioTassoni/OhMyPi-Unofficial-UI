@@ -10,7 +10,7 @@ export interface TurnWindow { start: number; end: number; before: number; after:
 
 export function estimatedTurnHeight(turn: ConversationTurn, hasFiles: boolean): number {
   const toolRows = turn.items.reduce((count, item) => count + (item.kind === "group" ? item.group.rows.length : 0), 0);
-  const otherRows = turn.items.reduce((count, item) => count + (item.kind === "row" ? 1 : 0), 0);
+  const otherRows = turn.items.reduce((count, item) => count + (item.kind === "row" || item.kind === "agent-completion" ? 1 : 0), 0);
   return 112 + toolRows * 34 + otherRows * 45 + (hasFiles ? 105 : 0);
 }
 

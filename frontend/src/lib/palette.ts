@@ -107,6 +107,13 @@ export const WINDOW_ACTIONS: AppAction[] = [
     key: "⌘,",
   },
   {
+    id: "add-provider",
+    label: "Add provider / API key",
+    name: "add-provider",
+    description: "Configure an API key, OAuth account, or custom model endpoint in Settings",
+    key: null,
+  },
+  {
     id: "log-in",
     label: "Log in to a provider",
     name: "log-in",

@@ -45,6 +45,10 @@ function file(path: string): Attachment {
   return { id: path, kind: "path", name: nameFromPath(path), path };
 }
 
+function textFile(name: string, content: string): Attachment {
+  return { id: name, kind: "text", name, content, bytes: new TextEncoder().encode(content).length };
+}
+
 describe("the frame budget", () => {
   test("base64 costs a third again, rounded up to four", () => {
     expect(base64Length(0)).toBe(0);
@@ -91,7 +95,7 @@ describe("the frame budget", () => {
     expect(fitsFrame(FRAME_LIMIT, message, [image(alone), image(alone)])).toBe(false);
   });
 
-  test("paths cost the frame nothing", () => {
+  test("paths carry no base64 payload", () => {
     const message = "read this";
     const attached = [file("/tmp/notes.md")];
 
@@ -116,7 +120,7 @@ describe("the frame budget", () => {
   });
 });
 
-describe("the two routes", () => {
+describe("the attachment routes", () => {
   test("images never become prompt text", () => {
     // The rule the whole design turns on. Base64 in `message` is text tokens, and one
     // screenshot is hundreds of thousands of them.
@@ -140,6 +144,21 @@ describe("the two routes", () => {
   test("a path with no draft is the whole message", () => {
     expect(messageFor("   ", [file("/tmp/a.md")])).toBe("/tmp/a.md");
     expect(messageFor("", [])).toBe("");
+  });
+
+  test("selected text is labelled and included, with a fence its contents cannot close", () => {
+    const sent = messageFor("review this", [textFile("notes.md", "# Notes\n```\nhello")]);
+    expect(sent).toContain('Attached file: "notes.md"');
+    expect(sent).toContain("````text\n# Notes\n```\nhello\n````");
+    expect(sent.startsWith("review this\n\n")).toBe(true);
+  });
+
+  test("attached text counts toward the frame in UTF-8 bytes", () => {
+    const attached = [textFile("unicode.txt", "é".repeat(100))];
+    const outgoing = messageFor("", attached);
+    expect(estimateOverhead(outgoing, 0)).toBeGreaterThan(JSON.stringify({ message: outgoing }).length);
+    expect(fitsFrame(100, "", attached)).toBe(false);
+    expect(frameRefusal(100, "", attached)).toContain("attached text makes the message too large");
   });
 
   test("images keep the order they were attached in", () => {

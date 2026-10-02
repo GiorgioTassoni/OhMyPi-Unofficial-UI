@@ -311,9 +311,28 @@ impl LiveSession {
         Ok(())
     }
 
-    /// Remember the direct executable from this approved command for this session only.
-    pub fn grant_command(&self, command: &str) -> Result<String, String> {
-        let program = command_program(command)?;
+    /// The next executable this command would grant, if its shell shape is safe to parse.
+    pub fn next_command_grant(&self, title: &str) -> Result<Option<String>, String> {
+        let Some(command) = command_from_approval(title) else {
+            return Ok(None);
+        };
+        let Some(programs) = grantable_command_programs(command) else {
+            return Ok(None);
+        };
+        let granted = self
+            .granted_commands
+            .lock()
+            .map_err(|_| "the session's command grants were unavailable".to_string())?;
+        Ok(programs
+            .into_iter()
+            .find(|program| !granted.contains(program)))
+    }
+
+    /// Remember the next unapproved executable from this command for this session only.
+    pub fn grant_command(&self, title: &str) -> Result<String, String> {
+        let program = self.next_command_grant(title)?.ok_or_else(|| {
+            "this command has no unapproved executable that can be granted safely".to_string()
+        })?;
         self.granted_commands
             .lock()
             .map_err(|_| "the session's command grants were unavailable".to_string())?
@@ -1708,11 +1727,11 @@ fn auto_approval_frame(
     let tool_granted = granted_tools.lock().ok()?.contains(tool);
     let command_granted = if matches!(tool, "bash" | "bash_interactive") {
         command_from_approval(&request.title)
-            .and_then(simple_command_program)
-            .is_some_and(|program| {
+            .and_then(grantable_command_programs)
+            .is_some_and(|programs| {
                 granted_commands
                     .lock()
-                    .is_ok_and(|set| set.contains(&program))
+                    .is_ok_and(|set| programs.iter().all(|program| set.contains(program)))
             })
     } else {
         false
@@ -1741,40 +1760,72 @@ pub fn command_program(command: &str) -> Result<String, String> {
 }
 
 fn command_from_approval(title: &str) -> Option<&str> {
-    title
-        .lines()
-        .skip(1)
-        .find_map(|line| line.strip_prefix("Command:").map(str::trim))
-        .filter(|command| !command.is_empty())
+    let mut lines = title.lines().skip(1);
+    while let Some(line) = lines.next() {
+        if let Some(command) = line.strip_prefix("Command:").map(str::trim) {
+            // A multiline script must never be approved from just its first line.
+            return (!command.is_empty() && lines.all(|line| line.trim().is_empty()))
+                .then_some(command);
+        }
+    }
+    None
 }
 
-/// Reject shell syntax that can invoke another program or expand into a different call.
-/// False negatives are intentional: commands with operators continue to prompt.
-fn simple_command_program(command: &str) -> Option<String> {
-    if command.chars().any(|character| {
-        matches!(
-            character,
-            ';' | '|'
-                | '&'
-                | '<'
-                | '>'
-                | '$'
-                | '`'
-                | '('
-                | ')'
-                | '{'
-                | '}'
-                | '*'
-                | '?'
-                | '['
-                | ']'
-                | '\n'
-                | '\r'
-        )
-    }) {
+/// A deliberately narrow shell subset: plain commands separated by `;`, with an
+/// optional final stderr redirect to `/dev/null`. Unknown syntax keeps prompting.
+/// In particular, substitutions, pipelines and other redirects cannot inherit a
+/// grant for just one visible executable.
+fn grantable_command_programs(command: &str) -> Option<Vec<String>> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut quote = None;
+    for (index, character) in command.char_indices() {
+        match (quote, character) {
+            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+            (None, '\'' | '"') => quote = Some(character),
+            (None, ';') => {
+                parts.push(&command[start..index]);
+                start = index + 1;
+            }
+            // Reject syntax whose execution cannot be accounted for by this parser.
+            (
+                None,
+                '|' | '&' | '<' | '$' | '`' | '(' | ')' | '{' | '}' | '\n' | '\r' | '\\' | '#',
+            )
+            | (Some('"'), '$' | '`' | '\\') => return None,
+            _ => {}
+        }
+    }
+    if quote.is_some() {
         return None;
     }
-    command_program(command).ok()
+    parts.push(&command[start..]);
+
+    let mut programs = Vec::new();
+    for part in parts {
+        let mut part = part.trim();
+        // This harmless redirect occurs in OMP's own inspection commands. Do not
+        // generalize it to arbitrary output paths or other redirection forms.
+        if let Some(before) = part.strip_suffix("2>/dev/null") {
+            if !before.ends_with(char::is_whitespace) {
+                return None;
+            }
+            part = before.trim_end();
+        }
+        if part.is_empty() || part.contains('>') {
+            return None;
+        }
+        let words = shell_words::split(part).ok()?;
+        let executable = words.first()?;
+        if executable.contains(['*', '?', '[', ']']) {
+            return None;
+        }
+        let program = command_program(part).ok()?;
+        if !programs.contains(&program) {
+            programs.push(program);
+        }
+    }
+    Some(programs)
 }
 
 pub fn spawn_pump(
@@ -1942,7 +1993,7 @@ pub fn spawn_pump(
                                     // `/rename` is an implementation detail of automatic
                                     // naming. Its receipt (including failure) must not become
                                     // an "info" message in the conversation.
-                                    if is_generated_title_receipt(&text)
+                                    if is_generated_title_receipt(text)
                                         && title_generation_in_flight.swap(false, Ordering::AcqRel)
                                     {
                                         continue;
@@ -2305,6 +2356,7 @@ mod tests {
             "node check-index.js; rm -rf /tmp/probe",
             "node $(touch /tmp/probe)",
             "node check-index.js | tee output.log",
+            "node check-index.js\nrm -rf /tmp/probe",
             "NODE_OPTIONS=--inspect node check-index.js",
         ] {
             assert_eq!(
@@ -2313,6 +2365,56 @@ mod tests {
                 "compound or different command must still ask: {command}"
             );
         }
+    }
+
+    #[test]
+    fn compound_command_grants_advance_to_the_next_executable() {
+        let command = "ls -la ~/.omp/agent; echo ---; ls -la ~/.omp/agent/*.yml 2>/dev/null";
+        assert_eq!(
+            grantable_command_programs(command),
+            Some(vec!["ls".to_string(), "echo".to_string()])
+        );
+        let granted_tools = Mutex::new(HashSet::new());
+        let granted_commands = Mutex::new(HashSet::from(["ls".to_string()]));
+        let approval = ui::Incoming::Request(ui::UiRequest {
+            id: "ui_1".to_string(),
+            kind: ui::UiRequestKind::Select,
+            title: format!("Allow tool: bash\nCommand: {command}"),
+            message: String::new(),
+            options: vec!["Approve".to_string(), "Deny".to_string()],
+            prefill: None,
+            placeholder: None,
+            timeout_ms: None,
+        });
+        assert_eq!(
+            auto_approval_frame(&approval, &granted_tools, &granted_commands),
+            None
+        );
+        granted_commands.lock().unwrap().insert("echo".to_string());
+        assert!(auto_approval_frame(&approval, &granted_tools, &granted_commands).is_some());
+    }
+
+    #[test]
+    fn unknown_shell_syntax_never_inherits_an_executable_grant() {
+        for command in [
+            "ls | sh",
+            "ls && echo done",
+            "ls $(echo surprise)",
+            "ls > result.txt",
+            "ls;",
+            "ls; FOO=bar echo done",
+            "ls\\; echo done",
+        ] {
+            assert_eq!(grantable_command_programs(command), None, "{command}");
+        }
+        assert_eq!(
+            grantable_command_programs("ls; rm -rf /tmp/probe"),
+            Some(vec!["ls".to_string(), "rm".to_string()])
+        );
+        assert_eq!(
+            grantable_command_programs("echo 'hello; world'; ls"),
+            Some(vec!["echo".to_string(), "ls".to_string()])
+        );
     }
 
     #[test]
@@ -2327,10 +2429,13 @@ mod tests {
         );
         assert!(command_program("NODE_OPTIONS=--inspect node check-index.js").is_err());
         assert_eq!(
-            simple_command_program("node check-index.js").as_deref(),
-            Some("node")
+            grantable_command_programs("node check-index.js"),
+            Some(vec!["node".to_string()])
         );
-        assert_eq!(simple_command_program("node a.js; echo done"), None);
+        assert_eq!(
+            grantable_command_programs("node a.js; echo done"),
+            Some(vec!["node".to_string(), "echo".to_string()])
+        );
     }
 
     #[test]

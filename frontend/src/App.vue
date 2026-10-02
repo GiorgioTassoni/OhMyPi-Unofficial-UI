@@ -24,15 +24,15 @@ import {
   onNotifications,
   agents as readAgents,
   type ThreadAgents,
+  type AgentSnapshot,
   onAgents,
   onThreadsUpdated,
   notifyOs,
   openExternal,
   openThread,
-  projects as readProjects,
+  sidebarSnapshot as readSidebarSnapshot,
   refreshModels,
   renameThread as sendRename,
-  sessions as readSessions,
   setFavourites,
   setFocusedThread,
   terminalClose,
@@ -53,7 +53,7 @@ import {
   type ThreadSnapshot,
   type UiRequestSnapshot,
 } from "./bridge";
-import { activeCount } from "./lib/agents";
+import { activeCount, agentInFlight } from "./lib/agents";
 import { readAppTheme, setAppTheme, type AppTheme } from "./lib/appTheme";
 import { applyChrome, chromeFor, draftTarget, type ThreadChrome } from "./lib/chrome";
 import {
@@ -83,6 +83,7 @@ import DiagnosticsPanel from "./components/DiagnosticsPanel.vue";
 import Modal from "./components/Modal.vue";
 import RightPanel from "./components/RightPanel.vue";
 import AgentsPanel from "./components/AgentsPanel.vue";
+import AgentReadOnlyView from "./components/AgentReadOnlyView.vue";
 import SearchOverlay from "./components/SearchOverlay.vue";
 import SettingsScreen from "./components/SettingsScreen.vue";
 import Sidebar from "./components/Sidebar.vue";
@@ -146,6 +147,20 @@ const live = ref<ThreadSnapshot[]>([]);
 const rosters = ref<ThreadAgents[]>([]);
 const projects = ref<ProjectSnapshot[]>([]);
 const activeId = ref<string | null>(null);
+const agentTabs = ref<{ thread: string; id: string }[]>([]);
+const activeAgentKey = ref<string | null>(null);
+const agentKey = (thread: string, id: string): string => JSON.stringify([thread, id]);
+const activeAgentTab = computed(() => agentTabs.value.find((tab) => agentKey(tab.thread, tab.id) === activeAgentKey.value) ?? null);
+
+function tabAgent(thread: string, id: string): AgentSnapshot | null {
+  return rosters.value.find((entry) => entry.thread === thread)?.agents.find((agent) => agent.id === id) ?? null;
+}
+
+function closeAgentTab(thread: string, id: string): void {
+  const key = agentKey(thread, id);
+  agentTabs.value = agentTabs.value.filter((tab) => agentKey(tab.thread, tab.id) !== key);
+  if (activeAgentKey.value === key) activeAgentKey.value = null;
+}
 const unread = ref<Set<string>>(new Set());
 
 /**
@@ -160,6 +175,10 @@ const unread = ref<Set<string>>(new Set());
 watch(activeId, (thread) => {
   void setFocusedThread(thread);
 }, { immediate: true });
+
+watch(activeId, (thread) => {
+  if (activeAgentTab.value && activeAgentTab.value.thread !== thread) activeAgentKey.value = null;
+});
 
 /**
  * The host's notifications, and the chrome an extension pushed (`docs/12` §13).
@@ -249,7 +268,7 @@ const RIGHT_PANEL_COLLAPSE_THRESHOLD = 220;
 
 /** A forgiving drag target around the quiet one-pixel divider the user sees. */
 const RESIZE_HANDLE_CLASS =
-  "z-30 h-full w-2 cursor-col-resize select-none after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-warn after:opacity-0 after:transition-opacity hover:after:opacity-80";
+  "z-30 h-full w-2 cursor-col-resize select-none after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-accent after:opacity-0 after:transition-opacity hover:after:opacity-80";
 
 function readStorageNumber(key: string, fallback: number): number {
   try {
@@ -391,17 +410,20 @@ const activeAgents = computed(() =>
   ),
 );
 
+function activeAgentIds(thread: string): string[] {
+  if (!live.value.some((entry) => entry.id === thread)) return [];
+  return rosters.value.find((entry) => entry.thread === thread)?.agents
+    .filter(agentInFlight).map((agent) => agent.id) ?? [];
+}
+
 /** Thread titles, for the panel's headings. */
 const threadTitles = computed(() =>
   Object.fromEntries(rows.value.map((row) => [row.id, row.title])),
 );
 
 /**
- * Open the agents panel, reading the rosters the host has not pushed.
- *
- * The pushed ones cover every live thread — that is what the frames are — so this is for the
- * threads whose engine has *gone*: a subagent that was still running when a sidecar closed is
- * only in the registry's remembered roster, and no event will ever announce it.
+ * Refresh rosters that may have been published before this window subscribed.
+ * The panel and spawn links filter the remembered rows down to agents still in flight.
  */
 async function refreshAgents(): Promise<void> {
   try {
@@ -417,8 +439,20 @@ async function refreshAgents(): Promise<void> {
 }
 
 async function openAgents(): Promise<void> {
+  agentFocus.value = null;
   agentsOpen.value = true;
   await refreshAgents();
+}
+
+async function openAgentTab(thread: string, id: string): Promise<void> {
+  await refreshAgents();
+  if (activeId.value !== thread) await select(thread);
+  if (activeId.value !== thread) return;
+  if (!agentTabs.value.some((tab) => tab.thread === thread && tab.id === id)) {
+    agentTabs.value = [...agentTabs.value, { thread, id }];
+  }
+  activeAgentKey.value = agentKey(thread, id);
+  agentsOpen.value = false;
 }
 
 /** The active thread's row in the sidebar model, for the title and the workspace. */
@@ -457,6 +491,7 @@ const searchOpen = ref(false);
 
 /** The global agents panel (`docs/12` §9), which is app-wide rather than per thread. */
 const agentsOpen = ref(false);
+const agentFocus = ref<{ thread: string; id: string } | null>(null);
 
 /**
  * The terminal drawer (`docs/12` §11, decision D6), which is app-wide too.
@@ -521,7 +556,7 @@ async function closeTerminal(id: string): Promise<void> {
  * the window decides what that means — a mapping it needs the moment there are two rows.
  */
 function onAppAction(id: string): void {
-  if (id === "settings") {
+  if (id === "settings" || id === "add-provider") {
     openSettings(true);
     return;
   }
@@ -545,7 +580,7 @@ function onAppAction(id: string): void {
  * pty, bytes written before the shell has printed anything are read and executed as its first
  * line, so a delay here would be a guess dressed as caution.
  */
-function logIn(): void {
+function logIn(providerId?: string): void {
   // A terminal needs a directory, and this is the app's existing rule for one that has none —
   // the same refusal `openTerminal` gives, for the same reason: a shell started somewhere nobody
   // chose is a shell in the wrong place. A first run has to open a directory before it has a
@@ -557,12 +592,16 @@ function logIn(): void {
     return;
   }
 
+  // Switch back to thread view so the terminal drawer is in front of the user
+  settings.value = false;
+
   void (async () => {
     try {
       const opened = await terminalOpen(cwd, 80, 24);
       terminalsOpen.value = true;
       activeTerminal.value = opened.id;
-      await terminalWrite(opened.id, "omp auth-broker login\r");
+      const cmd = providerId ? `omp auth-broker login ${providerId}\r` : "omp auth-broker login\r";
+      await terminalWrite(opened.id, cmd);
     } catch (cause) {
       error.value = describe(cause);
     }
@@ -820,13 +859,12 @@ async function onSearchPick(thread: string, hit: SearchHit): Promise<void> {
 
 /** Re-read the store and the live set, without disturbing what is on screen. */
 async function refresh(): Promise<void> {
-  const [sessions, projectList, threads] = await Promise.all([
-    readSessions().catch(() => catalogue.value),
-    readProjects().catch(() => projects.value),
+  const [sidebar, threads] = await Promise.all([
+    readSidebarSnapshot().catch(() => ({ sessions: catalogue.value, projects: projects.value })),
     readThreads().catch(() => live.value),
   ]);
-  catalogue.value = sessions;
-  projects.value = projectList;
+  catalogue.value = sidebar.sessions;
+  projects.value = sidebar.projects;
   live.value = threads;
 }
 
@@ -838,6 +876,7 @@ async function refresh(): Promise<void> {
  * stays memory-only until it contains an assistant message.
  */
 async function open(target: string, resume?: string): Promise<void> {
+  activeAgentKey.value = null;
   busy.value = true;
   error.value = null;
   try {
@@ -862,6 +901,7 @@ async function open(target: string, resume?: string): Promise<void> {
 /** Select a thread, starting it if it has no sidecar yet. */
 async function select(id: string): Promise<void> {
   if (busy.value) return;
+  activeAgentKey.value = null;
   markRead(id);
   activeId.value = id;
   if (live.value.some((thread) => thread.id === id)) return;
@@ -923,6 +963,8 @@ async function onForked(forked: ThreadSnapshot): Promise<void> {
 
 /** The session was deleted: there is nothing left to show. */
 function onDeleted(id: string): void {
+  if (activeAgentTab.value?.thread === id) activeAgentKey.value = null;
+  agentTabs.value = agentTabs.value.filter((tab) => tab.thread !== id);
   if (activeId.value === id) activeId.value = null;
   unread.value = new Set([...unread.value].filter((entry) => entry !== id));
   notices.value = notices.value.filter((entry) => entry.thread !== id);
@@ -1188,6 +1230,7 @@ function describe(cause: unknown): string {
       @favourites="onFavourites"
       @notification-sound="setNotificationSoundEnabled"
       @app-theme="changeAppTheme"
+      @terminal-login="logIn"
     />
 
     <!--
@@ -1254,10 +1297,10 @@ function describe(cause: unknown): string {
           :workspace="workspace"
           :busy="busy"
           :project="project"
-          :title="activeRow?.title ?? null"
+          :title="activeAgentTab ? (tabAgent(activeAgentTab.thread, activeAgentTab.id)?.agent || activeAgentTab.id) : (activeRow?.title ?? null)"
           :sidebar-collapsed="sidebarCollapsed"
           :diagnostics="diagnostics"
-          :panel="panelOpen"
+          :panel="panelOpen || activeAgentTab !== null"
           :terminals="terminalsOpen"
           @new-thread="workspace !== null && open(workspace)"
           @toggle-sidebar="sidebarCollapsed = !sidebarCollapsed"
@@ -1275,13 +1318,26 @@ function describe(cause: unknown): string {
           <button class="shrink-0 text-err/70 hover:text-err select-none" @click="error = null">dismiss</button>
         </p>
 
+        <nav v-if="agentTabs.length > 0 && activeId" class="flex shrink-0 items-center gap-0.5 overflow-x-auto border-b border-line/50 px-2 pt-1" aria-label="Conversation and agent tabs">
+          <button type="button" class="max-w-48 shrink-0 truncate rounded-t-[6px] px-3 py-1.5 text-[12px]" :class="activeAgentTab === null ? 'bg-raised text-fg' : 'text-dim hover:bg-raised/60 hover:text-fg'" :aria-current="activeAgentTab === null ? 'page' : undefined" @click="activeAgentKey = null">
+            {{ activeRow?.title || 'Conversation' }}
+          </button>
+          <div v-for="tab in agentTabs" :key="agentKey(tab.thread, tab.id)" class="flex shrink-0 items-center rounded-t-[6px]" :class="activeAgentKey === agentKey(tab.thread, tab.id) ? 'bg-raised text-fg' : 'text-dim hover:bg-raised/60'">
+            <button type="button" class="max-w-44 truncate py-1.5 pl-3 pr-1 text-[12px]" :title="tabAgent(tab.thread, tab.id)?.agent || tab.id" :aria-current="activeAgentKey === agentKey(tab.thread, tab.id) ? 'page' : undefined" @click="activeId = tab.thread; activeAgentKey = agentKey(tab.thread, tab.id)">
+              {{ tabAgent(tab.thread, tab.id)?.agent || tab.id }}
+            </button>
+            <button type="button" class="px-2 py-1.5 text-faint hover:text-fg" :aria-label="`Close ${tabAgent(tab.thread, tab.id)?.agent || tab.id} tab`" @click="closeAgentTab(tab.thread, tab.id)">×</button>
+          </div>
+        </nav>
+
         <main class="flex min-h-0 flex-1 flex-col overflow-hidden">
           <template v-for="id in viewIds" :key="id">
             <ThreadView
-              v-show="id === activeId"
+              v-show="id === activeId && activeAgentTab === null"
               :ref="(view) => registerView(id, view)"
               :thread="id"
-              :active="id === activeId"
+              :active="id === activeId && activeAgentTab === null"
+              :active-agents="activeAgentIds(id)"
               :chrome="chromeFor(chrome, id)"
               :models="models"
               :refreshing="refreshing"
@@ -1295,8 +1351,19 @@ function describe(cause: unknown): string {
               @favourites="onFavourites"
               @app-action="onAppAction"
               @review="openTurnReview(id, $event)"
+              @agent="openAgentTab(id, $event)"
             />
           </template>
+          <AgentReadOnlyView
+            v-for="tab in agentTabs"
+            v-show="activeAgentKey === agentKey(tab.thread, tab.id)"
+            :key="agentKey(tab.thread, tab.id)"
+            :thread="tab.thread"
+            :agent-id="tab.id"
+            :agent="tabAgent(tab.thread, tab.id)"
+            :active="activeAgentKey === agentKey(tab.thread, tab.id)"
+            @failed="error = $event"
+          />
 
           <!--
             `docs/12` §4: with nothing open there is nothing to type into, so the empty state
@@ -1358,7 +1425,7 @@ function describe(cause: unknown): string {
       <!-- Resizable Right Panel Column (full-height to window top, matching Sidebar) -->
       <Transition name="right-panel">
         <div
-          v-if="panelOpen || diagnostics"
+          v-if="(panelOpen || diagnostics) && activeAgentTab === null"
           class="right-panel-column relative flex h-full shrink-0"
           :style="{ '--right-panel-width': `${rightPanelWidth}px` }"
           :class="{ 'right-panel-dragging': isDraggingRight }"
@@ -1431,7 +1498,9 @@ function describe(cause: unknown): string {
       :active-id="activeId"
       :live="live.map((thread) => thread.id)"
       :rows="activeRows"
+      :focus="agentFocus"
       @reveal="revealIn"
+      @open-agent="openAgentTab"
       @close="agentsOpen = false"
     />
 

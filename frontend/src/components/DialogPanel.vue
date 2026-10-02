@@ -20,6 +20,7 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import {
   allowCommand as grantCommand,
   allowTool,
+  nextCommandGrant,
   respondUiRequest,
   type UiAnswer,
   type UiRequestSnapshot,
@@ -27,7 +28,6 @@ import {
 import {
   APPROVE,
   approvalOf,
-  commandProgram,
   formatRemaining,
   remainingMs,
 } from "../lib/approval";
@@ -51,6 +51,34 @@ const now = ref(Date.now());
 const answering = ref<Record<string, boolean>>({});
 /** The dialog whose "always allow" write is in flight. */
 const writing = ref<string | null>(null);
+/** The host names the next unapproved executable; the frontend never guesses. */
+const candidatePrograms = ref<Record<string, string | null>>({});
+let candidateRead = 0;
+
+async function refreshCandidates(): Promise<void> {
+  const read = ++candidateRead;
+  candidatePrograms.value = {};
+  const entries = await Promise.all(props.dialogs.map(async (dialog) => {
+    const approval = approvalOf(dialog);
+    const command = approval?.fields.find((field) => field.label === "Command")?.value;
+    if (!approval || !isCommandApproval(approval.tool) || !command) {
+      return [dialog.id, null] as const;
+    }
+    try {
+      return [dialog.id, await nextCommandGrant(props.thread, dialog.title)] as const;
+    } catch {
+      // A stale/closed session cannot safely offer a grant. Allow once still works.
+      return [dialog.id, null] as const;
+    }
+  }));
+  if (read === candidateRead) {
+    candidatePrograms.value = Object.fromEntries(entries);
+  }
+}
+
+watch([() => props.thread, () => props.dialogs], () => {
+  void refreshCandidates();
+}, { immediate: true, deep: true });
 
 /**
  * The two buttons a dialog has.
@@ -143,9 +171,7 @@ const cards = computed(() =>
       dialog,
       approval,
       command,
-      program: approval !== null && isCommandApproval(approval.tool) && command !== null
-        ? commandProgram(command)
-        : null,
+      program: candidatePrograms.value[dialog.id] ?? null,
       deadline: left === null ? null : formatRemaining(left),
       busy: answering.value[dialog.id] === true,
     };
@@ -197,17 +223,17 @@ async function allow(dialog: UiRequestSnapshot, tool: string): Promise<void> {
 /** Store a conversation-local executable grant before approving this call. */
 async function allowCommandForConversation(
   dialog: UiRequestSnapshot,
-  command: string,
 ): Promise<void> {
   writing.value = dialog.id;
   try {
-    await grantCommand(props.thread, command);
+    await grantCommand(props.thread, dialog.title);
   } catch (cause) {
     emit("failed", describe(cause));
     return;
   } finally {
     writing.value = null;
   }
+  void refreshCandidates();
   await answer(dialog, { value: APPROVE });
 }
 
@@ -307,7 +333,7 @@ function describe(cause: unknown): string {
             v-if="isCommandApproval(card.approval.tool) && card.program && card.command"
             :disabled="card.busy || writing === card.dialog.id"
             :class="[APPROVAL_BUTTON, 'inline-flex items-center text-fg']"
-            @click="allowCommandForConversation(card.dialog, card.command)"
+            @click="allowCommandForConversation(card.dialog)"
           >
             <span class="inline-flex items-baseline gap-2">
               <span>Always allow</span>
@@ -341,7 +367,8 @@ function describe(cause: unknown): string {
           v-if="isCommandApproval(card.approval.tool) && card.program"
           class="mt-1.5 text-[11px] text-dim"
         >
-          Always allow applies to this conversation.
+          Always allow applies to this conversation. This run is approved in full;
+          later runs still ask about other commands in the line.
         </p>
       </template>
 

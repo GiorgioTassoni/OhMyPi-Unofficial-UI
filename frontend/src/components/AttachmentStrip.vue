@@ -2,10 +2,9 @@
 /**
  * What the composer is holding (`docs/12` §5.1).
  *
- * Two kinds of chip, because there are two routes and the difference is visible to the
- * user: an image shows itself and travels as bytes with the message, while a path shows
- * where the file is and travels as that path for the agent to read. Neither is a
- * thumbnail of what the model will see — the engine re-encodes images per model and
+ * Three kinds of chip: an image travels as image bytes, a selected UTF-8 file is
+ * included as labelled text, and a dropped path asks the agent to read that file. The strip is
+ * not a preview of what the model will see — the engine re-encodes images per model and
  * drops them entirely for a text-only one, so this strip is the app's own account of
  * what was attached. `docs/12` §3.1's row inside the conversation is the engine's.
  *
@@ -63,6 +62,9 @@ const emit = defineEmits<{
           <span class="text-[10.5px] text-faint">
             <template v-if="attachment.kind === 'image'">
               {{ attachment.mime }} · {{ describeBytes(attachment.bytes) }}
+            </template>
+            <template v-else-if="attachment.kind === 'text'">
+              text · {{ describeBytes(attachment.bytes) }} included
             </template>
             <template v-else>path · the agent reads it</template>
           </span>

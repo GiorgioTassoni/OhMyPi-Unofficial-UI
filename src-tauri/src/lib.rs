@@ -45,6 +45,7 @@ pub mod models;
 pub mod notify;
 pub mod panel;
 pub mod policy;
+pub mod providers;
 pub mod pty;
 pub mod search;
 pub mod session;
@@ -57,13 +58,39 @@ use tauri::Manager;
 
 use bridge::{AppState, LaunchState};
 
+/// A display-backend preference must be applied before GTK opens the first window.
+pub const PREFER_X11_FLAG: &str = "--prefer-x11";
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct LaunchOptions {
+    pub prefer_x11: bool,
+    /// The first positional argument retains its existing meaning: a project directory.
+    pub directory: Option<String>,
+}
+
+/// Recognize the app's startup flag without consuming the optional project directory.
+pub fn launch_options(arguments: impl IntoIterator<Item = String>) -> LaunchOptions {
+    let mut options = LaunchOptions {
+        prefer_x11: false,
+        directory: None,
+    };
+    for argument in arguments {
+        if argument == PREFER_X11_FLAG {
+            options.prefer_x11 = true;
+        } else if options.directory.is_none() {
+            options.directory = Some(argument);
+        }
+    }
+    options
+}
+
 /// Read the workspace the app was launched with, if any.
 ///
 /// Only the first positional argument is considered, and only when it is an
 /// existing directory: a typo should open an idle window rather than an agent in
 /// the wrong project.
 pub fn launch_context() -> dto::LaunchContext {
-    let argument = std::env::args().nth(1);
+    let argument = launch_options(std::env::args().skip(1)).directory;
     let workspace = argument
         .clone()
         .filter(|candidate| std::path::Path::new(candidate).is_dir());
@@ -142,8 +169,7 @@ pub fn run() {
             bridge::stop_turn_and_send,
             bridge::ui_requests,
             bridge::respond_ui_request,
-            bridge::sessions,
-            bridge::projects,
+            bridge::sidebar_snapshot,
             bridge::set_focused_thread,
             bridge::notify_os,
             bridge::search,
@@ -151,6 +177,7 @@ pub fn run() {
             bridge::reindex,
             bridge::allow_tool,
             bridge::allow_command,
+            bridge::next_command_grant,
             bridge::open_external,
             bridge::launch_context,
             bridge::models,
@@ -194,6 +221,12 @@ pub fn run() {
             settings::settings_hatch_apply,
             settings::settings_backup,
             settings::settings_restart_sessions,
+            providers::get_catalog_providers,
+            providers::get_configured_providers,
+            providers::add_provider_api_key,
+            providers::remove_provider_credential,
+            providers::add_custom_provider,
+            providers::remove_custom_provider,
         ])
         .build(tauri::generate_context!())
         .expect("the Tauri application builds")
@@ -224,5 +257,15 @@ mod tests {
             assert_eq!(user.trim(), user, "a user name with padding is not one");
             assert!(!user.is_empty(), "an empty name is not an identity");
         }
+    }
+
+    #[test]
+    fn prefer_x11_does_not_take_the_project_directory_slot() {
+        let before = launch_options([PREFER_X11_FLAG.into(), "/tmp/project".into()]);
+        let after = launch_options(["/tmp/project".into(), PREFER_X11_FLAG.into()]);
+        assert_eq!(before, after);
+        assert_eq!(before.directory.as_deref(), Some("/tmp/project"));
+        assert!(before.prefer_x11);
+        assert!(!launch_options(["/tmp/project".into()]).prefer_x11);
     }
 }

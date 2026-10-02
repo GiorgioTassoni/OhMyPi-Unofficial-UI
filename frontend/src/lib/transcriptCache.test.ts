@@ -24,4 +24,16 @@ describe("incremental transcript projection", () => {
     expect(next.turns[0]).not.toBe(initial.turns[0]);
     expect(next.turns[1]).not.toBe(initial.turns[1]);
   });
+
+  test("an appended turn keeps earlier turn identities", () => {
+    const rows = [row({ role: "user", text: "one" }), said("done"), row({ role: "user", text: "two" }), said("done too")];
+    const initial = initialProjection(rows, false);
+    const appended = [...rows, row({ role: "user", text: "three" }), said("answer")];
+    const next = projectTranscript(initial, appended, false, rows.length);
+
+    expect(next.turns).toHaveLength(3);
+    expect(next.turns[0]).toBe(initial.turns[0]);
+    expect(next.turns[0].answer?.row.text).toBe("done");
+    expect(next.turns[2].answer?.row.text).toBe("answer");
+  });
 });

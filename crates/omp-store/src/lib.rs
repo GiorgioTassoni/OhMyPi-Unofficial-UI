@@ -2,8 +2,8 @@
 //!
 //! Everything in this crate is a **read**: sessions, pins and the project registry are the
 //! engine's files, and the app's job is to show them without becoming a second writer that
-//! can corrupt them. (The one place the app acts on them — deleting a session, pinning one —
-//! goes through the engine's own commands; `docs/12` §2.3.)
+//! can corrupt them. The desktop host deletes sessions by resolved path and delegates pinning
+//! to the engine's own command (`docs/12` §2.3).
 //!
 //! Why this exists at all: at v18.2.6 the RPC surface has no way to list sessions. The
 //! engine's own listing is disk-only (`session-listing.ts`, SDK-only `SessionManager.listAll`),

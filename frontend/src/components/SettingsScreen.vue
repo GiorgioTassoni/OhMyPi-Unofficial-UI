@@ -78,6 +78,7 @@ const emit = defineEmits<{
   failed: [message: string];
   notificationSound: [enabled: boolean];
   appTheme: [theme: AppTheme];
+  terminalLogin: [providerId?: string];
 }>();
 
 /** What the controls below need from the shell. Provided, not threaded through four levels. */
@@ -341,6 +342,7 @@ function describe(cause: unknown): string {
               @changed="onChanged"
               @notification-sound="emit('notificationSound', $event)"
               @app-theme="emit('appTheme', $event)"
+              @terminal-login="emit('terminalLogin', $event)"
             />
 
             <!--

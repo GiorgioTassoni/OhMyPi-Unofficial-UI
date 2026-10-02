@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use omp_store::Store;
+use omp_store::{SessionSummary, Store};
 use omp_transport::protocol::ui::UiResponse;
 use omp_transport::protocol::{commands, ImageContent};
 use omp_transport::{ClientOptions, SidecarSpec};
@@ -25,8 +25,8 @@ use crate::agents;
 use crate::dto::{
     AgentSnapshot, AgentTranscript, ArtifactSnapshot, BranchTarget, BrokerScope, CommandSnapshot,
     ImageIn, IndexStatus, LaunchContext, ModelCatalogue, ParkedAgent, ProjectSnapshot, RowSnapshot,
-    SearchHit, SessionStatus, SessionSummaryDto, TerminalSnapshot, ThreadAgents, ThreadSnapshot,
-    TodoPhaseInput, TodoPhaseSnapshot, UiAnswer, UiRequestSnapshot, WorkspaceEntry,
+    SearchHit, SessionStatus, SessionSummaryDto, SidebarSnapshot, TerminalSnapshot, ThreadAgents,
+    ThreadSnapshot, TodoPhaseInput, TodoPhaseSnapshot, UiAnswer, UiRequestSnapshot, WorkspaceEntry,
 };
 use crate::favourites::Favourites;
 use crate::flows;
@@ -158,7 +158,17 @@ pub async fn open_thread(
         }
     }
 
-    let mut spec = SidecarSpec::omp(&workspace);
+    // OMP defaults to Full access, but an explicit user choice in its config must
+    // survive new conversations. On a config read failure, retain the old safer
+    // launch mode rather than silently broadening permissions.
+    let mode = match policy::mode_for_workspace(std::path::Path::new(&workspace)).await {
+        Ok(mode) => mode,
+        Err(error) => {
+            eprintln!("[omp-desktop] {error}; starting with Auto-accept edits");
+            "write".to_string()
+        }
+    };
+    let mut spec = SidecarSpec::omp(&workspace).with_approval_mode(&mode);
     if let Some(id) = &resume {
         let store = state.store.clone();
         let id = id.clone();
@@ -708,10 +718,21 @@ pub async fn allow_tool(
 pub fn allow_command(
     state: State<'_, AppState>,
     thread: String,
-    command: String,
+    title: String,
 ) -> Result<String, String> {
     let live = thread_of(&state, &thread)?;
-    live.grant_command(&command)
+    live.grant_command(&title)
+}
+
+/// Which executable an "always allow" click would grant for this command now.
+/// Unsupported shell syntax has no candidate, so the UI offers only Allow once.
+#[tauri::command]
+pub fn next_command_grant(
+    state: State<'_, AppState>,
+    thread: String,
+    title: String,
+) -> Result<Option<String>, String> {
+    thread_of(&state, &thread)?.next_command_grant(&title)
 }
 
 /// Open a URL in the user's default application.
@@ -1164,19 +1185,14 @@ pub async fn threads(state: State<'_, AppState>) -> Result<Vec<ThreadSnapshot>, 
     Ok(state.threads.snapshots())
 }
 
-/// The engine's session catalogue, as the sidebar browses it.
-///
-/// Needs no live session, so it answers with nothing open — which is the state the app
-/// starts in, and the state a user reads the catalogue from before opening anything.
-/// A store this process could not find answers with an empty list rather than an error:
-/// no agent directory means no sessions, and "nothing here yet" is a window that still
-/// works.
+/// The sidebar's sessions and projects, built from one listing of the session store.
+/// Needs no live session; an unavailable store answers with two empty lists.
 #[tauri::command]
-pub async fn sessions(state: State<'_, AppState>) -> Result<Vec<SessionSummaryDto>, String> {
+pub async fn sidebar_snapshot(state: State<'_, AppState>) -> Result<SidebarSnapshot, String> {
     let store = state.store.clone();
     let threads = Arc::clone(&state.threads);
 
-    scan(move || Ok(session_catalogue(store.as_ref(), &threads))).await
+    scan(move || Ok(sidebar_catalogue(store.as_ref(), &threads))).await
 }
 
 /// Tell the host which thread the window is showing (`docs/11` D5).
@@ -1197,14 +1213,6 @@ pub async fn set_focused_thread(
     state.threads.focus(thread);
 
     Ok(())
-}
-
-/// The project groups, derived from the sessions' own working directories.
-#[tauri::command]
-pub async fn projects(state: State<'_, AppState>) -> Result<Vec<ProjectSnapshot>, String> {
-    let store = state.store.clone();
-
-    scan(move || Ok(project_groups(store.as_ref()))).await
 }
 
 /// Search every session the app has indexed (`docs/12` §7.4).
@@ -1364,24 +1372,36 @@ pub async fn pick_directory(title: Option<String>) -> Result<Option<String>, Str
     .await
 }
 
-/// The catalogue rows the `sessions` command answers with.
-///
-/// Split out from the command so it can be exercised without a window: the body here is
-/// the whole answer, and the command adds only the thread the blocking scan runs on.
-///
-/// The registry is read for one field: whether the app has *released* this thread's sidecar
-/// for being idle. That is app-owned state rather than anything the file says, and it is the
-/// only thing that separates a session nobody has opened from one whose process this app
-/// stopped — which the sidebar has to draw differently (`docs/12` §16).
+/// Read the store once for both sidebar views; keep their counts and rows in sync.
+pub fn sidebar_catalogue(store: Option<&Store>, threads: &Threads) -> SidebarSnapshot {
+    let Some(store) = store else {
+        return SidebarSnapshot {
+            sessions: Vec::new(),
+            projects: Vec::new(),
+        };
+    };
+
+    let listed = store.list();
+    let projects = project_groups_from(&listed, &store.hidden_projects());
+    let sessions = session_catalogue_from(listed, &store.pinned_ids(), threads);
+    SidebarSnapshot { sessions, projects }
+}
+
+/// The session half of a listing, also used directly by the host's live tests.
+/// The registry supplies the app-owned idle-suspension mark (`docs/12` §16).
 pub fn session_catalogue(store: Option<&Store>, threads: &Threads) -> Vec<SessionSummaryDto> {
     let Some(store) = store else {
         return Vec::new();
     };
+    session_catalogue_from(store.list(), &store.pinned_ids(), threads)
+}
 
-    let pinned = store.pinned_ids();
-
-    store
-        .list()
+fn session_catalogue_from(
+    listed: Vec<SessionSummary>,
+    pinned: &std::collections::HashSet<String>,
+    threads: &Threads,
+) -> Vec<SessionSummaryDto> {
+    listed
         .into_iter()
         .map(|session| {
             let is_pinned = pinned.contains(&session.id);
@@ -1409,24 +1429,29 @@ pub fn session_catalogue(store: Option<&Store>, threads: &Threads) -> Vec<Sessio
         .collect()
 }
 
-/// The project groups the `projects` command answers with.
+/// The project half of a listing, also used directly by the host's live tests.
 ///
 /// Grouped by the cwd the sessions record rather than by bucket name, which is the same
 /// rule `docs/12` §2.1 uses for the sidebar: a bucket name is a lossy encoding of a path
 /// and cannot be turned back into one. The order is the catalogue's — newest session
 /// first — so the project most recently worked in leads, which is what a sidebar wants.
 /// A session that recorded no cwd cannot be attributed to a project and is left out of
-/// this list; it is still in `sessions`.
+/// this list; it is still in the session catalogue.
 pub fn project_groups(store: Option<&Store>) -> Vec<ProjectSnapshot> {
     let Some(store) = store else {
         return Vec::new();
     };
+    project_groups_from(&store.list(), &store.hidden_projects())
+}
 
-    let hidden = store.hidden_projects();
+fn project_groups_from(
+    listed: &[SessionSummary],
+    hidden: &std::collections::HashSet<String>,
+) -> Vec<ProjectSnapshot> {
     let mut order: Vec<String> = Vec::new();
     let mut counts: HashMap<String, usize> = HashMap::new();
 
-    for session in store.list() {
+    for session in listed {
         if session.cwd.is_empty() {
             continue;
         }
@@ -1435,7 +1460,7 @@ pub fn project_groups(store: Option<&Store>) -> Vec<ProjectSnapshot> {
             Some(count) => *count += 1,
             None => {
                 counts.insert(session.cwd.clone(), 1);
-                order.push(session.cwd);
+                order.push(session.cwd.clone());
             }
         }
     }
@@ -1593,6 +1618,15 @@ pub async fn terminal_close(
 mod tests {
     use super::*;
     use crate::dto::ControlSnapshot;
+
+    #[test]
+    fn sidebar_snapshot_has_both_lists_without_a_store() {
+        let snapshot = sidebar_catalogue(None, &Threads::default());
+        assert_eq!(
+            serde_json::to_value(snapshot).expect("the sidebar snapshot serializes"),
+            serde_json::json!({ "sessions": [], "projects": [] })
+        );
+    }
 
     /// The window's own shape, asserted where it can break.
     ///

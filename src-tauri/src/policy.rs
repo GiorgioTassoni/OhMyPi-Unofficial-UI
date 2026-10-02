@@ -29,6 +29,7 @@
 //! writing the user's real config — `tests/approval.rs` proves the suppression that
 //! way, and proves this module's write against the global config.
 
+use std::path::Path;
 use std::process::Stdio;
 
 use omp_transport::resolve_omp_binary;
@@ -158,6 +159,33 @@ pub async fn record_mode(mode: &str) -> Result<(), String> {
     )
     .await
     .map(|_| ())
+}
+
+/// Resolve OMP's configured mode for a new conversation. Its unset/default value
+/// is `yolo`; a mode the user explicitly selected still takes precedence.
+pub async fn mode_for_workspace(workspace: &Path) -> Result<String, String> {
+    let program = resolve_omp_binary();
+    let output = Command::new(&program)
+        .args(["config", "get", MODE_KEY, "--json"])
+        .current_dir(workspace)
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .map_err(|error| format!("could not read the approval mode: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "could not read the approval mode: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let parsed: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("could not parse the approval mode: {error}"))?;
+    let mode = parsed
+        .get("value")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "the engine did not return an approval mode".to_string())?;
+    validate_mode(mode)?;
+    Ok(mode.to_string())
 }
 
 /// Refuse a mode the engine does not have.

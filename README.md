@@ -60,6 +60,17 @@ argument the window opens idle and you pick a project from the sidebar's `+`:
 omp-desktop /path/to/project
 ```
 
+On Linux, `--prefer-x11` opts this app into GTK's X11 backend (XWayland on a Wayland
+desktop), with Wayland as a fallback. This can avoid blurry text while scrolling on some
+WebKitGTK/Wayland setups. It is a **launch option**, not an in-app setting: it must be chosen
+before GTK starts. Normal launches keep GTK's default backend selection.
+
+```bash
+omp-desktop --prefer-x11 /path/to/project
+# From this repository, with the frontend dev server already running:
+cargo run -p omp-desktop -- --prefer-x11 /path/to/project
+```
+
 The app finds its engine in this order: **`OMP_BIN`** if set, then an `omp` binary **beside
 the app's own executable** (what the installers ship), then **`omp` on your `PATH`**.
 

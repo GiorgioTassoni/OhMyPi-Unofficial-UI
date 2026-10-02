@@ -252,16 +252,17 @@ function describe(cause: unknown): string {
           @click="toggle('context')"
         >
           <svg viewBox="0 0 20 20" class="h-4 w-4" aria-hidden="true">
-            <circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="2.5" class="text-line-strong" />
+            <circle cx="10" cy="10" r="7" fill="none" stroke="var(--color-line-strong)" stroke-width="2" />
             <circle
+              v-if="!ring.empty"
               cx="10"
               cy="10"
               r="7"
               fill="none"
               :stroke-dasharray="ring.dash"
+              stroke="var(--color-accent)"
               stroke-width="2.5"
               stroke-linecap="round"
-              class="text-accent"
               transform="rotate(-90 10 10)"
             />
           </svg>

@@ -77,6 +77,11 @@ export function statusLabel(agent: AgentSnapshot): string {
   }
 }
 
+/** Only agents the engine still lists as queued or running belong in the live UI. */
+export function agentInFlight(agent: AgentSnapshot): boolean {
+  return agent.listed && (agent.status === "running" || agent.status === "pending");
+}
+
 /**
  * How many agents are in flight, for the sidebar's `Active agents N`.
  *
@@ -93,10 +98,7 @@ export function activeCount(threads: ThreadAgents[], live: string[] | null = nul
 
     return (
       total +
-      entry.agents.filter(
-        (agent) =>
-          agent.listed && (agent.status === "running" || agent.status === "pending"),
-      ).length
+      entry.agents.filter(agentInFlight).length
     );
   }, 0);
 }
@@ -178,12 +180,20 @@ export function taskFor(rows: RowSnapshot[], id: string): string | null {
   return null;
 }
 
-/** The tool call an agent was spawned by, for the jump back into the conversation. */
-export function spawnRow(rows: RowSnapshot[], agent: AgentSnapshot): number | null {
-  if (agent.parentToolCallId === null) return null;
-  const index = rows.findIndex((row) => row.tool?.toolCallId === agent.parentToolCallId);
-
-  return index === -1 ? null : index;
+/** The model recorded for a spawn, even after its live roster has gone away. */
+export function modelFor(rows: RowSnapshot[], id: string): string | null {
+  for (const row of rows) {
+    const progress = toolDetails(row.tool)?.progress;
+    if (!Array.isArray(progress)) continue;
+    for (const entry of progress) {
+      if (entry === null || typeof entry !== "object") continue;
+      const record = entry as Record<string, unknown>;
+      if (record.id === id && typeof record.resolvedModel === "string" && record.resolvedModel !== "") {
+        return record.resolvedModel;
+      }
+    }
+  }
+  return null;
 }
 
 /** A tool card's `details`, parsed, or null. */

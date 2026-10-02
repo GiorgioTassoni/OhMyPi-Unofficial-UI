@@ -13,6 +13,8 @@ import type { AttachmentSnapshot, RowSnapshot } from "../bridge";
 import Icon from "./ui/Icon.vue";
 import MarkdownBody from "./MarkdownBody.vue";
 import ToolCard from "./ToolCard.vue";
+import { describeBytes } from "../lib/attachments";
+import { displayMessage } from "../lib/attachedText";
 import { systemNotice } from "../lib/systemNotice";
 
 const props = defineProps<{ row: RowSnapshot }>();
@@ -21,6 +23,7 @@ const emit = defineEmits<{ (event: "failed", message: string): void }>();
 
 const isNotice = computed(() => props.row.role.startsWith("notice:"));
 const agentNotice = computed(() => systemNotice(props.row));
+const userMessage = computed(() => displayMessage(props.row.text));
 /** `notice:warning` reads as `warning`; the level is the line's tint. */
 const level = computed(() => (isNotice.value ? props.row.role.slice(7) : ""));
 const copied = ref(false);
@@ -94,12 +97,26 @@ function source(attachment: AttachmentSnapshot): string {
         class="max-h-36 rounded-[10px] ring-1 ring-line/60 shadow-sm"
       />
     </div>
-    <div v-if="row.text" class="group/message flex max-w-[80%] flex-col items-end gap-1.5">
+    <div v-if="row.text" class="group/message flex max-w-[80%] min-w-0 flex-col items-end gap-1.5">
       <p
+        v-if="userMessage.text"
         class="whitespace-pre-wrap break-words rounded-[16px] bg-raised/90 border border-line/50 px-4 py-2.5 text-[13px] leading-relaxed text-fg shadow-sm select-text"
       >
-        {{ row.text }}
+        {{ userMessage.text }}
       </p>
+      <details
+        v-for="(file, index) in userMessage.files"
+        :key="`${file.name}-${index}`"
+        class="group/file w-fit max-w-full overflow-hidden rounded-[10px] border border-line/60 bg-raised/70"
+      >
+        <summary class="flex min-w-0 cursor-pointer list-none items-center gap-2 px-3 py-2 text-[12px] text-fg select-none hover:bg-surface/60 [&::-webkit-details-marker]:hidden">
+          <Icon name="file" class="h-3.5 w-3.5 shrink-0 text-accent" />
+          <span class="min-w-0 flex-1 truncate font-mono" :title="file.name">{{ file.name }}</span>
+          <span class="shrink-0 text-[10.5px] text-faint">{{ describeBytes(file.bytes) }}</span>
+          <Icon name="chevron-down" class="h-3 w-3 shrink-0 text-faint transition-transform group-open/file:rotate-180" />
+        </summary>
+        <pre class="max-h-64 overflow-auto border-t border-line/50 px-3 py-2.5 whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-dim select-text">{{ file.content || "(empty file)" }}</pre>
+      </details>
       <button
         type="button"
         class="pointer-events-none rounded-[5px] p-1 text-faint opacity-0 transition-[color,background-color,opacity] group-hover/message:pointer-events-auto group-hover/message:opacity-100 hover:bg-raised hover:text-fg focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"

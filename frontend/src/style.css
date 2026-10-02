@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Force standard :hover behavior so desktop webview (WebKitGTK) without hover media query pointer matches */
+@custom-variant hover (&:hover);
+
 /*
  * The window's palette and type, in one place.
  *
@@ -275,6 +278,12 @@ pre,
 
 ::-webkit-scrollbar-thumb:hover {
   background-color: color-mix(in srgb, var(--color-faint) 60%, transparent);
+}
+
+/* The virtualizer preserves the reader's position when measured turn heights change.
+   Do not let browser scroll anchoring apply a second, competing correction. */
+[data-conversation] {
+  overflow-anchor: none;
 }
 
 /* Selection affordances:

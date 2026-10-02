@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Oh My Pi</title>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="#1c1a2b"/>
+  <rect x="17" y="17" width="478" height="478" rx="111" fill="none" stroke="#62567e" stroke-opacity=".4" stroke-width="2"/>
+  <path d="M130 172h252" fill="none" stroke="#c9a9f4" stroke-linecap="round" stroke-width="42"/>
+  <path d="M193 172v166" fill="none" stroke="#c9a9f4" stroke-linecap="round" stroke-width="42"/>
+  <path d="M316 172v152c0 34 13 52 46 52" fill="none" stroke="#c9a9f4" stroke-linecap="round" stroke-linejoin="round" stroke-width="42"/>
+  <rect x="371" y="355" width="37" height="37" rx="10" fill="#8ce2c0"/>
+</svg>

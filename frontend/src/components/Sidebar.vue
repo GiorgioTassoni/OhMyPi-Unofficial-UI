@@ -11,6 +11,7 @@ import { computed, ref, watch } from "vue";
 
 import { pickDirectory } from "../bridge";
 import type { ProjectGroup, ThreadRow } from "../lib/threads";
+import logo from "../assets/ohmypi-logo.svg";
 import ProjectMenu from "./ProjectMenu.vue";
 import Icon from "./ui/Icon.vue";
 
@@ -170,6 +171,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
         >
           <Icon name="panels" class="h-3.5 w-3.5" />
         </button>
+        <img :src="logo" alt="" class="h-4 w-4 shrink-0" />
         <span class="text-[12.5px] font-semibold tracking-tight text-fg/80">OhMyPi</span>
       </div>
       <button

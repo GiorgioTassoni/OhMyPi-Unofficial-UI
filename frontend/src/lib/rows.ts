@@ -24,5 +24,9 @@ export function applyRowPatch(rows: RowSnapshot[], patch: RowPatch): PatchOutcom
   if (patch.from > rows.length) {
     return { rows, stale: true };
   }
-  return { rows: [...rows.slice(0, patch.from), ...patch.rows], stale: false };
+  // The transcript is held in a shallow ref. Keep its stable prefix in place: a streaming
+  // rewrite usually replaces one trailing row, even when the conversation is very long.
+  rows.length = patch.from;
+  for (const row of patch.rows) rows.push(row);
+  return { rows, stale: false };
 }

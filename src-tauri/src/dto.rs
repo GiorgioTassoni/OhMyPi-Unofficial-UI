@@ -496,6 +496,14 @@ pub struct ProjectSnapshot {
     pub hidden: bool,
 }
 
+/// The sidebar's two views of one on-disk listing, so a refresh scans sessions once.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidebarSnapshot {
+    pub sessions: Vec<SessionSummaryDto>,
+    pub projects: Vec<ProjectSnapshot>,
+}
+
 /// One session-scoped event, and the thread it belongs to.
 ///
 /// Every event a session emits is addressed to exactly one thread, and without the tag
@@ -1047,4 +1055,40 @@ pub struct SettingsRestartReport {
 pub struct SettingsRestartSkip {
     pub thread: String,
     pub reason: String,
+}
+
+/// An authenticated provider or custom endpoint, for the Providers settings card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderAccountDto {
+    pub id: Option<i64>,
+    pub provider: String,
+    pub credential_type: String,
+    pub is_custom: bool,
+    pub base_url: Option<String>,
+    pub models: Vec<String>,
+    pub created_at: Option<i64>,
+}
+
+/// A catalog provider definition for the "Add Provider" modal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogProviderDto {
+    pub id: String,
+    pub name: String,
+    pub auth_type: String,
+    pub env_var: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Payload to add a custom provider to models.yml.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomProviderInput {
+    pub id: String,
+    pub base_url: String,
+    pub api_key: Option<String>,
+    pub api: Option<String>,
+    pub model_id: String,
+    pub model_name: Option<String>,
 }
