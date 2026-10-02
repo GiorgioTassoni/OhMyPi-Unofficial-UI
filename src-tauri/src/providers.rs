@@ -37,7 +37,10 @@ pub fn get_catalog_providers() -> Vec<CatalogProviderDto> {
             name: "OpenRouter".into(),
             auth_type: "api_key".into(),
             env_var: Some("OPENROUTER_API_KEY".into()),
-            description: Some("Unified gateway to Claude, GPT-4, Llama 3, Gemini, DeepSeek, and hundreds more".into()),
+            description: Some(
+                "Unified gateway to Claude, GPT-4, Llama 3, Gemini, DeepSeek, and hundreds more"
+                    .into(),
+            ),
         },
         CatalogProviderDto {
             id: "anthropic".into(),
@@ -65,7 +68,9 @@ pub fn get_catalog_providers() -> Vec<CatalogProviderDto> {
             name: "Google Gemini".into(),
             auth_type: "api_key".into(),
             env_var: Some("GEMINI_API_KEY".into()),
-            description: Some("Gemini 2.5 Flash, Gemini 2.5 Pro via Google AI Studio API key".into()),
+            description: Some(
+                "Gemini 2.5 Flash, Gemini 2.5 Pro via Google AI Studio API key".into(),
+            ),
         },
         CatalogProviderDto {
             id: "google-antigravity".into(),
@@ -79,14 +84,18 @@ pub fn get_catalog_providers() -> Vec<CatalogProviderDto> {
             name: "DeepSeek".into(),
             auth_type: "api_key".into(),
             env_var: Some("DEEPSEEK_API_KEY".into()),
-            description: Some("DeepSeek V3 and DeepSeek R1 models directly from deepseek.com".into()),
+            description: Some(
+                "DeepSeek V3 and DeepSeek R1 models directly from deepseek.com".into(),
+            ),
         },
         CatalogProviderDto {
             id: "groq".into(),
             name: "Groq".into(),
             auth_type: "api_key".into(),
             env_var: Some("GROQ_API_KEY".into()),
-            description: Some("Ultra-low-latency Llama 3.3, DeepSeek, and Mixtral inference".into()),
+            description: Some(
+                "Ultra-low-latency Llama 3.3, DeepSeek, and Mixtral inference".into(),
+            ),
         },
         CatalogProviderDto {
             id: "xai".into(),
@@ -206,20 +215,15 @@ pub async fn get_configured_providers() -> Result<Vec<ProviderAccountDto>, Strin
                     for (k, v) in providers_map {
                         if let Some(provider_id) = k.as_str() {
                             let base_url = v
-                                .get(&serde_yaml::Value::String("baseUrl".into()))
+                                .get("baseUrl")
                                 .and_then(|u| u.as_str())
                                 .map(|s| s.to_string());
 
                             let mut models = Vec::new();
-                            if let Some(models_seq) = v
-                                .get(&serde_yaml::Value::String("models".into()))
-                                .and_then(|m| m.as_sequence())
+                            if let Some(models_seq) = v.get("models").and_then(|m| m.as_sequence())
                             {
                                 for m in models_seq {
-                                    if let Some(mid) = m
-                                        .get(&serde_yaml::Value::String("id".into()))
-                                        .and_then(|id| id.as_str())
-                                    {
+                                    if let Some(mid) = m.get("id").and_then(|id| id.as_str()) {
                                         models.push(mid.to_string());
                                     }
                                 }
@@ -326,11 +330,8 @@ pub async fn remove_provider_credential(id: i64) -> Result<(), String> {
 
     let conn = Connection::open(&db_path).map_err(|e| format!("failed to open agent.db: {e}"))?;
 
-    conn.execute(
-        "DELETE FROM auth_credentials WHERE id = ?1",
-        params![id],
-    )
-    .map_err(|e| format!("failed to delete credential: {e}"))?;
+    conn.execute("DELETE FROM auth_credentials WHERE id = ?1", params![id])
+        .map_err(|e| format!("failed to delete credential: {e}"))?;
 
     Ok(())
 }
@@ -455,11 +456,10 @@ pub async fn add_custom_provider(input: CustomProviderInput) -> Result<(), Strin
         serde_yaml::Value::Mapping(provider_entry),
     );
 
-    let serialized = serde_yaml::to_string(&root)
-        .map_err(|e| format!("failed to format models.yml: {e}"))?;
+    let serialized =
+        serde_yaml::to_string(&root).map_err(|e| format!("failed to format models.yml: {e}"))?;
 
-    fs::write(&yml_path, serialized)
-        .map_err(|e| format!("failed to write models.yml: {e}"))?;
+    fs::write(&yml_path, serialized).map_err(|e| format!("failed to write models.yml: {e}"))?;
 
     Ok(())
 }
@@ -474,22 +474,18 @@ pub async fn remove_custom_provider(provider_id: String) -> Result<(), String> {
     }
 
     let contents = fs::read_to_string(&yml_path).unwrap_or_default();
-    let mut root: serde_yaml::Value = serde_yaml::from_str(&contents)
-        .map_err(|e| format!("failed to parse models.yml: {e}"))?;
+    let mut root: serde_yaml::Value =
+        serde_yaml::from_str(&contents).map_err(|e| format!("failed to parse models.yml: {e}"))?;
 
-    if let Some(providers_map) = root
-        .get_mut(&serde_yaml::Value::String("providers".into()))
-        .and_then(|p| p.as_mapping_mut())
-    {
+    if let Some(providers_map) = root.get_mut("providers").and_then(|p| p.as_mapping_mut()) {
         let key = serde_yaml::Value::String(provider_id);
         providers_map.remove(&key);
     }
 
-    let serialized = serde_yaml::to_string(&root)
-        .map_err(|e| format!("failed to serialize models.yml: {e}"))?;
+    let serialized =
+        serde_yaml::to_string(&root).map_err(|e| format!("failed to serialize models.yml: {e}"))?;
 
-    fs::write(&yml_path, serialized)
-        .map_err(|e| format!("failed to write models.yml: {e}"))?;
+    fs::write(&yml_path, serialized).map_err(|e| format!("failed to write models.yml: {e}"))?;
 
     Ok(())
 }
