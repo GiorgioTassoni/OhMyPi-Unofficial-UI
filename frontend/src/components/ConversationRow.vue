@@ -16,11 +16,21 @@ import ToolCard from "./ToolCard.vue";
 import { describeBytes } from "../lib/attachments";
 import { displayMessage } from "../lib/attachedText";
 import { systemNotice } from "../lib/systemNotice";
+import { isSystemReminder as checkSystemReminder } from "../lib/turnActivity";
 
-const props = defineProps<{ row: RowSnapshot }>();
+const props = withDefaults(
+  defineProps<{
+    row: RowSnapshot;
+    hideCopy?: boolean;
+  }>(),
+  {
+    hideCopy: false,
+  },
+);
 /** A link the host refused to open, for the window's error banner. */
 const emit = defineEmits<{ (event: "failed", message: string): void }>();
 
+const isSystemReminder = computed(() => checkSystemReminder(props.row.text));
 const isNotice = computed(() => props.row.role.startsWith("notice:"));
 const agentNotice = computed(() => systemNotice(props.row));
 const userMessage = computed(() => displayMessage(props.row.text));
@@ -73,7 +83,7 @@ function source(attachment: AttachmentSnapshot): string {
 <template>
   <!-- A delivery sent to the agent is distinct from both its answer and app status. -->
   <details
-    v-if="agentNotice"
+    v-if="agentNotice && !isSystemReminder"
     class="group/system my-1 min-w-0 overflow-hidden rounded-[9px] border border-line/60 bg-raised/35"
   >
     <summary class="flex min-w-0 cursor-pointer list-none items-center gap-2 px-3 py-2 text-[12px] text-dim select-none hover:bg-raised/55 [&::-webkit-details-marker]:hidden">
@@ -87,7 +97,7 @@ function source(attachment: AttachmentSnapshot): string {
 
   <!-- A user turn: right-aligned, so a long thread reads as a dialogue rather
        than one column of prose. -->
-  <div v-else-if="row.role === 'user'" class="flex flex-col items-end gap-1.5 my-1">
+  <div v-else-if="row.role === 'user' && !isSystemReminder" class="flex flex-col items-end gap-1.5 my-1">
     <div v-if="row.attachments.length > 0" class="flex flex-wrap justify-end gap-1.5">
       <img
         v-for="(attachment, index) in row.attachments"
@@ -118,6 +128,7 @@ function source(attachment: AttachmentSnapshot): string {
         <pre class="max-h-64 overflow-auto border-t border-line/50 px-3 py-2.5 whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-dim select-text">{{ file.content || "(empty file)" }}</pre>
       </details>
       <button
+        v-if="!hideCopy"
         type="button"
         class="pointer-events-none rounded-[5px] p-1 text-faint opacity-0 transition-[color,background-color,opacity] group-hover/message:pointer-events-auto group-hover/message:opacity-100 hover:bg-raised hover:text-fg focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         :aria-label="copied ? 'Message copied' : 'Copy message'"
@@ -160,7 +171,7 @@ function source(attachment: AttachmentSnapshot): string {
         <MarkdownBody :text="row.text" @failed="emit('failed', $event)" />
       </div>
       <button
-        v-if="!row.streaming"
+        v-if="!row.streaming && !hideCopy"
         type="button"
         class="pointer-events-none self-start rounded-[5px] p-1 text-faint opacity-0 transition-[color,background-color,opacity] group-hover/message:pointer-events-auto group-hover/message:opacity-100 hover:bg-raised hover:text-fg focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         :aria-label="copied ? 'Message copied' : 'Copy message'"
@@ -179,14 +190,21 @@ function source(attachment: AttachmentSnapshot): string {
   </div>
 
   <!-- A tool call. -->
-  <ToolCard v-else-if="row.role === 'tool' && row.tool" :tool="row.tool" />
+  <ToolCard v-else-if="(row.role === 'tool' || row.role === 'toolResult') && row.tool" :tool="row.tool" />
 
   <!-- Maintenance activity: compaction, retries, mode changes, reminders. -->
   <span
-    v-else
+    v-else-if="isNotice && !isSystemReminder"
     class="inline-block max-w-full break-words text-[11.5px] select-text"
     :class="tint()"
   >
-    {{ level }} · {{ row.text }}
+    {{ level ? `${level} · ` : '' }}{{ row.text }}
+  </span>
+  <span
+    v-else-if="row.text && row.role !== 'toolResult' && !isSystemReminder"
+    class="inline-block max-w-full break-words text-[11.5px] select-text"
+    :class="tint()"
+  >
+    {{ row.text }}
   </span>
 </template>

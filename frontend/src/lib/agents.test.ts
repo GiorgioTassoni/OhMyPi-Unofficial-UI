@@ -28,6 +28,7 @@ import {
   taskFor,
   tokens,
   tone,
+  buildChatSubagents,
 } from "./agents";
 
 /** A live roster row, as `get_subagents` and the frames describe one. */
@@ -412,5 +413,67 @@ describe("broker processes", () => {
     expect(daemon.state).toBe("exited");
     expect(daemon.owner).not.toBeNull();
     expect(cost(0)).toBe("$0");
+  });
+});
+
+describe("buildChatSubagents", () => {
+  test("sorts running subagents on top, and finished subagents newer on top", () => {
+    const thread = "thread-1";
+    const olderFinished = agent({
+      id: "agent-1",
+      agent: "Scout",
+      status: "completed",
+      lastUpdateMs: 1_000,
+    });
+    const newerFinished = agent({
+      id: "agent-2",
+      agent: "Reviewer",
+      status: "completed",
+      lastUpdateMs: 5_000,
+    });
+    const running = agent({
+      id: "agent-3",
+      agent: "Coder",
+      status: "running",
+      lastUpdateMs: 2_000,
+    });
+
+    const subagents = buildChatSubagents(thread, [olderFinished, newerFinished, running], []);
+
+    expect(subagents.map((s) => s.id)).toEqual(["agent-3", "agent-2", "agent-1"]);
+    expect(subagents[0].running).toBe(true);
+    expect(subagents[1].running).toBe(false);
+    expect(subagents[2].running).toBe(false);
+  });
+
+  test("merges live, history and parked subagents from disk", () => {
+    const thread = "thread-1";
+    const live = [
+      agent({ id: "agent-live", agent: "LiveWorker", status: "running", lastUpdateMs: 10_000 }),
+    ];
+    const parkedList: ParkedAgent[] = [
+      {
+        id: "agent-disk",
+        path: "/sessions/sess/agent-disk.jsonl",
+        bytes: 1234,
+        modifiedMs: 4_000,
+        cwd: "/tmp",
+        parent: null,
+        advisor: false,
+        advisorSlug: null,
+      },
+    ];
+    const history = [
+      agent({ id: "agent-hist", agent: "OldWorker", status: "completed", lastUpdateMs: 8_000 }),
+    ];
+
+    const subagents = buildChatSubagents(thread, live, parkedList, history);
+
+    expect(subagents.map((s) => s.id)).toEqual(["agent-live", "agent-hist", "agent-disk"]);
+    expect(subagents[0].name).toBe("LiveWorker");
+    expect(subagents[1].name).toBe("OldWorker");
+    expect(subagents[2].name).toBe("agent-disk");
+    expect(subagents[2].status).toBe("completed");
+    expect(subagents[2].finishedAt).toBe(4_000);
   });
 });

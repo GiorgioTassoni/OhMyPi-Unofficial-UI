@@ -1019,8 +1019,11 @@ mod tests {
             .write(&opened.id, line)
             .expect("the shell is reading");
 
-        let marker = "8000";
-        let text = terminal_text(&terminals, &sink, &opened.id, |text| text.contains(marker));
+        // The typed command echoes "seq 1 8000\r\n", so checking for "8000" alone matches
+        // prematurely on the command echo before seq runs. Wait for the actual output lines.
+        let text = terminal_text(&terminals, &sink, &opened.id, |text| {
+            text.contains("\n8000") && text.contains("7999")
+        });
         assert_eq!(
             text.matches("7999").count(),
             1,

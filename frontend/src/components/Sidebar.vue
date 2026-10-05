@@ -11,6 +11,7 @@ import { computed, ref, watch } from "vue";
 
 import { pickDirectory } from "../bridge";
 import type { ProjectGroup, ThreadRow } from "../lib/threads";
+import { type ChatSubagent, age } from "../lib/agents";
 import logo from "../assets/ohmypi-logo.svg";
 import ProjectMenu from "./ProjectMenu.vue";
 import Icon from "./ui/Icon.vue";
@@ -35,6 +36,10 @@ const props = defineProps<{
    * conversation: "3" here means the app is busy, which is the question this row answers.
    */
   agents: number;
+  /** Subagents called in the active chat, finished and not, sorted newer on top. */
+  subagents?: ChatSubagent[];
+  /** Currently active subagent tab id, if one is open. */
+  activeAgentId?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -45,6 +50,8 @@ const emit = defineEmits<{
   search: [];
   /** Open the global agents panel (`docs/12` §9) — also in the shell. */
   agents: [];
+  /** Open an agent activity tab. */
+  openAgent: [thread: string, id: string];
   /** Open the settings screen (`docs/12` §12), whose own rail carries this footer row too. */
   settings: [];
   /** Right-click opened the menu (`docs/12` §2.3) — the actions live in `ThreadActions`. */
@@ -152,6 +159,13 @@ const total = computed(() => props.groups.reduce((count, group) => count + group
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPod|iPad/i.test(navigator.userAgent || "");
 const searchShortcut = computed(() => (isMac ? "⌘K" : "Ctrl+K"));
 const userInitial = computed(() => (props.identity.user ? props.identity.user.charAt(0).toUpperCase() : "π"));
+
+const subagentsOpen = ref(true);
+const activeSubagentsCount = computed(() => (props.subagents ?? []).filter((s) => s.running).length);
+function formatAgentAge(ms: number | null): string {
+  if (!ms) return "finished";
+  return age(ms, Date.now());
+}
 </script>
 
 <template>
@@ -216,25 +230,94 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
         New thread
       </button>
 
-      <button
-        class="group flex items-center gap-2.5 rounded-[6px] px-2.5 py-2 text-left text-[13px] text-dim hover:bg-raised hover:text-fg"
-        title="subagents running across every thread"
-        data-row="agents"
-        @click="emit('agents')"
-      >
-        <Icon name="sparkle" class="h-4 w-4 text-faint group-hover:text-dim" />
-        Active agents
-        <!--
-          The count is the point of the row: work happening beside the conversation has to be
-          visible while the thread on screen is idle.
-        -->
-        <span
-          class="ml-auto font-mono text-[11px]"
-          :class="props.agents > 0 ? 'text-accent' : 'text-faint'"
+      <div class="flex flex-col">
+        <button
+          class="group flex items-center gap-2.5 rounded-[6px] px-2.5 py-2 text-left text-[13px] text-dim transition-colors hover:bg-raised hover:text-fg"
+          :class="subagentsOpen ? 'bg-raised/60 text-fg' : ''"
+          title="subagents called in this chat"
+          data-row="subagents"
+          type="button"
+          @click="subagentsOpen = !subagentsOpen"
         >
-          {{ props.agents }}
-        </span>
-      </button>
+          <Icon name="sparkle" class="h-4 w-4 text-faint group-hover:text-dim" />
+          <span>Subagents</span>
+
+          <div class="ml-auto flex items-center gap-1.5">
+            <span
+              v-if="activeSubagentsCount > 0"
+              class="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-accent"
+              title="active subagents running"
+            >
+              <span class="inline-block size-1.5 rounded-full bg-accent animate-pulse" />
+              {{ activeSubagentsCount }}
+            </span>
+            <span
+              v-else-if="(props.subagents ?? []).length > 0"
+              class="font-mono text-[11px] text-faint"
+            >
+              {{ props.subagents?.length }}
+            </span>
+            <span
+              v-else
+              class="font-mono text-[11px] text-faint"
+            >
+              0
+            </span>
+            <button
+              v-if="props.agents > 0"
+              class="grid h-4 w-4 place-items-center rounded text-faint hover:text-fg"
+              title="open global active agents panel"
+              type="button"
+              @click.stop="emit('agents')"
+            >
+              <Icon name="panels" class="h-3 w-3" />
+            </button>
+            <Icon
+              :name="subagentsOpen ? 'chevron-down' : 'chevron-right'"
+              class="h-3.5 w-3.5 text-faint group-hover:text-dim"
+            />
+          </div>
+        </button>
+
+        <!-- Collapsible list of subagents for this chat -->
+        <div
+          v-if="subagentsOpen"
+          class="mt-0.5 flex flex-col gap-0.5 max-h-56 overflow-y-auto pl-2 pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          <p
+            v-if="!props.subagents || props.subagents.length === 0"
+            class="px-2 py-1.5 text-[11.5px] text-faint italic"
+          >
+            No subagents in this chat
+          </p>
+          <button
+            v-for="agent in props.subagents"
+            :key="agent.id"
+            class="group/item flex items-center gap-2 rounded-[5px] px-2 py-1.5 text-left transition-colors hover:bg-raised"
+            :class="props.activeAgentId === agent.id ? 'bg-raised text-fg font-medium' : 'text-dim hover:text-fg'"
+            :title="`${agent.name} (${agent.status})${agent.description ? ' · ' + agent.description : ''}`"
+            type="button"
+            @click="emit('openAgent', agent.thread, agent.id)"
+          >
+            <!-- Dot indicating status -->
+            <span
+              class="size-1.5 shrink-0 rounded-full transition-all"
+              :class="{
+                'animate-pulse bg-accent': agent.running,
+                'bg-ok': agent.status === 'completed',
+                'bg-err': agent.status === 'failed' || agent.status === 'aborted',
+                'bg-faint/80': !agent.running && agent.status !== 'completed' && agent.status !== 'failed' && agent.status !== 'aborted',
+              }"
+            />
+            <span class="min-w-0 flex-1 truncate text-[12px]">
+              {{ agent.name }}
+            </span>
+            <span class="shrink-0 font-mono text-[10px] text-faint">
+              {{ agent.running ? 'working' : (agent.finishedAt ? formatAgentAge(agent.finishedAt) : 'finished') }}
+            </span>
+          </button>
+        </div>
+      </div>
     </div>
 
     <!--

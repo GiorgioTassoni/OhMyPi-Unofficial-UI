@@ -589,15 +589,22 @@ defineExpose({
           </div>
           <TurnActivity :turn="turn" :flashed="flashed" :memory="disclosureMemory" @failed="emit('failed', $event)" />
           <button
-            v-for="agent in turn.spawnedAgents.filter((id) => activeAgents.includes(id))"
+            v-for="agent in turn.spawnedAgents"
             :key="agent"
             type="button"
             class="flex min-w-0 items-center gap-2 self-start rounded-[6px] px-2 py-1 text-left text-[12px] text-dim transition-colors hover:bg-raised/65 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             :aria-label="`Open ${agent} agent activity in a tab`"
             @click="emit('agent', agent)"
           >
-            <Icon name="bot" class="h-3.5 w-3.5 shrink-0 text-accent" />
-            <span class="min-w-0 truncate">Spawned <span class="font-medium text-fg">“{{ agent }}”</span> agent</span>
+            <Icon
+              :name="activeAgents.includes(agent) ? 'bot' : 'check'"
+              class="h-3.5 w-3.5 shrink-0"
+              :class="activeAgents.includes(agent) ? 'text-accent animate-pulse' : 'text-ok'"
+            />
+            <span class="min-w-0 truncate">
+              Agent <span class="font-medium text-fg">“{{ agent }}”</span>
+              {{ activeAgents.includes(agent) ? "working" : "finished" }}
+            </span>
             <Icon name="chevron-right" class="h-3 w-3 shrink-0 text-faint" />
           </button>
           <div
@@ -674,6 +681,7 @@ defineExpose({
         ref="composer"
         :thread="thread"
         :streaming="streaming"
+        :has-active-agents="props.activeAgents.length > 0"
         :queued="queued"
         :disabled="status === null"
         :frame-limit="status?.ready.maxFrameBytes ?? 0"

@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use omp_session::{
-    restore, AgentRoster, Message, Row, SessionControl, Subagent, TodoPhase, Transcript,
+    restore, AgentRoster, Message, SessionControl, Subagent, TodoPhase, Transcript,
 };
 use omp_transport::palette::{self, AdvertisedCommand};
 use omp_transport::protocol::ui::{self, UiResponse};
@@ -511,6 +511,32 @@ impl LiveSession {
             .await
     }
 
+    /// Whether this session has any subagents currently in flight (pending, running,
+    /// or in an in-flight `task` tool call).
+    pub fn has_active_agents(&self) -> bool {
+        if self
+            .agents
+            .lock()
+            .map(|roster| roster.active() > 0)
+            .unwrap_or(false)
+        {
+            return true;
+        }
+
+        self.transcript
+            .lock()
+            .map(|t| {
+                t.rows().iter().rev().take(10).any(|row| match row {
+                    omp_session::Row::Tool(card) => {
+                        card.tool_name == "task"
+                            && matches!(card.outcome, omp_session::ToolOutcome::Running)
+                    }
+                    _ => false,
+                })
+            })
+            .unwrap_or(false)
+    }
+
     /// Refuse whatever the run is waiting on, then send the command that ends it.
     ///
     /// **Measured at v18.2.6: `abort` alone does not stop a parked run.** A turn
@@ -740,10 +766,11 @@ impl LiveSession {
                 .get("reset")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
-            rows: messages
-                .iter()
-                .map(|message| row_snapshot(&Row::Message(message.clone())))
-                .collect(),
+            rows: {
+                let mut transcript = omp_session::Transcript::default();
+                transcript.restore(&messages);
+                transcript.rows().iter().map(row_snapshot).collect()
+            },
         })
     }
 
@@ -979,7 +1006,7 @@ impl ActivitySink for AppHandle {
 }
 
 /// One event, addressed to the thread that produced it.
-fn tagged<T>(thread: &str, payload: T) -> ThreadEvent<T> {
+pub(crate) fn tagged<T>(thread: &str, payload: T) -> ThreadEvent<T> {
     ThreadEvent {
         thread: thread.to_string(),
         payload,
@@ -1401,6 +1428,42 @@ fn jobs(message: &Message) -> Vec<JobDeliverySnapshot> {
 /// conversation is not a lesser view of the thread that spawned it.
 pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
     match row {
+        omp_session::Row::Message(message)
+            if matches!(message.role(), "toolResult" | "tool_result" | "tool") =>
+        {
+            let (tool_call_id, tool_name, is_error) = match &message.kind {
+                omp_session::MessageKind::ToolResult {
+                    tool_call_id,
+                    tool_name,
+                    is_error,
+                } => (tool_call_id.clone(), tool_name.clone(), *is_error),
+                _ => (String::new(), String::new(), false),
+            };
+            RowSnapshot {
+                role: "tool".to_string(),
+                timestamp: message.timestamp,
+                text: String::new(),
+                thinking: None,
+                streaming: false,
+                tool: Some(ToolSnapshot {
+                    tool_call_id,
+                    tool_name,
+                    intent: None,
+                    args: String::new(),
+                    details: message
+                        .raw
+                        .get("details")
+                        .map(|v| v.to_string())
+                        .unwrap_or_default(),
+                    output: message.text(),
+                    is_error,
+                    finished: true,
+                }),
+                attachments: attachments(message),
+                custom_type: message.custom_type.clone(),
+                jobs: jobs(message),
+            }
+        }
         omp_session::Row::Message(message) => RowSnapshot {
             role: message.role().to_string(),
             timestamp: message.timestamp,
@@ -2638,5 +2701,37 @@ mod tests {
         ));
 
         assert_eq!(last_failure(&healthy), None);
+    }
+
+    #[test]
+    fn has_active_agents_identifies_in_flight_agents() {
+        let agents = Arc::new(Mutex::new(omp_session::AgentRoster::new()));
+        assert_eq!(agents.lock().unwrap().active(), 0);
+
+        agents.lock().unwrap().apply_frame(
+            &serde_json::json!({
+                "type": "subagent_lifecycle",
+                "payload": {
+                    "id": "agent-1",
+                    "status": "started",
+                    "agent": "scout",
+                }
+            }),
+            100,
+        );
+        assert_eq!(agents.lock().unwrap().active(), 1);
+
+        agents.lock().unwrap().apply_frame(
+            &serde_json::json!({
+                "type": "subagent_lifecycle",
+                "payload": {
+                    "id": "agent-1",
+                    "status": "completed",
+                    "agent": "scout",
+                }
+            }),
+            200,
+        );
+        assert_eq!(agents.lock().unwrap().active(), 0);
     }
 }

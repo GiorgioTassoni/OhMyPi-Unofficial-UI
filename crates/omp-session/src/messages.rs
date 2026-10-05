@@ -166,6 +166,13 @@ fn decode_job_deliveries(raw: &Value) -> Vec<JobDelivery> {
 impl Message {
     /// Decode a message frame. Never fails; unrecognised parts are preserved.
     pub fn decode(raw: &Value) -> Self {
+        let raw = if raw.get("type").and_then(Value::as_str) == Some("message")
+            && raw.get("message").is_some()
+        {
+            raw.get("message").unwrap()
+        } else {
+            raw
+        };
         let role = raw.get("role").and_then(Value::as_str).unwrap_or_default();
         let kind = decode_kind(role, raw);
 
@@ -276,10 +283,16 @@ fn decode_kind(role: &str, raw: &Value) -> MessageKind {
             provider: text("provider"),
             usage: raw.get("usage").cloned(),
         },
-        "toolResult" => MessageKind::ToolResult {
-            tool_call_id: text("toolCallId").unwrap_or_default(),
-            tool_name: text("toolName").unwrap_or_default(),
-            is_error: flag("isError"),
+        "toolResult" | "tool_result" | "tool" => MessageKind::ToolResult {
+            tool_call_id: text("toolCallId")
+                .or_else(|| text("tool_call_id"))
+                .or_else(|| text("id"))
+                .unwrap_or_default(),
+            tool_name: text("toolName")
+                .or_else(|| text("tool_name"))
+                .or_else(|| text("name"))
+                .unwrap_or_default(),
+            is_error: flag("isError") || flag("is_error"),
         },
         _ => MessageKind::Other {
             role: role.to_string(),
@@ -302,6 +315,11 @@ impl ContentBlock {
     /// Public because a streaming toolcall arrives as a bare block inside a
     /// delta rather than as part of a message (`MessageDelta::ToolCallEnd`).
     pub fn decode(raw: &Value) -> Self {
+        if let Some(text) = raw.as_str() {
+            return ContentBlock::Text {
+                text: text.to_string(),
+            };
+        }
         let kind = raw.get("type").and_then(Value::as_str).unwrap_or_default();
         let string = |key: &str| {
             raw.get(key)
@@ -381,7 +399,13 @@ impl ToolResultContent {
             Value::String(text) => text.clone(),
             Value::Array(blocks) => blocks
                 .iter()
-                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .filter_map(|block| {
+                    if let Some(text) = block.as_str() {
+                        Some(text)
+                    } else {
+                        block.get("text").and_then(Value::as_str)
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join(""),
             _ => String::new(),

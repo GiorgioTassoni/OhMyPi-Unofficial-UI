@@ -19,14 +19,15 @@ use omp_store::{SessionSummary, Store};
 use omp_transport::protocol::ui::UiResponse;
 use omp_transport::protocol::{commands, ImageContent};
 use omp_transport::{ClientOptions, SidecarSpec};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::agents;
 use crate::dto::{
     AgentSnapshot, AgentTranscript, ArtifactSnapshot, BranchTarget, BrokerScope, CommandSnapshot,
-    ImageIn, IndexStatus, LaunchContext, ModelCatalogue, ParkedAgent, ProjectSnapshot, RowSnapshot,
-    SearchHit, SessionStatus, SessionSummaryDto, SidebarSnapshot, TerminalSnapshot, ThreadAgents,
-    ThreadSnapshot, TodoPhaseInput, TodoPhaseSnapshot, UiAnswer, UiRequestSnapshot, WorkspaceEntry,
+    ImageIn, IndexStatus, LaunchContext, ModelCatalogue, ParkedAgent, ProjectSnapshot, RowPatch,
+    RowSnapshot, SearchHit, SessionStatus, SessionSummaryDto, SidebarSnapshot, TerminalSnapshot,
+    ThreadAgents, ThreadSnapshot, TodoPhaseInput, TodoPhaseSnapshot, UiAnswer, UiRequestSnapshot,
+    WorkspaceEntry,
 };
 use crate::favourites::Favourites;
 use crate::flows;
@@ -412,27 +413,114 @@ pub async fn follow_up(
     .await
 }
 
+/// Recycles the thread's underlying sidecar process.
+///
+/// Used when stopping a turn that has in-flight subagents: because subagents
+/// run inside the sidecar process tree, shutting down the sidecar process guarantees
+/// that 100% of subagents and background worker tasks terminate immediately.
+/// The session is then re-opened using its persisted session file on disk,
+/// smoothly restoring the conversation with an empty/clean subagents roster.
+pub async fn recycle_thread_sidecar(
+    app: &AppHandle,
+    state: &AppState,
+    thread: &str,
+    live: &Arc<LiveSession>,
+) -> Result<Arc<LiveSession>, String> {
+    let session_file = match live.session_file() {
+        Some(file) => file,
+        None => return Ok(Arc::clone(live)),
+    };
+    let workspace = live.workspace.clone();
+    let approval_mode = live.approval_mode.clone();
+
+    // The registry loses the thread before its sidecar is stopped: a command arriving
+    // mid-restart is refused rather than written to a pipe that is going away.
+    state
+        .threads
+        .remove_if_same(thread, live)
+        .ok_or_else(|| "the session changed while recycling".to_string())?;
+
+    live.shutdown(SHUTDOWN_GRACE).await;
+
+    let mut spec = SidecarSpec::omp(&workspace).resuming(&session_file);
+    if let Some(mode) = &approval_mode {
+        spec = spec.with_approval_mode(mode);
+    }
+    let tried = spec.program.display().to_string();
+    let roster: Arc<dyn Roster> = state.threads.clone();
+    let next = session::open(&spec, ClientOptions::default(), app.clone(), roster)
+        .await
+        .map_err(|error| format!("{error}\n  tried: {tried}"))?;
+
+    let restored_rows = next.rows()?;
+    state.threads.insert(Arc::clone(&next));
+    state.threads.publish(app);
+
+    // Notify the frontend of the clean restored rows and empty agent roster
+    let _ = app.emit(
+        crate::dto::ROWS_EVENT,
+        session::tagged(
+            thread,
+            RowPatch {
+                from: 0,
+                rows: restored_rows,
+            },
+        ),
+    );
+    let _ = app.emit(
+        crate::dto::AGENTS_EVENT,
+        session::tagged(thread, Vec::<AgentSnapshot>::new()),
+    );
+
+    Ok(next)
+}
+
 /// Stop the turn in flight.
 ///
 /// Goes through the session rather than straight to `abort` because a run parked on
 /// an approval has to be refused before it can be stopped — `LiveSession::stop_turn`
 /// carries the measurement behind that.
+///
+/// When the session has active subagents in flight, this also recycles the sidecar
+/// process to ensure all background worker tasks and subagents are terminated immediately.
 #[tauri::command]
-pub async fn stop_turn(state: State<'_, AppState>, thread: String) -> Result<(), String> {
-    thread_of(&state, &thread)?.stop_turn().await
+pub async fn stop_turn(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    thread: String,
+) -> Result<(), String> {
+    let live = thread_of(&state, &thread)?;
+    let has_subagents = live.has_active_agents();
+    let stop_result = live.stop_turn().await;
+
+    if has_subagents {
+        recycle_thread_sidecar(&app, &state, &thread, &live).await?;
+    } else {
+        stop_result?;
+    }
+
+    Ok(())
 }
 
 /// Stop the turn in flight and send a message in its place.
 #[tauri::command]
 pub async fn stop_turn_and_send(
+    app: AppHandle,
     state: State<'_, AppState>,
     thread: String,
     message: String,
     images: Option<Vec<ImageIn>>,
 ) -> Result<(), String> {
-    thread_of(&state, &thread)?
-        .stop_turn_and_send(message, &wire_images(images))
-        .await
+    let live = thread_of(&state, &thread)?;
+    let has_subagents = live.has_active_agents();
+
+    if has_subagents {
+        let _ = live.stop_turn().await;
+        let next = recycle_thread_sidecar(&app, &state, &thread, &live).await?;
+        session::prompt(next, message, &wire_images(images)).await
+    } else {
+        live.stop_turn_and_send(message, &wire_images(images)).await
+    }
 }
 
 /// The wire images for a command, in the order the composer attached them.
@@ -976,11 +1064,11 @@ pub async fn agent_messages(
         next_byte: page.next_byte,
         reset: page.reset,
         source: "file".to_string(),
-        rows: page
-            .messages
-            .iter()
-            .map(|message| row_snapshot(&omp_session::Row::Message(message.clone())))
-            .collect(),
+        rows: {
+            let mut transcript = omp_session::Transcript::default();
+            transcript.restore(&page.messages);
+            transcript.rows().iter().map(row_snapshot).collect()
+        },
     })
 }
 

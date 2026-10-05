@@ -52,8 +52,10 @@ import {
   type SessionSummary,
   type ThreadSnapshot,
   type UiRequestSnapshot,
+  parkedAgents,
+  type ParkedAgent,
 } from "./bridge";
-import { activeCount, agentInFlight } from "./lib/agents";
+import { activeCount, agentInFlight, buildChatSubagents, type ChatSubagent } from "./lib/agents";
 import { readAppTheme, setAppTheme, type AppTheme } from "./lib/appTheme";
 import { applyChrome, chromeFor, draftTarget, type ThreadChrome } from "./lib/chrome";
 import {
@@ -156,6 +158,35 @@ function tabAgent(thread: string, id: string): AgentSnapshot | null {
   return rosters.value.find((entry) => entry.thread === thread)?.agents.find((agent) => agent.id === id) ?? null;
 }
 
+const threadSubagentsHistory = ref<Map<string, AgentSnapshot[]>>(new Map());
+const parkedByThread = ref<Map<string, ParkedAgent[]>>(new Map());
+
+async function loadParkedAgents(thread: string): Promise<void> {
+  try {
+    const list = await parkedAgents(thread);
+    parkedByThread.value.set(thread, list);
+  } catch {
+    // Session may have no artifacts directory yet
+  }
+}
+
+const currentChatSubagents = computed<ChatSubagent[]>(() => {
+  const thread = activeId.value;
+  if (!thread) return [];
+  const live = rosters.value.find((r) => r.thread === thread)?.agents ?? [];
+  const parked = parkedByThread.value.get(thread) ?? [];
+  const history = threadSubagentsHistory.value.get(thread) ?? [];
+  return buildChatSubagents(thread, live, parked, history);
+});
+
+function tabAgentLabel(thread: string, id: string): string {
+  const agent = tabAgent(thread, id);
+  if (agent?.agent) return agent.agent;
+  const subagent = currentChatSubagents.value.find((s) => s.id === id);
+  if (subagent?.name) return subagent.name;
+  return id;
+}
+
 function closeAgentTab(thread: string, id: string): void {
   const key = agentKey(thread, id);
   agentTabs.value = agentTabs.value.filter((tab) => agentKey(tab.thread, tab.id) !== key);
@@ -174,6 +205,9 @@ const unread = ref<Set<string>>(new Set());
  */
 watch(activeId, (thread) => {
   void setFocusedThread(thread);
+  if (thread) {
+    void loadParkedAgents(thread);
+  }
 }, { immediate: true });
 
 watch(activeId, (thread) => {
@@ -767,6 +801,16 @@ onMounted(async () => {
         ...rosters.value.filter((entry) => entry.thread !== event.thread),
         { thread: event.thread, agents: event.payload, error: null },
       ];
+      if (event.payload.length > 0) {
+        const existing = threadSubagentsHistory.value.get(event.thread) ?? [];
+        const map = new Map<string, AgentSnapshot>();
+        for (const a of existing) map.set(a.id, a);
+        for (const a of event.payload) map.set(a.id, a);
+        threadSubagentsHistory.value.set(event.thread, [...map.values()]);
+      }
+      if (activeId.value === event.thread) {
+        void loadParkedAgents(event.thread);
+      }
     }),
     onModelsUpdated((catalogue) => {
       models.value = catalogue.options;
@@ -1257,6 +1301,8 @@ function describe(cause: unknown): string {
             :sessions="catalogue.length"
             :rename-id="renameId"
             :agents="activeAgents"
+            :subagents="currentChatSubagents"
+            :active-agent-id="activeAgentTab?.id ?? null"
             @select="select"
             @open="open($event)"
             @context="(id, at) => (menu = { id, at })"
@@ -1266,6 +1312,7 @@ function describe(cause: unknown): string {
             @delete-project="projectToDelete = $event"
             @search="searchOpen = true"
             @agents="openAgents"
+            @open-agent="openAgentTab"
             @settings="openSettings(true)"
             @collapse="sidebarCollapsed = true"
           />
@@ -1297,7 +1344,7 @@ function describe(cause: unknown): string {
           :workspace="workspace"
           :busy="busy"
           :project="project"
-          :title="activeAgentTab ? (tabAgent(activeAgentTab.thread, activeAgentTab.id)?.agent || activeAgentTab.id) : (activeRow?.title ?? null)"
+          :title="activeAgentTab ? tabAgentLabel(activeAgentTab.thread, activeAgentTab.id) : (activeRow?.title ?? null)"
           :sidebar-collapsed="sidebarCollapsed"
           :diagnostics="diagnostics"
           :panel="panelOpen || activeAgentTab !== null"
@@ -1323,10 +1370,10 @@ function describe(cause: unknown): string {
             {{ activeRow?.title || 'Conversation' }}
           </button>
           <div v-for="tab in agentTabs" :key="agentKey(tab.thread, tab.id)" class="flex shrink-0 items-center rounded-t-[6px]" :class="activeAgentKey === agentKey(tab.thread, tab.id) ? 'bg-raised text-fg' : 'text-dim hover:bg-raised/60'">
-            <button type="button" class="max-w-44 truncate py-1.5 pl-3 pr-1 text-[12px]" :title="tabAgent(tab.thread, tab.id)?.agent || tab.id" :aria-current="activeAgentKey === agentKey(tab.thread, tab.id) ? 'page' : undefined" @click="activeId = tab.thread; activeAgentKey = agentKey(tab.thread, tab.id)">
-              {{ tabAgent(tab.thread, tab.id)?.agent || tab.id }}
+            <button type="button" class="max-w-44 truncate py-1.5 pl-3 pr-1 text-[12px]" :title="tabAgentLabel(tab.thread, tab.id)" :aria-current="activeAgentKey === agentKey(tab.thread, tab.id) ? 'page' : undefined" @click="activeId = tab.thread; activeAgentKey = agentKey(tab.thread, tab.id)">
+              {{ tabAgentLabel(tab.thread, tab.id) }}
             </button>
-            <button type="button" class="px-2 py-1.5 text-faint hover:text-fg" :aria-label="`Close ${tabAgent(tab.thread, tab.id)?.agent || tab.id} tab`" @click="closeAgentTab(tab.thread, tab.id)">×</button>
+            <button type="button" class="px-2 py-1.5 text-faint hover:text-fg" :aria-label="`Close ${tabAgentLabel(tab.thread, tab.id)} tab`" @click="closeAgentTab(tab.thread, tab.id)">×</button>
           </div>
         </nav>
 
@@ -1361,6 +1408,7 @@ function describe(cause: unknown): string {
             :thread="tab.thread"
             :agent-id="tab.id"
             :agent="tabAgent(tab.thread, tab.id)"
+            :agent-name="tabAgentLabel(tab.thread, tab.id)"
             :active="activeAgentKey === agentKey(tab.thread, tab.id)"
             @failed="error = $event"
           />

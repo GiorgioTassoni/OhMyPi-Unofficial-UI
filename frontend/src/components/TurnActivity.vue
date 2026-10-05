@@ -90,7 +90,7 @@ function icon(kind: GroupKind): "search" | "terminal" | "pencil" | "wrench" {
           :data-row-index="item.entry.index"
           :class="flashed === item.entry.index ? 'rounded bg-accent/10 ring-1 ring-accent' : ''"
         >
-          <ConversationRow :row="item.entry.row" @failed="emit('failed', $event)" />
+          <ConversationRow :row="item.entry.row" :hide-copy="true" @failed="emit('failed', $event)" />
         </div>
       </template>
       <p v-if="turn.items.length === 0 && turn.working" class="px-2 py-1 text-[11.5px] text-faint">Waiting for activity…</p>
@@ -103,7 +103,7 @@ function icon(kind: GroupKind): "search" | "terminal" | "pencil" | "wrench" {
       :data-row-index="item.index"
       :class="flashed === item.index ? 'rounded bg-accent/10 ring-1 ring-accent' : ''"
     >
-      <ConversationRow v-if="item.kind === 'row'" :row="item.entry.row" @failed="emit('failed', $event)" />
+      <ConversationRow v-if="item.kind === 'row'" :row="item.entry.row" :hide-copy="true" @failed="emit('failed', $event)" />
     </div>
   </div>
 </template>

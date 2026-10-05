@@ -402,3 +402,100 @@ export function stats(entry: AgentEntry): { cost: number; tools: number; request
     tokens: progress.tokens,
   };
 }
+
+/** A subagent called within a conversation, live or settled. */
+export interface ChatSubagent {
+  id: string;
+  thread: string;
+  name: string;
+  status: "running" | "completed" | "failed" | "aborted" | "settled";
+  running: boolean;
+  finishedAt: number | null;
+  lastUpdateMs: number;
+  description: string | null;
+  task: string | null;
+  hasTranscript: boolean;
+}
+
+/**
+ * Builds the complete list of subagents for a thread, finished and not,
+ * sorted with in-flight ones first, then by when they finished (newer on top).
+ */
+export function buildChatSubagents(
+  thread: string,
+  liveAgents: AgentSnapshot[] = [],
+  parked: ParkedAgent[] = [],
+  history: AgentSnapshot[] = [],
+): ChatSubagent[] {
+  const map = new Map<string, ChatSubagent>();
+
+  // 1. Parked transcripts on disk (settled from past runs or finished)
+  for (const file of parked) {
+    const name = file.advisor
+      ? (file.advisorSlug ? `advisor (${file.advisorSlug})` : "advisor")
+      : file.id;
+    map.set(file.id, {
+      id: file.id,
+      thread,
+      name,
+      status: "completed",
+      running: false,
+      finishedAt: file.modifiedMs || 0,
+      lastUpdateMs: file.modifiedMs || 0,
+      description: null,
+      task: null,
+      hasTranscript: true,
+    });
+  }
+
+  // 2. Historical run cache for this app session
+  for (const h of history) {
+    const running = agentInFlight(h);
+    const existing = map.get(h.id);
+    const status = running
+      ? "running"
+      : ((h.status as "completed" | "failed" | "aborted") || existing?.status || "completed");
+    map.set(h.id, {
+      id: h.id,
+      thread,
+      name: h.agent || existing?.name || h.id,
+      status,
+      running,
+      finishedAt: running ? null : (h.lastUpdateMs || existing?.finishedAt || Date.now()),
+      lastUpdateMs: h.lastUpdateMs || existing?.lastUpdateMs || 0,
+      description: h.progress?.lastIntent || h.description || existing?.description || null,
+      task: h.task || existing?.task || null,
+      hasTranscript: true,
+    });
+  }
+
+  // 3. Current live roster
+  for (const a of liveAgents) {
+    const running = agentInFlight(a);
+    const existing = map.get(a.id);
+    const status = running
+      ? "running"
+      : ((a.status as "completed" | "failed" | "aborted") || existing?.status || "completed");
+    map.set(a.id, {
+      id: a.id,
+      thread,
+      name: a.agent || existing?.name || a.id,
+      status,
+      running,
+      finishedAt: running ? null : (a.lastUpdateMs || existing?.finishedAt || Date.now()),
+      lastUpdateMs: a.lastUpdateMs || existing?.lastUpdateMs || 0,
+      description: a.progress?.lastIntent || a.description || existing?.description || null,
+      task: a.task || existing?.task || null,
+      hasTranscript: true,
+    });
+  }
+
+  // Sort: running on top, then finished sorted by finishedAt descending (newer on top)
+  return [...map.values()].sort((a, b) => {
+    if (a.running && !b.running) return -1;
+    if (!a.running && b.running) return 1;
+    const timeA = a.finishedAt ?? a.lastUpdateMs ?? 0;
+    const timeB = b.finishedAt ?? b.lastUpdateMs ?? 0;
+    return timeB - timeA;
+  });
+}

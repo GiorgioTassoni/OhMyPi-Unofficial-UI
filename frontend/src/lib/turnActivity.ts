@@ -80,8 +80,13 @@ function taskJobNames(rows: RowSnapshot[]): Map<string, string[]> {
   return names;
 }
 
+export function isSystemReminder(text?: string | null): boolean {
+  if (!text) return false;
+  return text.trim().startsWith("<system-reminder");
+}
+
 function turn(segment: IndexedRow[], working: boolean, jobNames: ReadonlyMap<string, string[]>): ConversationTurn {
-  const user = segment.find(({ row }) => row.role === "user") ?? null;
+  const user = segment.find(({ row }) => row.role === "user" && !isSystemReminder(row.text)) ?? null;
   const lastTool = segment.reduce((last, entry) => entry.row.role === "tool" ? entry.index : last, -1);
   const answer = [...segment].reverse().find(({ row, index }) => row.role === "assistant" && row.customType === null && !!row.text && index > lastTool) ?? null;
   const activity = segment.filter((entry) => entry !== user && entry !== answer);
@@ -102,6 +107,9 @@ function turn(segment: IndexedRow[], working: boolean, jobNames: ReadonlyMap<str
     runRows = [];
   }
   for (const entry of activity) {
+    if (isSystemReminder(entry.row.text)) {
+      continue;
+    }
     if (entry.row.role === "tool" && entry.row.tool) {
       const kind = category(entry.row.tool);
       // Only adjacent calls share a disclosure. An intervening thought, notice, or
@@ -144,7 +152,7 @@ function turnsFrom(rows: RowSnapshot[], streaming: boolean, start: number): Conv
   const segments: IndexedRow[][] = [];
   for (let index = start; index < rows.length; index++) {
     const entry = { index, row: rows[index] };
-    if (rows[index].role === "user" || segments.length === 0) segments.push([]);
+    if ((rows[index].role === "user" && !isSystemReminder(rows[index].text)) || segments.length === 0) segments.push([]);
     segments[segments.length - 1].push(entry);
   }
   const jobNames = segments.some((segment) => segment.some(({ row }) => row.customType === "async-result" && row.jobs.some((job) => job.kind === "task")))

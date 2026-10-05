@@ -54,6 +54,8 @@ const props = defineProps<{
   thread: string;
   /** A turn is in flight, as `get_state` last reported. */
   streaming: boolean;
+  /** Whether any subagents are currently in flight for this thread. */
+  hasActiveAgents?: boolean;
   /** Messages waiting behind the running turn. */
   queued: number;
   /** No session, so there is nowhere to send. */
@@ -152,6 +154,8 @@ watch(draft, () => {
 const hasDraft = computed(() => draft.value.trim() !== "");
 /** An attachment alone is enough to send a turn. */
 const hasInput = computed(() => hasDraft.value || attachments.value.length > 0);
+/** Whether the thread is actively working — streaming tokens or running subagents. */
+const isWorking = computed(() => props.streaming || (props.hasActiveAgents ?? false));
 const canSend = computed(
   () => hasInput.value && !props.disabled && !sending.value && !readingFiles.value,
 );
@@ -543,7 +547,7 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
       composing: event.isComposing,
     },
     {
-      streaming: props.streaming,
+      streaming: isWorking.value,
       draft: draft.value,
       attachments: attachments.value.length,
       palette: palette.value !== null,
@@ -654,11 +658,11 @@ defineExpose({ setDraft });
       only once there is something to send.
     -->
     <div
-      class="flex items-start gap-2 rounded-[12px] border border-line-strong/80 bg-raised/90 px-3 py-2 transition-all focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/30 shadow-sm"
+      class="flex items-end gap-2 rounded-[12px] border border-line-strong/80 bg-raised/90 px-3 py-2 transition-all focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/30 shadow-sm"
     >
       <!-- `+` accepts images and UTF-8 files; a drop carries an OS path instead. -->
       <button
-        class="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-[6px] text-faint transition-colors hover:bg-surface hover:text-fg"
+        class="mb-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-[6px] text-faint transition-colors hover:bg-surface hover:text-fg"
         title="attach an image or UTF-8 text file; drop other files to send their path"
         aria-label="attach"
         @click="picker?.click()"
@@ -673,7 +677,7 @@ defineExpose({ setDraft });
         @change="onPicked"
       />
 
-      <span v-if="readingFiles" class="self-center text-[11px] text-faint">Reading files…</span>
+      <span v-if="readingFiles" class="mb-1 shrink-0 text-[11px] text-faint">Reading files…</span>
 
       <textarea
         ref="box"
@@ -681,7 +685,7 @@ defineExpose({ setDraft });
         rows="1"
         spellcheck="false"
         placeholder="Type / for commands"
-        class="max-h-40 flex-1 self-center resize-none overflow-auto bg-transparent text-[13px] leading-relaxed text-fg outline-none placeholder:text-faint"
+        class="max-h-40 flex-1 resize-none overflow-y-auto bg-transparent py-0.5 text-[13px] leading-snug text-fg outline-none placeholder:text-faint [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         @input="onInput"
         @keydown="onKeydown"
         @keyup="caret = caretOf($event)"
@@ -693,15 +697,15 @@ defineExpose({ setDraft });
       <button
         v-if="hasInput"
         :disabled="!canSend"
-        class="mt-0.5 grid h-6 min-w-6 place-items-center rounded-[6px] bg-accent px-2 py-0.5 text-[12px] font-semibold text-canvas transition-opacity hover:opacity-90 disabled:opacity-40"
-        :title="streaming ? 'steer' : 'send (Enter)'"
-        @click="send(streaming ? 'steer' : 'prompt')"
+        class="mb-0.5 grid h-6 min-w-6 shrink-0 place-items-center rounded-[6px] bg-accent px-2 py-0.5 text-[12px] font-semibold text-canvas transition-opacity hover:opacity-90 disabled:opacity-40"
+        :title="isWorking ? 'steer' : 'send (Enter)'"
+        @click="send(isWorking ? 'steer' : 'prompt')"
       >
-        <span>{{ streaming ? "steer" : "↵" }}</span>
+        <span>{{ isWorking ? "steer" : "↵" }}</span>
       </button>
       <button
-        v-if="streaming"
-        class="mt-0.5 shrink-0 rounded-[6px] border border-line px-2 py-0.5 text-[11.5px] text-dim transition-colors hover:border-line-strong hover:text-fg"
+        v-if="isWorking"
+        class="mb-0.5 shrink-0 rounded-[6px] border border-line px-2 py-0.5 text-[11.5px] text-dim transition-colors hover:border-line-strong hover:text-fg"
         @click="stop"
       >
         stop
@@ -719,7 +723,7 @@ defineExpose({ setDraft });
     />
 
     <div
-      v-if="streaming || queued > 0"
+      v-if="isWorking || queued > 0"
       class="mt-2 flex items-center gap-2 text-[11px] text-faint"
     >
       <!--
@@ -727,7 +731,7 @@ defineExpose({ setDraft });
         primary button, so the two less-common ones appear beside it only when there
         is something to send.
       -->
-      <template v-if="streaming && hasInput">
+      <template v-if="isWorking && hasInput">
         <button
           :disabled="!canSend"
           class="rounded-[6px] border border-line px-2 py-0.5 hover:border-line-strong hover:text-fg disabled:opacity-40"
@@ -746,7 +750,8 @@ defineExpose({ setDraft });
 
       <span v-if="queued > 0" class="text-dim">{{ queued }} queued</span>
       <span v-if="streaming" class="text-ok">streaming</span>
-      <span v-if="streaming" class="ml-auto text-faint">
+      <span v-else-if="props.hasActiveAgents" class="text-ok">agents working</span>
+      <span v-if="isWorking" class="ml-auto text-faint">
         enter steers · ⌥enter queues · esc stops
       </span>
     </div>

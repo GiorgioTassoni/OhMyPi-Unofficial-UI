@@ -253,27 +253,29 @@ function describe(cause: unknown): string {
       v-for="(card, index) in cards"
       :key="card.dialog.id"
       class="rounded-[10px] border p-3.5"
-      :class="card.approval && isCommandApproval(card.approval.tool)
-        ? 'border-line-strong/70 bg-selected/60'
-        : 'border-warn/40 bg-warn/5'"
+      :class="card.approval
+        ? (isCommandApproval(card.approval.tool) ? 'border-line-strong/70 bg-selected/60' : 'border-warn/40 bg-warn/5')
+        : 'border-line-strong/70 bg-raised/50 shadow-sm'"
     >
       <header class="mb-3 flex items-center gap-2">
-        <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
+        <span
+          class="h-1.5 w-1.5 shrink-0 rounded-full"
+          :class="card.approval ? 'bg-warn' : 'bg-accent'"
+        />
         <span v-if="card.command && card.approval && isCommandApproval(card.approval.tool)" class="text-[12.5px] font-medium text-fg">
           The agent wants to run
         </span>
-        <template v-else>
+        <template v-else-if="card.approval">
           <span class="text-[11px] font-medium text-warn">Needs approval</span>
-          <span v-if="card.approval" class="text-[12.5px] font-medium text-fg">
-            {{ card.approval.tool }}
+          <span class="text-[12.5px] font-medium text-fg">{{ card.approval.tool }}</span>
+        </template>
+        <template v-else>
+          <span class="text-[12.5px] font-medium text-fg">
+            {{ card.dialog.kind === 'confirm' ? 'Confirmation' : 'Question' }}
           </span>
-          <span v-else class="text-[12px] text-dim">{{ card.dialog.kind }}</span>
         </template>
         <span v-if="cards.length > 1" class="ml-auto text-[11px] text-faint">
           {{ index + 1 }} of {{ cards.length }}
-        </span>
-        <span v-else-if="!card.approval" class="ml-auto font-mono text-[10.5px] text-faint">
-          {{ card.dialog.id }}
         </span>
       </header>
 
@@ -374,7 +376,7 @@ function describe(cause: unknown): string {
 
       <!-- Any other dialog: the engine's text, and a control that answers it. -->
       <template v-else>
-        <p class="text-[12.5px] whitespace-pre-wrap text-fg">
+        <p class="text-[12.5px] font-medium whitespace-pre-wrap text-fg">
           {{ card.dialog.title }}
         </p>
         <p
@@ -384,14 +386,15 @@ function describe(cause: unknown): string {
           {{ card.dialog.message }}
         </p>
 
-        <div v-if="card.dialog.kind === 'select'" class="mt-3 flex flex-wrap gap-1.5">
+        <div v-if="card.dialog.kind === 'select'" class="mt-3 flex flex-col gap-1.5">
           <button
-            v-for="(option, position) in card.dialog.options"
+            v-for="option in card.dialog.options"
             :key="option"
-            :class="position === 0 ? PRIMARY : SECONDARY"
+            class="group flex items-center gap-2.5 rounded-[8px] border border-line-strong/50 bg-surface/60 px-3.5 py-2 text-left text-[12.5px] text-fg transition-all hover:border-accent/70 hover:bg-raised hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             @click="answer(card.dialog, { value: option })"
           >
-            {{ option }}
+            <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-faint/60 transition-colors group-hover:bg-accent" />
+            <span class="flex-1 leading-snug">{{ option }}</span>
           </button>
         </div>
 
@@ -437,15 +440,21 @@ function describe(cause: unknown): string {
           </button>
         </div>
 
-        <button
-          class="mt-2 rounded-[6px] px-2 py-1 text-[11.5px] text-faint hover:bg-raised hover:text-fg"
-          @click="answer(card.dialog, { cancelled: true })"
-        >
-          dismiss
-        </button>
+        <div class="mt-2.5 flex items-center justify-between">
+          <p v-if="card.deadline" class="font-mono text-[11px] text-warn">
+            {{ card.deadline }}
+          </p>
+          <div v-else />
+          <button
+            class="rounded-[6px] px-2.5 py-1 text-[11.5px] text-faint transition-colors hover:bg-raised hover:text-fg"
+            @click="answer(card.dialog, { cancelled: true })"
+          >
+            dismiss
+          </button>
+        </div>
       </template>
 
-      <p v-if="card.deadline" class="mt-2 font-mono text-[11px] text-warn">
+      <p v-if="card.approval && card.deadline" class="mt-2 font-mono text-[11px] text-warn">
         {{ card.deadline }}
       </p>
     </section>

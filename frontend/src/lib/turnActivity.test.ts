@@ -128,4 +128,17 @@ describe("conversation turn activity", () => {
     expect(turns[0].items.map((item) => item.kind)).toEqual(["group"]);
     expect(turns[1].items).toMatchObject([{ kind: "agent-completion", name: "Reviewer" }]);
   });
+
+  test("omits system reminder messages from conversation turns and activity", () => {
+    const turns = conversationTurns([
+      row({ role: "user", text: "do something" }),
+      call("bash", "sed -i ...", "ok"),
+      row({ role: "user", text: "<system-reminder>18 todo items still open.</system-reminder>" }),
+      said("done"),
+    ], false);
+    expect(turns.length).toBe(1);
+    expect(turns[0].user?.row.text).toBe("do something");
+    expect(turns[0].items.some((item) => item.kind === "row")).toBe(false);
+    expect(turns[0].answer?.row.text).toBe("done");
+  });
 });
