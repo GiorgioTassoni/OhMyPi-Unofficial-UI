@@ -22,9 +22,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use omp_session::{
-    restore, AgentRoster, Message, SessionControl, Subagent, TodoPhase, Transcript,
-};
+use omp_session::{restore, AgentRoster, Message, SessionControl, Subagent, TodoPhase, Transcript};
 use omp_transport::palette::{self, AdvertisedCommand};
 use omp_transport::protocol::ui::{self, UiResponse};
 use omp_transport::protocol::{self, commands, ImageContent};
@@ -1639,6 +1637,7 @@ pub fn agent_snapshot(agent: &Subagent) -> AgentSnapshot {
         session_file: agent.session_file.clone(),
         parent_tool_call_id: agent.parent_tool_call_id.clone(),
         detached: agent.detached,
+        created_at_ms: agent.created_at_ms,
         last_update_ms: agent.last_update_ms,
         listed: agent.listed,
         progress: agent

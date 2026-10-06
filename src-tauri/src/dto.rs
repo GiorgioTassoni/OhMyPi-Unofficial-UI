@@ -677,6 +677,8 @@ pub struct AgentSnapshot {
     pub parent_tool_call_id: Option<String>,
     /// Whether it runs detached: the parent turn kept working while it did.
     pub detached: bool,
+    /// When this agent was first spawned or discovered (Unix milliseconds).
+    pub created_at_ms: u64,
     /// When *this host* last heard about the row (Unix milliseconds).
     pub last_update_ms: u64,
     /// Whether the engine's last `get_subagents` answer contained it.

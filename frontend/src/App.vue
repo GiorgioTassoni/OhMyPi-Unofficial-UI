@@ -160,6 +160,7 @@ function tabAgent(thread: string, id: string): AgentSnapshot | null {
 
 const threadSubagentsHistory = ref<Map<string, AgentSnapshot[]>>(new Map());
 const parkedByThread = ref<Map<string, ParkedAgent[]>>(new Map());
+const agentSpawnTimes = ref<Map<string, number>>(new Map());
 
 async function loadParkedAgents(thread: string): Promise<void> {
   try {
@@ -176,7 +177,7 @@ const currentChatSubagents = computed<ChatSubagent[]>(() => {
   const live = rosters.value.find((r) => r.thread === thread)?.agents ?? [];
   const parked = parkedByThread.value.get(thread) ?? [];
   const history = threadSubagentsHistory.value.get(thread) ?? [];
-  return buildChatSubagents(thread, live, parked, history);
+  return buildChatSubagents(thread, live, parked, history, activeRows.value, agentSpawnTimes.value);
 });
 
 function tabAgentLabel(thread: string, id: string): string {
@@ -1301,8 +1302,6 @@ function describe(cause: unknown): string {
             :sessions="catalogue.length"
             :rename-id="renameId"
             :agents="activeAgents"
-            :subagents="currentChatSubagents"
-            :active-agent-id="activeAgentTab?.id ?? null"
             @select="select"
             @open="open($event)"
             @context="(id, at) => (menu = { id, at })"
@@ -1312,7 +1311,6 @@ function describe(cause: unknown): string {
             @delete-project="projectToDelete = $event"
             @search="searchOpen = true"
             @agents="openAgents"
-            @open-agent="openAgentTab"
             @settings="openSettings(true)"
             @collapse="sidebarCollapsed = true"
           />
@@ -1473,7 +1471,7 @@ function describe(cause: unknown): string {
       <!-- Resizable Right Panel Column (full-height to window top, matching Sidebar) -->
       <Transition name="right-panel">
         <div
-          v-if="(panelOpen || diagnostics) && activeAgentTab === null"
+          v-if="panelOpen || diagnostics"
           class="right-panel-column relative flex h-full shrink-0"
           :style="{ '--right-panel-width': `${rightPanelWidth}px` }"
           :class="{ 'right-panel-dragging': isDraggingRight }"
@@ -1516,6 +1514,8 @@ function describe(cause: unknown): string {
               :workspace="workspace"
               :terminals="terminalsOpen"
               :diagnostics="diagnostics"
+              :subagents="currentChatSubagents"
+              :active-agent-id="activeAgentTab?.id ?? null"
               @jump="revealRow"
               @written="onPlanWritten"
               @failed="error = $event"
@@ -1523,6 +1523,7 @@ function describe(cause: unknown): string {
               @close-review="turnReview = null"
               @toggle-terminals="terminalsOpen = !terminalsOpen"
               @toggle-diagnostics="diagnostics = !diagnostics"
+              @open-agent="openAgentTab"
             />
           </div>
         </div>

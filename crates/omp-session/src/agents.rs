@@ -244,6 +244,8 @@ pub struct Subagent {
     /// Unset for a synchronous spawn (the parent is blocked on the call) and for an
     /// `agent()` bridge spawn, which renders inside its own eval cell.
     pub detached: bool,
+    /// When this agent was first spawned or discovered, in epoch milliseconds.
+    pub created_at_ms: u64,
     /// When **this host** last heard about this row, in epoch milliseconds.
     ///
     /// Deliberately our clock and not the engine's `lastUpdate`: "how long has this been
@@ -268,6 +270,14 @@ impl Subagent {
     pub fn decode_snapshot(raw: &Value) -> Option<Self> {
         let id = string(raw, "id")?;
         let progress = raw.get("progress").and_then(AgentProgress::decode);
+        let last_update = number(raw, "lastUpdate");
+        let mut created_at = number(raw, "createdAt");
+        if created_at == 0 {
+            created_at = number(raw, "startedAt");
+        }
+        if created_at == 0 {
+            created_at = last_update;
+        }
 
         Some(Self {
             id,
@@ -287,7 +297,8 @@ impl Subagent {
             session_file: string(raw, "sessionFile"),
             parent_tool_call_id: string(raw, "parentToolCallId"),
             detached: flag(raw, "detached"),
-            last_update_ms: number(raw, "lastUpdate"),
+            created_at_ms: created_at,
+            last_update_ms: last_update,
             listed: true,
             progress,
         })
@@ -468,6 +479,7 @@ impl AgentRoster {
             session_file: None,
             parent_tool_call_id: None,
             detached: false,
+            created_at_ms: at_ms,
             last_update_ms: at_ms,
             listed: true,
             progress: None,
@@ -518,6 +530,7 @@ impl AgentRoster {
                     // progress stays when it is the fresher view of the run (its
                     // `durationMs` grows monotonically, so the larger one is later).
                     let mut merged = snapshot.clone();
+                    merged.created_at_ms = row.created_at_ms;
                     merged.last_update_ms = row.last_update_ms;
                     merged.progress = match (&row.progress, &snapshot.progress) {
                         (Some(ours), Some(theirs)) => {
@@ -537,6 +550,9 @@ impl AgentRoster {
                 }
                 None => {
                     let mut snapshot = snapshot.clone();
+                    if snapshot.created_at_ms == 0 {
+                        snapshot.created_at_ms = at_ms;
+                    }
                     snapshot.last_update_ms = at_ms;
                     self.agents.push(snapshot);
                     changed = true;

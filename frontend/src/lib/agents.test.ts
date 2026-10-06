@@ -45,6 +45,7 @@ function agent(extra: Partial<AgentSnapshot> = {}): AgentSnapshot {
     sessionFile: "/sessions/sess/RosterProbe.jsonl",
     parentToolCallId: "call_1",
     detached: true,
+    createdAtMs: 1_000,
     lastUpdateMs: 1_000,
     listed: true,
     progress: null,
@@ -475,5 +476,61 @@ describe("buildChatSubagents", () => {
     expect(subagents[2].name).toBe("agent-disk");
     expect(subagents[2].status).toBe("completed");
     expect(subagents[2].finishedAt).toBe(4_000);
+  });
+
+  test("running subagents are sorted newer-spawned on top, and never swap positions on progress updates", () => {
+    const thread = "thread-1";
+    // Older spawned running agent (spawned at t=1000)
+    const olderRunning = agent({
+      id: "agent-old",
+      agent: "FirstSpawned",
+      status: "running",
+      createdAtMs: 1_000,
+      lastUpdateMs: 1_000,
+    });
+    // Newer spawned running agent (spawned at t=2000)
+    const newerRunning = agent({
+      id: "agent-new",
+      agent: "SecondSpawned",
+      status: "running",
+      createdAtMs: 2_000,
+      lastUpdateMs: 2_000,
+    });
+
+    // Initial check: newer spawned is on top
+    const initial = buildChatSubagents(thread, [olderRunning, newerRunning], []);
+    expect(initial.map((s) => s.id)).toEqual(["agent-new", "agent-old"]);
+
+    // Now older running agent receives a progress update with newer lastUpdateMs!
+    const olderUpdated = agent({
+      ...olderRunning,
+      lastUpdateMs: 99_999, // much higher lastUpdateMs!
+    });
+
+    const afterUpdate = buildChatSubagents(thread, [olderUpdated, newerRunning], []);
+    // Must NOT swap position: newer spawned remains on top!
+    expect(afterUpdate.map((s) => s.id)).toEqual(["agent-new", "agent-old"]);
+  });
+
+  test("batch spawned running subagents are sorted by dispatch index (higher/newer on top)", () => {
+    const thread = "thread-1";
+    const agent0 = agent({
+      id: "agent-batch-0",
+      index: 0,
+      createdAtMs: 5_000,
+      lastUpdateMs: 8_000,
+      status: "running",
+    });
+    const agent1 = agent({
+      id: "agent-batch-1",
+      index: 1,
+      createdAtMs: 5_000,
+      lastUpdateMs: 6_000,
+      status: "running",
+    });
+
+    const res = buildChatSubagents(thread, [agent0, agent1], []);
+    // Newer dispatched agent (index 1) on top, older (index 0) under
+    expect(res.map((s) => s.id)).toEqual(["agent-batch-1", "agent-batch-0"]);
   });
 });

@@ -406,10 +406,12 @@ export function stats(entry: AgentEntry): { cost: number; tools: number; request
 /** A subagent called within a conversation, live or settled. */
 export interface ChatSubagent {
   id: string;
+  index: number;
   thread: string;
   name: string;
   status: "running" | "completed" | "failed" | "aborted" | "settled";
   running: boolean;
+  spawnedAt: number;
   finishedAt: number | null;
   lastUpdateMs: number;
   description: string | null;
@@ -417,29 +419,75 @@ export interface ChatSubagent {
   hasTranscript: boolean;
 }
 
+/** Extracts spawn timestamp and index for agents mentioned in tool calls. */
+export function spawnTimesFromRows(rows: RowSnapshot[] = []): Map<string, { timestamp: number; index: number }> {
+  const result = new Map<string, { timestamp: number; index: number }>();
+  for (const row of rows) {
+    const details = toolDetails(row.tool);
+    if (!details) continue;
+    const progress = details.progress;
+    if (!Array.isArray(progress)) continue;
+    const baseTime = row.timestamp ?? 0;
+    progress.forEach((entry, idx) => {
+      if (entry && typeof entry === "object") {
+        const record = entry as Record<string, unknown>;
+        if (typeof record.id === "string" && !result.has(record.id)) {
+          result.set(record.id, {
+            timestamp: baseTime,
+            index: typeof record.index === "number" ? record.index : idx,
+          });
+        }
+      }
+    });
+  }
+  return result;
+}
+
 /**
  * Builds the complete list of subagents for a thread, finished and not,
- * sorted with in-flight ones first, then by when they finished (newer on top).
+ * sorted with in-flight ones first (newer spawned on top, older under),
+ * then finished subagents (newer on top).
  */
 export function buildChatSubagents(
   thread: string,
   liveAgents: AgentSnapshot[] = [],
   parked: ParkedAgent[] = [],
   history: AgentSnapshot[] = [],
+  rows: RowSnapshot[] = [],
+  spawnTimes?: Map<string, number>,
 ): ChatSubagent[] {
   const map = new Map<string, ChatSubagent>();
+  const rowSpawns = spawnTimesFromRows(rows);
+
+  function resolveSpawnedAt(id: string, index: number, fallback: number): number {
+    if (spawnTimes && spawnTimes.has(id)) {
+      return spawnTimes.get(id)!;
+    }
+    const fromRow = rowSpawns.get(id);
+    if (fromRow && fromRow.timestamp > 0) {
+      const ts = fromRow.timestamp + (fromRow.index ?? index);
+      spawnTimes?.set(id, ts);
+      return ts;
+    }
+    const val = fallback > 0 ? fallback : Date.now();
+    spawnTimes?.set(id, val);
+    return val;
+  }
 
   // 1. Parked transcripts on disk (settled from past runs or finished)
   for (const file of parked) {
     const name = file.advisor
       ? (file.advisorSlug ? `advisor (${file.advisorSlug})` : "advisor")
       : file.id;
+    const spawnedAt = resolveSpawnedAt(file.id, 0, file.modifiedMs || 0);
     map.set(file.id, {
       id: file.id,
+      index: 0,
       thread,
       name,
       status: "completed",
       running: false,
+      spawnedAt,
       finishedAt: file.modifiedMs || 0,
       lastUpdateMs: file.modifiedMs || 0,
       description: null,
@@ -455,12 +503,15 @@ export function buildChatSubagents(
     const status = running
       ? "running"
       : ((h.status as "completed" | "failed" | "aborted") || existing?.status || "completed");
+    const spawnedAt = existing?.spawnedAt ?? resolveSpawnedAt(h.id, h.index ?? 0, h.createdAtMs || h.lastUpdateMs || 0);
     map.set(h.id, {
       id: h.id,
+      index: h.index ?? existing?.index ?? 0,
       thread,
       name: h.agent || existing?.name || h.id,
       status,
       running,
+      spawnedAt,
       finishedAt: running ? null : (h.lastUpdateMs || existing?.finishedAt || Date.now()),
       lastUpdateMs: h.lastUpdateMs || existing?.lastUpdateMs || 0,
       description: h.progress?.lastIntent || h.description || existing?.description || null,
@@ -476,12 +527,15 @@ export function buildChatSubagents(
     const status = running
       ? "running"
       : ((a.status as "completed" | "failed" | "aborted") || existing?.status || "completed");
+    const spawnedAt = existing?.spawnedAt ?? resolveSpawnedAt(a.id, a.index ?? 0, a.createdAtMs || a.lastUpdateMs || 0);
     map.set(a.id, {
       id: a.id,
+      index: a.index ?? existing?.index ?? 0,
       thread,
       name: a.agent || existing?.name || a.id,
       status,
       running,
+      spawnedAt,
       finishedAt: running ? null : (a.lastUpdateMs || existing?.finishedAt || Date.now()),
       lastUpdateMs: a.lastUpdateMs || existing?.lastUpdateMs || 0,
       description: a.progress?.lastIntent || a.description || existing?.description || null,
@@ -490,12 +544,35 @@ export function buildChatSubagents(
     });
   }
 
-  // Sort: running on top, then finished sorted by finishedAt descending (newer on top)
+  // Sort: running on top (newer spawned on top, older under), then finished (newer finished on top)
   return [...map.values()].sort((a, b) => {
+    // 1. Running subagents stay on top of finished subagents
     if (a.running && !b.running) return -1;
     if (!a.running && b.running) return 1;
-    const timeA = a.finishedAt ?? a.lastUpdateMs ?? 0;
-    const timeB = b.finishedAt ?? b.lastUpdateMs ?? 0;
-    return timeB - timeA;
+
+    // 2. Both running: newer spawned on top, older under (stable while running!)
+    if (a.running && b.running) {
+      if (b.spawnedAt !== a.spawnedAt) {
+        return b.spawnedAt - a.spawnedAt;
+      }
+      if (b.index !== a.index) {
+        return b.index - a.index;
+      }
+      return b.id.localeCompare(a.id);
+    }
+
+    // 3. Both finished: newer finished on top, fallback to newer spawned
+    const timeA = a.finishedAt ?? a.spawnedAt;
+    const timeB = b.finishedAt ?? b.spawnedAt;
+    if (timeB !== timeA) {
+      return timeB - timeA;
+    }
+    if (b.spawnedAt !== a.spawnedAt) {
+      return b.spawnedAt - a.spawnedAt;
+    }
+    if (b.index !== a.index) {
+      return b.index - a.index;
+    }
+    return b.id.localeCompare(a.id);
   });
 }

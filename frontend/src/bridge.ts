@@ -958,6 +958,8 @@ export interface AgentSnapshot {
   /** The `task` tool call that spawned it: the link back into the conversation. */
   parentToolCallId: string | null;
   detached: boolean;
+  /** When this agent was first spawned or discovered. */
+  createdAtMs: number;
   /** When *this host* last heard about the row. */
   lastUpdateMs: number;
   /**

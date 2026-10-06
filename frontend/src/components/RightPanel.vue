@@ -10,10 +10,12 @@
  * built in v1: `docs/12` §8.1 describes the per-thread plan, and a merged list needs its own
  * design for grouping and for jumping between columns.
  */
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import type { RowSnapshot, TodoPhaseSnapshot } from "../bridge";
+import type { ChatSubagent } from "../lib/agents";
 import type { TurnReviewRequest } from "../lib/panel";
 import FilesPanel from "./FilesPanel.vue";
+import ThreadSubagentsPanel from "./ThreadSubagentsPanel.vue";
 import TodosPanel from "./TodosPanel.vue";
 import Icon from "./ui/Icon.vue";
 
@@ -29,6 +31,10 @@ const props = defineProps<{
   workspace?: string | null;
   terminals?: boolean;
   diagnostics?: boolean;
+  /** Subagents called in the active chat, finished and not, sorted newer on top. */
+  subagents?: ChatSubagent[];
+  /** Currently active subagent tab id, if one is open. */
+  activeAgentId?: string | null | undefined;
 }>();
 
 const emit = defineEmits<{
@@ -39,10 +45,13 @@ const emit = defineEmits<{
   closeReview: [];
   toggleTerminals: [];
   toggleDiagnostics: [];
+  openAgent: [thread: string, id: string];
 }>();
 
 /** `docs/12` §8 opens on the plan, which is the sketch's order. */
-const tab = ref<"todos" | "files">("todos");
+const tab = ref<"todos" | "files" | "subagents">("todos");
+
+const activeSubagentsCount = computed(() => (props.subagents ?? []).filter((s) => s.running).length);
 
 watch(
   () => props.review?.id,
@@ -72,16 +81,23 @@ const BUTTON =
     >
       <div class="flex items-center gap-1 min-w-0">
         <button
-          v-for="name in (['todos', 'files'] as const)"
+          v-for="name in (['todos', 'files', 'subagents'] as const)"
           :key="name"
           class="rounded-[6px] px-2 py-1 text-[12.5px] transition-colors"
           :class="tab === name ? 'bg-raised/90 text-fg font-medium shadow-sm' : 'text-dim hover:text-fg hover:bg-raised/40'"
           :aria-pressed="tab === name"
           @click="tab = name"
         >
-          {{ name === "todos" ? "Todos" : "Files" }}
+          {{ name === "todos" ? "Todos" : name === "files" ? "Files" : "Subagents" }}
           <span v-if="name === 'todos' && props.phases.length" class="ml-1 rounded-full bg-surface px-1.5 py-0.5 font-mono text-[10px] text-accent">
             {{ props.phases.length }}
+          </span>
+          <span
+            v-else-if="name === 'subagents' && props.subagents && props.subagents.length > 0"
+            class="ml-1 rounded-full bg-surface px-1.5 py-0.5 font-mono text-[10px]"
+            :class="activeSubagentsCount > 0 ? 'text-accent font-semibold' : 'text-faint'"
+          >
+            {{ activeSubagentsCount > 0 ? activeSubagentsCount : props.subagents.length }}
           </span>
         </button>
       </div>
@@ -139,7 +155,7 @@ const BUTTON =
         @failed="emit('failed', $event)"
       />
       <FilesPanel
-        v-else
+        v-else-if="tab === 'files'"
         :key="props.review?.id ?? 'session-files'"
         :thread="props.thread"
         :rows="props.rows"
@@ -149,6 +165,14 @@ const BUTTON =
         @jump="emit('jump', $event)"
         @failed="emit('failed', $event)"
         @close-review="emit('closeReview')"
+      />
+      <ThreadSubagentsPanel
+        v-else-if="tab === 'subagents'"
+        :thread="props.thread"
+        :subagents="props.subagents ?? []"
+        :active-agent-id="props.activeAgentId ?? null"
+        :live="props.live"
+        @open-agent="(thread, id) => emit('openAgent', thread, id)"
       />
     </template>
   </aside>
