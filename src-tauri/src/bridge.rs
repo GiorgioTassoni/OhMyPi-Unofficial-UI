@@ -23,11 +23,11 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::agents;
 use crate::dto::{
-    AgentSnapshot, AgentTranscript, ArtifactSnapshot, BranchTarget, BrokerScope, CommandSnapshot,
-    ImageIn, IndexStatus, LaunchContext, ModelCatalogue, ParkedAgent, ProjectSnapshot, RowPatch,
-    RowSnapshot, SearchHit, SessionStatus, SessionSummaryDto, SidebarSnapshot, TerminalSnapshot,
-    ThreadAgents, ThreadSnapshot, TodoPhaseInput, TodoPhaseSnapshot, UiAnswer, UiRequestSnapshot,
-    WorkspaceEntry,
+    ActivitySnapshot, AgentSnapshot, AgentTranscript, ArtifactSnapshot, BranchTarget, BrokerScope,
+    CommandSnapshot, ImageIn, IndexStatus, LaunchContext, ModelCatalogue, ParkedAgent,
+    ProjectSnapshot, RowPatch, RowSnapshot, SearchHit, SessionStatus, SessionSummaryDto,
+    SidebarSnapshot, TerminalSnapshot, ThreadAgents, ThreadSnapshot, TodoPhaseInput,
+    TodoPhaseSnapshot, UiAnswer, UiRequestSnapshot, WorkspaceEntry,
 };
 use crate::favourites::Favourites;
 use crate::flows;
@@ -471,6 +471,16 @@ pub async fn recycle_thread_sidecar(
         crate::dto::AGENTS_EVENT,
         session::tagged(thread, Vec::<AgentSnapshot>::new()),
     );
+    let _ = app.emit(
+        crate::dto::ACTIVITY_EVENT,
+        session::tagged(
+            thread,
+            ActivitySnapshot {
+                kind: "agent_end".to_string(),
+                sequence: 0,
+            },
+        ),
+    );
 
     Ok(next)
 }
@@ -497,6 +507,17 @@ pub async fn stop_turn(
         recycle_thread_sidecar(&app, &state, &thread, &live).await?;
     } else {
         stop_result?;
+        // Give the sidecar a brief window to settle and flip is_streaming
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_millis(1500) {
+            if let Ok(st) = live.status() {
+                if !st.control.is_streaming {
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let _ = live.reread_control().await;
     }
 
     Ok(())

@@ -137,7 +137,10 @@ function patchTranscript(next: RowSnapshot[], from: number): void {
 onMounted(async () => {
   unlisten = await Promise.all([
     onRows((event) => {
-      if (event.thread === props.thread) void applyPatch(event.payload);
+      if (event.thread === props.thread) {
+        void applyPatch(event.payload);
+        void refreshStatus();
+      }
     }),
     onUiRequests((event) => {
       if (event.thread === props.thread) dialogs.value = event.payload;
@@ -272,9 +275,13 @@ watch(streaming, () => {
   if (rows.value.length > 0) projection.value = projectTranscript(projection.value, rows.value, streaming.value, rows.value.length);
 });
 /** The turn has started, but the engine has not produced a row the reader can follow yet. */
-const waitingForOutput = computed(
-  () => streaming.value && !rows.value.some((row) => row.streaming),
-);
+const waitingForOutput = computed(() => {
+  if (!streaming.value) return false;
+  const latest = turns.value.at(-1);
+  if (!latest) return !rows.value.some((row) => row.streaming);
+  const hasContent = latest.items.length > 0 || latest.answer !== null || latest.spawnedAgents.length > 0;
+  return !hasContent && !rows.value.some((row) => row.streaming);
+});
 
 watch(waitingForOutput, (waiting) => {
   if (waiting && isAtBottom()) followAfterRender();

@@ -95,6 +95,7 @@ const emit = defineEmits<{
 const draft = ref("");
 /** One send at a time: two Enters must not become two prompts. */
 const sending = ref(false);
+const stopping = ref(false);
 const readingFiles = ref(false);
 const attachments = ref<Attachment[]>([]);
 
@@ -387,6 +388,7 @@ async function send(operation: Sendable): Promise<void> {
         break;
       case "stop-and-send":
         await stopTurnAndSend(props.thread, text, images);
+        emit("changed");
         break;
     }
   } catch (cause) {
@@ -525,10 +527,15 @@ async function accept(): Promise<void> {
 }
 
 async function stop(): Promise<void> {
+  if (stopping.value) return;
+  stopping.value = true;
   try {
     await stopTurn(props.thread);
+    emit("changed");
   } catch (cause) {
     emit("failed", String(cause));
+  } finally {
+    stopping.value = false;
   }
 }
 
@@ -705,10 +712,11 @@ defineExpose({ setDraft });
       </button>
       <button
         v-if="isWorking"
-        class="mb-0.5 shrink-0 rounded-[6px] border border-line px-2 py-0.5 text-[11.5px] text-dim transition-colors hover:border-line-strong hover:text-fg"
+        :disabled="stopping"
+        class="mb-0.5 shrink-0 rounded-[6px] border border-line px-2 py-0.5 text-[11.5px] text-dim transition-colors hover:border-line-strong hover:text-fg disabled:opacity-50"
         @click="stop"
       >
-        stop
+        {{ stopping ? "stopping…" : "stop" }}
       </button>
     </div>
 
