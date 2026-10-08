@@ -140,6 +140,32 @@ describe("visibleGroups", () => {
     ]);
   });
 
+  test("matches queries with spaces instead of hyphens or across tokens", () => {
+    const gptSol = model("openrouter", "openai/gpt-6.1-sol", "GPT-6.1 Sol");
+    const testCatalogue = [...catalogue, gptSol];
+
+    // "gpt 6.1" with a space matches "GPT-6.1 Sol"
+    expect(visibleGroups(testCatalogue, "gpt 6.1", []).groups).toEqual([
+      { provider: "openrouter", models: [gptSol] },
+    ]);
+    // "gpt-6." matches "GPT-6.1 Sol"
+    expect(visibleGroups(testCatalogue, "gpt-6.", []).groups).toEqual([
+      { provider: "openrouter", models: [gptSol] },
+    ]);
+    // "gpt sol" matches "GPT-6.1 Sol"
+    expect(visibleGroups(testCatalogue, "gpt sol", []).groups).toEqual([
+      { provider: "openrouter", models: [gptSol] },
+    ]);
+    // multi-word with provider: "openrouter gpt" matches
+    expect(visibleGroups(testCatalogue, "openrouter gpt 6.1", []).groups).toEqual([
+      { provider: "openrouter", models: [gptSol] },
+    ]);
+    // compact stripped: "gpt6.1" matches "GPT-6.1 Sol"
+    expect(visibleGroups(testCatalogue, "gpt6.1", []).groups).toEqual([
+      { provider: "openrouter", models: [gptSol] },
+    ]);
+  });
+
   test("trims the query, and whitespace alone is no query", () => {
     const { favourites, groups } = visibleGroups(catalogue, "  ", [modelKey(gpt)]);
     expect(favourites.map(modelKey)).toEqual([modelKey(gpt)]);

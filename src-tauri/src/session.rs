@@ -535,6 +535,14 @@ impl LiveSession {
             .unwrap_or(false)
     }
 
+    /// Settle any active agents as aborted (e.g. when stopping a turn).
+    pub fn abort_active_agents(&self) -> bool {
+        self.agents
+            .lock()
+            .map(|mut roster| roster.abort_active(now_ms()))
+            .unwrap_or(false)
+    }
+
     /// Refuse whatever the run is waiting on, then send the command that ends it.
     ///
     /// **Measured at v18.2.6: `abort` alone does not stop a parked run.** A turn
@@ -1516,7 +1524,9 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
             custom_type: None,
             jobs: Vec::new(),
         },
-        omp_session::Row::Notice { level, text, .. } => RowSnapshot {
+        omp_session::Row::Notice {
+            level, text, kind, ..
+        } => RowSnapshot {
             role: format!("notice:{level}"),
             timestamp: None,
             text: text.clone(),
@@ -1524,7 +1534,7 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
             streaming: false,
             tool: None,
             attachments: Vec::new(),
-            custom_type: None,
+            custom_type: Some(kind.clone()),
             jobs: Vec::new(),
         },
     }
@@ -1588,14 +1598,21 @@ fn publish_rows(
     reporting: &Reporting,
     transcript: &Mutex<Transcript>,
     first_dirty: &mut Option<usize>,
-) {
+) -> bool {
+    // Commands such as manual compaction also write maintenance notices. Collect
+    // their dirty marker even when the engine emitted no session event.
+    if let Ok(mut transcript) = transcript.lock() {
+        if let Some(index) = transcript.take_dirty() {
+            *first_dirty = Some(first_dirty.map_or(index, |earliest| earliest.min(index)));
+        }
+    }
     let Some(from) = first_dirty.take() else {
-        return;
+        return false;
     };
 
     let Ok(transcript) = transcript.lock() else {
         eprintln!("[omp-desktop] the transcript lock was poisoned");
-        return;
+        return false;
     };
 
     let rows = transcript.rows();
@@ -1610,6 +1627,7 @@ fn publish_rows(
             rows: rows[from..].iter().map(row_snapshot).collect(),
         },
     );
+    true
 }
 
 /// Republish the sidebar's roster when this thread's own state may have moved.
@@ -2037,8 +2055,7 @@ pub fn spawn_pump(
                 _ = ticker.tick() => {
                     // Rows and the roster share the tick: a streaming turn emits deltas
                     // far faster than either a conversation view or a sidebar redraws.
-                    let changed = first_dirty.is_some();
-                    publish_rows(&reporting, &transcript, &mut first_dirty);
+                    let changed = publish_rows(&reporting, &transcript, &mut first_dirty);
                     publish_roster(&reporting, &control, &mut last_streaming, changed);
                 }
                 received = frames.recv() => match received {
@@ -2306,6 +2323,17 @@ fn last_answer(transcript: &Transcript) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compaction_notices_keep_their_identity_in_the_frontend() {
+        let row = row_snapshot(&omp_session::Row::Notice {
+            level: "info".to_string(),
+            text: "Context compacted".to_string(),
+            kind: "manual_compaction_end".to_string(),
+            source: None,
+        });
+        assert_eq!(row.custom_type.as_deref(), Some("manual_compaction_end"));
+    }
 
     #[test]
     fn mode_switch_waits_for_running_queued_and_blocked_work() {

@@ -494,6 +494,14 @@ fn compaction_and_retry_progress_is_readable_for_the_status_line() {
         (2, 5, 8000)
     );
     assert_eq!(retry.error_message, "429");
+
+    // Fractional / floating-point delayMs (e.g. 377.105...) from engine exponential backoff
+    let SessionEvent::AutoRetryStart(retry_float) = SessionEvent::decode(
+        &json!({ "type": "auto_retry_start", "attempt": 1, "maxAttempts": 3, "delayMs": 377.10508941876304, "errorMessage": "rate limit" }),
+    ) else {
+        panic!("expected auto_retry_start with float delay");
+    };
+    assert_eq!(retry_float.delay_ms, 377);
 }
 
 #[test]

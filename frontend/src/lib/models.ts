@@ -89,6 +89,61 @@ export function parseKey(key: string): { provider: string; modelId: string } | n
  *   rule (alphabetical, by match count) would slide whole groups under the cursor
  *   while the user types.
  */
+function normalizeSearchText(text: string): string {
+  return text.toLowerCase().replace(/[-_./:]+/g, " ");
+}
+
+/**
+ * Flexible matching for model search.
+ *
+ * Matches against name, id, and provider. Handles:
+ * - Direct substring matches (e.g. `gpt-6.`)
+ * - Normalized matches where hyphens/underscores/dots are typed as spaces (e.g. `gpt 6.1` matching `GPT-6.1 Sol`)
+ * - Multi-word / token search (e.g. `openrouter gpt 6.1`, `claude sonnet`)
+ * - Alphanumeric stripped search (e.g. `gpt6.1` matching `GPT-6.1`)
+ */
+export function matchesModelQuery(model: ModelOption, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (needle === "") return true;
+
+  const rawFields = [model.name, model.id, model.provider].map((f) => f.toLowerCase());
+  const combinedRaw = rawFields.join(" ");
+
+  if (combinedRaw.includes(needle)) {
+    return true;
+  }
+
+  const normNeedle = normalizeSearchText(needle);
+  const normCombined = normalizeSearchText(combinedRaw);
+  if (normCombined.includes(normNeedle)) {
+    return true;
+  }
+
+  const tokens = needle.split(/\s+/).filter(Boolean);
+  if (tokens.length > 1) {
+    const allTokensMatch = tokens.every((token) => {
+      const normToken = normalizeSearchText(token).trim();
+      return (
+        combinedRaw.includes(token) ||
+        (normToken !== "" && normCombined.includes(normToken))
+      );
+    });
+    if (allTokensMatch) {
+      return true;
+    }
+  }
+
+  const strippedNeedle = needle.replace(/[^a-z0-9]/g, "");
+  if (strippedNeedle.length >= 3) {
+    const strippedCombined = combinedRaw.replace(/[^a-z0-9]/g, "");
+    if (strippedCombined.includes(strippedNeedle)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function visibleGroups(
   models: ModelOption[],
   query: string,
@@ -103,12 +158,7 @@ export function visibleGroups(
     return {
       favourites: [],
       groups: groupByProvider(
-        models.filter(
-          (model) =>
-            model.name.toLowerCase().includes(needle) ||
-            model.id.toLowerCase().includes(needle) ||
-            model.provider.toLowerCase().includes(needle),
-        ),
+        models.filter((model) => matchesModelQuery(model, needle)),
       ),
     };
   }

@@ -474,6 +474,10 @@ export function buildChatSubagents(
     return val;
   }
 
+  const liveInFlight = new Set(
+    liveAgents.filter(agentInFlight).map((a) => a.id),
+  );
+
   // 1. Parked transcripts on disk (settled from past runs or finished)
   for (const file of parked) {
     const name = file.advisor
@@ -498,11 +502,13 @@ export function buildChatSubagents(
 
   // 2. Historical run cache for this app session
   for (const h of history) {
-    const running = agentInFlight(h);
+    const running = liveInFlight.has(h.id);
     const existing = map.get(h.id);
     const status = running
       ? "running"
-      : ((h.status as "completed" | "failed" | "aborted") || existing?.status || "completed");
+      : (h.status === "running" || h.status === "pending"
+          ? "completed"
+          : (h.status as "completed" | "failed" | "aborted") || existing?.status || "completed");
     const spawnedAt = existing?.spawnedAt ?? resolveSpawnedAt(h.id, h.index ?? 0, h.createdAtMs || h.lastUpdateMs || 0);
     map.set(h.id, {
       id: h.id,
@@ -526,7 +532,9 @@ export function buildChatSubagents(
     const existing = map.get(a.id);
     const status = running
       ? "running"
-      : ((a.status as "completed" | "failed" | "aborted") || existing?.status || "completed");
+      : (a.status === "running" || a.status === "pending"
+          ? "completed"
+          : (a.status as "completed" | "failed" | "aborted") || existing?.status || "completed");
     const spawnedAt = existing?.spawnedAt ?? resolveSpawnedAt(a.id, a.index ?? 0, a.createdAtMs || a.lastUpdateMs || 0);
     map.set(a.id, {
       id: a.id,

@@ -14,7 +14,12 @@ const emit = defineEmits<{ failed: [message: string] }>();
 
 const displayName = computed(() => props.agent?.agent || props.agentName || props.agentId);
 const statusDisplay = computed(() => {
-  if (props.agent?.status) return props.agent.status;
+  if (props.agent?.status) {
+    if (props.agent.status === "running" || props.agent.status === "pending") {
+      return props.agent.listed ? props.agent.status : (rows.value.length > 0 ? "completed" : "settled");
+    }
+    return props.agent.status;
+  }
   if (rows.value.length > 0) return "completed";
   return loading.value ? "loading" : "settled";
 });

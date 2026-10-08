@@ -395,8 +395,22 @@ impl AgentRoster {
     pub fn active(&self) -> usize {
         self.agents
             .iter()
-            .filter(|agent| agent.status.is_some_and(AgentStatus::is_active))
+            .filter(|agent| agent.listed && agent.status.is_some_and(AgentStatus::is_active))
             .count()
+    }
+
+    /// Mark all in-flight agents as aborted and unlisted (e.g. when a turn is stopped).
+    pub fn abort_active(&mut self, at_ms: u64) -> bool {
+        let mut changed = false;
+        for agent in &mut self.agents {
+            if agent.status.is_some_and(AgentStatus::is_active) {
+                agent.status = Some(AgentStatus::Aborted);
+                agent.listed = false;
+                agent.last_update_ms = at_ms;
+                changed = true;
+            }
+        }
+        changed
     }
 
     pub fn is_empty(&self) -> bool {

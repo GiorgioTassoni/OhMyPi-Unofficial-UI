@@ -802,13 +802,24 @@ onMounted(async () => {
         ...rosters.value.filter((entry) => entry.thread !== event.thread),
         { thread: event.thread, agents: event.payload, error: null },
       ];
-      if (event.payload.length > 0) {
-        const existing = threadSubagentsHistory.value.get(event.thread) ?? [];
-        const map = new Map<string, AgentSnapshot>();
-        for (const a of existing) map.set(a.id, a);
-        for (const a of event.payload) map.set(a.id, a);
-        threadSubagentsHistory.value.set(event.thread, [...map.values()]);
+      const existing = threadSubagentsHistory.value.get(event.thread) ?? [];
+      const liveIds = new Set(event.payload.map((a) => a.id));
+      const map = new Map<string, AgentSnapshot>();
+      for (const a of existing) {
+        if (!liveIds.has(a.id) && (a.status === "running" || a.status === "pending" || a.listed)) {
+          map.set(a.id, {
+            ...a,
+            listed: false,
+            status: a.status === "running" || a.status === "pending" ? "completed" : a.status,
+          });
+        } else {
+          map.set(a.id, a);
+        }
       }
+      for (const a of event.payload) {
+        map.set(a.id, a);
+      }
+      threadSubagentsHistory.value.set(event.thread, [...map.values()]);
       if (activeId.value === event.thread) {
         void loadParkedAgents(event.thread);
       }

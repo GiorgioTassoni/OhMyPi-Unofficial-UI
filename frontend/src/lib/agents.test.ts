@@ -533,4 +533,24 @@ describe("buildChatSubagents", () => {
     // Newer dispatched agent (index 1) on top, older (index 0) under
     expect(res.map((s) => s.id)).toEqual(["agent-batch-1", "agent-batch-0"]);
   });
+
+  test("stopped subagent missing from live roster settles and does not report running", () => {
+    const thread = "thread-1";
+    // Subagent was recorded in history when it was running
+    const historyAgent = agent({
+      id: "agent-stopped",
+      agent: "task",
+      status: "running",
+      listed: true,
+      createdAtMs: 1_000,
+      lastUpdateMs: 2_000,
+    });
+
+    // When the turn is stopped, live roster is empty []
+    const subagents = buildChatSubagents(thread, [], [], [historyAgent]);
+    expect(subagents).toHaveLength(1);
+    expect(subagents[0].id).toBe("agent-stopped");
+    expect(subagents[0].running).toBe(false);
+    expect(subagents[0].status).toBe("completed");
+  });
 });

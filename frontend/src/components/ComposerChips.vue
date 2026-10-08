@@ -58,6 +58,11 @@ const currentModel = computed(
     ) ?? null,
 );
 
+const modelPopoverLabel = computed(() => {
+  const label = modelChipLabel(props.model, props.models);
+  return label !== "no model" ? `model · ${label}` : "model";
+});
+
 const contextPercent = computed(() => props.context?.percent ?? null);
 const ring = computed(() => ringDash(contextPercent.value, 7));
 
@@ -193,7 +198,7 @@ function describe(cause: unknown): string {
     <!-- Model: the one the composer drives (the `default` role, D-above). -->
     <Popover
       :open="openChip === 'model'"
-      label="model"
+      :label="modelPopoverLabel"
       :width="520"
       :focus-on-open="false"
       @close="openChip = null"
@@ -276,6 +281,7 @@ function describe(cause: unknown): string {
         :auto-compaction="props.autoCompaction"
         :compacting="props.compacting"
         @close="openChip = null"
+        @changed="emit('changed')"
         @failed="emit('failed', $event)"
       />
     </Popover>

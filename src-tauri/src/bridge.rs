@@ -428,7 +428,13 @@ pub async fn recycle_thread_sidecar(
 ) -> Result<Arc<LiveSession>, String> {
     let session_file = match live.session_file() {
         Some(file) => file,
-        None => return Ok(Arc::clone(live)),
+        None => {
+            let _ = app.emit(
+                crate::dto::AGENTS_EVENT,
+                session::tagged(thread, Vec::<AgentSnapshot>::new()),
+            );
+            return Ok(Arc::clone(live));
+        }
     };
     let workspace = live.workspace.clone();
     let approval_mode = live.approval_mode.clone();
@@ -501,11 +507,21 @@ pub async fn stop_turn(
 ) -> Result<(), String> {
     let live = thread_of(&state, &thread)?;
     let has_subagents = live.has_active_agents();
-    let stop_result = live.stop_turn().await;
+
+    if live.abort_active_agents() {
+        let snapshots: Vec<AgentSnapshot> =
+            live.agents().await.iter().map(agent_snapshot).collect();
+        let _ = app.emit(
+            crate::dto::AGENTS_EVENT,
+            session::tagged(&thread, snapshots),
+        );
+    }
 
     if has_subagents {
+        let _ = tokio::time::timeout(Duration::from_millis(1000), live.stop_turn()).await;
         recycle_thread_sidecar(&app, &state, &thread, &live).await?;
     } else {
+        let stop_result = live.stop_turn().await;
         stop_result?;
         // Give the sidecar a brief window to settle and flip is_streaming
         let start = std::time::Instant::now();
@@ -534,9 +550,10 @@ pub async fn stop_turn_and_send(
 ) -> Result<(), String> {
     let live = thread_of(&state, &thread)?;
     let has_subagents = live.has_active_agents();
+    live.abort_active_agents();
 
     if has_subagents {
-        let _ = live.stop_turn().await;
+        let _ = tokio::time::timeout(Duration::from_millis(1000), live.stop_turn()).await;
         let next = recycle_thread_sidecar(&app, &state, &thread, &live).await?;
         session::prompt(next, message, &wire_images(images)).await
     } else {

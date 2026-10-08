@@ -80,6 +80,36 @@ const sections = computed<Section[]>(() => {
   const sections: Section[] = [];
   let index = 0;
 
+  if (query.value.trim() === "" && props.current !== null && props.current !== "") {
+    const currentModel =
+      props.models.find((m) => modelKey(m) === props.current) ??
+      (props.current.includes("/")
+        ? {
+            provider: props.current.split("/")[0] ?? "",
+            id: props.current.split("/").slice(1).join("/"),
+            name: props.current.split("/").slice(1).join("/"),
+            contextWindow: null,
+            reasoning: false,
+            defaultEffort: null,
+            efforts: [],
+          }
+        : null);
+
+    if (currentModel) {
+      sections.push({
+        header: "Current",
+        favourite: false,
+        rows: [
+          {
+            model: currentModel,
+            key: modelKey(currentModel),
+            index: index++,
+          },
+        ],
+      });
+    }
+  }
+
   if (visible.favourites.length > 0) {
     sections.push({
       header: "Favourites",
@@ -323,7 +353,7 @@ function onDrop(key: string): void {
 
         <div
           v-for="entry in section.rows"
-          :key="entry.key"
+          :key="`${section.header}-${entry.key}`"
           role="option"
           :aria-selected="entry.index === activeIndex"
           :tabindex="section.favourite ? 0 : -1"

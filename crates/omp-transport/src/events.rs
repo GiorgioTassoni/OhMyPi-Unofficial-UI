@@ -431,13 +431,17 @@ pub struct AutoCompactionEnd {
 #[serde(rename_all = "camelCase")]
 pub struct AutoRetryStart {
     /// Which attempt is about to run, counting from 1.
+    #[serde(deserialize_with = "de_lenient_u64")]
     pub attempt: u64,
+    #[serde(deserialize_with = "de_lenient_u64")]
     pub max_attempts: u64,
     /// How long the engine will wait before retrying.
+    #[serde(deserialize_with = "de_lenient_u64")]
     pub delay_ms: u64,
     /// The provider error that triggered the retry.
     pub error_message: String,
     /// An id that can be looked up in the engine's error records, if given.
+    #[serde(default, deserialize_with = "de_opt_lenient_u64")]
     pub error_id: Option<u64>,
 }
 
@@ -448,6 +452,7 @@ pub struct AutoRetryEnd {
     /// Whether the retry sequence recovered.
     pub success: bool,
     /// The attempt this outcome belongs to.
+    #[serde(deserialize_with = "de_lenient_u64")]
     pub attempt: u64,
     /// The error that ended the sequence, when it did not recover.
     pub final_error: Option<String>,
@@ -505,7 +510,9 @@ pub struct TodoReminder {
     /// The outstanding todos, passed through opaquely.
     pub todos: Vec<Value>,
     /// Which reminder this is, counting from 1.
+    #[serde(deserialize_with = "de_lenient_u64")]
     pub attempt: u64,
+    #[serde(deserialize_with = "de_lenient_u64")]
     pub max_attempts: u64,
 }
 
@@ -676,4 +683,66 @@ where
     D: Deserializer<'de>,
 {
     Ok(MessageDelta::decode(&Value::deserialize(deserializer)?))
+}
+
+/// Deserialize a u64 leniently, accepting integers or floating-point numbers.
+///
+/// Upstream engines (such as exponential backoff with jitter) can produce fractional
+/// delays (e.g. `delayMs: 377.10508941876304`), which would otherwise fail strict `u64` decode.
+fn de_lenient_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    if let Some(n) = value.as_u64() {
+        Ok(n)
+    } else if let Some(n) = value.as_i64() {
+        if n >= 0 {
+            Ok(n as u64)
+        } else {
+            Err(serde::de::Error::custom(format!("negative number: {n}")))
+        }
+    } else if let Some(f) = value.as_f64() {
+        if f >= 0.0 && f.is_finite() {
+            Ok(f.round() as u64)
+        } else {
+            Err(serde::de::Error::custom(format!("invalid float: {f}")))
+        }
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "expected number, got {value:?}"
+        )))
+    }
+}
+
+/// Deserialize an optional u64 leniently.
+fn de_opt_lenient_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => {
+            if let Some(n) = v.as_u64() {
+                Ok(Some(n))
+            } else if let Some(n) = v.as_i64() {
+                if n >= 0 {
+                    Ok(Some(n as u64))
+                } else {
+                    Err(serde::de::Error::custom(format!("negative number: {n}")))
+                }
+            } else if let Some(f) = v.as_f64() {
+                if f >= 0.0 && f.is_finite() {
+                    Ok(Some(f.round() as u64))
+                } else {
+                    Err(serde::de::Error::custom(format!("invalid float: {f}")))
+                }
+            } else {
+                Err(serde::de::Error::custom(format!(
+                    "expected number, got {v:?}"
+                )))
+            }
+        }
+    }
 }
