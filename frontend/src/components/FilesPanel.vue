@@ -8,8 +8,8 @@
  * cards beside it. The tree is the one thing the window cannot derive, so that is the one thing
  * the host walks.
  */
-import { computed, ref } from "vue";
-import { readArtifact, type ArtifactSnapshot, type RowSnapshot } from "../bridge";
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
+import { onAgents, readArtifact, subagentFileChanges, type ArtifactSnapshot, type RowSnapshot, type SubagentFileChange } from "../bridge";
 import { artifacts, changedFiles, formatBytes, relativeTo, type TurnReviewRequest } from "../lib/panel";
 import { parseObject } from "../lib/toolView";
 import DiffView from "./DiffView.vue";
@@ -35,6 +35,50 @@ const emit = defineEmits<{
 type View = "changed" | "tree" | "artifacts";
 
 const view = ref<View>("changed");
+const subagentChanges = shallowRef<SubagentFileChange[]>([]);
+
+let subagentDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleSubagentChanges(delayMs = 1500): void {
+  if (subagentDebounceTimer) {
+    clearTimeout(subagentDebounceTimer);
+  }
+  subagentDebounceTimer = setTimeout(() => {
+    subagentDebounceTimer = null;
+    void refreshSubagentChanges();
+  }, delayMs);
+}
+
+async function refreshSubagentChanges(): Promise<void> {
+  if (!props.thread) {
+    subagentChanges.value = [];
+    return;
+  }
+  try {
+    subagentChanges.value = await subagentFileChanges(props.thread);
+  } catch {
+    // Non-fatal if session has no artifacts
+  }
+}
+
+let unlistenAgents: (() => void) | null = null;
+onMounted(async () => {
+  unlistenAgents = await onAgents((event) => {
+    if (event.thread === props.thread) scheduleSubagentChanges();
+  });
+  void refreshSubagentChanges();
+});
+
+onUnmounted(() => {
+  if (unlistenAgents) unlistenAgents();
+  if (subagentDebounceTimer) clearTimeout(subagentDebounceTimer);
+});
+
+watch(() => props.thread, () => {
+  if (subagentDebounceTimer) clearTimeout(subagentDebounceTimer);
+  void refreshSubagentChanges();
+});
+watch(() => props.rows.length, () => scheduleSubagentChanges(2000));
 
 /**
  * The Changed list, with everything a row draws decided in one pass.
@@ -43,8 +87,41 @@ const view = ref<View>("changed");
  * facts a row shows beside the path — the split between the folder and the file's own name,
  * and the diff counted — because the display should not recompute either per render.
  */
-const changed = computed(() =>
-  changedFiles(props.rows).map((file) => {
+const changed = computed(() => {
+  const base = changedFiles(props.rows);
+  const byPath = new Map<string, (typeof base)[0]>();
+  for (const file of base) {
+    byPath.set(file.path, { ...file });
+  }
+
+  for (const sc of subagentChanges.value) {
+    const scAgentName = sc.agentName && sc.agentName !== "task"
+      ? sc.agentName
+      : (sc.agentId && sc.agentId !== "task" ? sc.agentId : undefined);
+    const existing = byPath.get(sc.path);
+    if (existing) {
+      existing.touches += sc.touches;
+      if (sc.kind === "written") existing.kind = "written";
+      if (!existing.diff && sc.diff) existing.diff = sc.diff;
+      if (!existing.agentName) {
+        existing.agentName = scAgentName;
+      } else if (scAgentName && !existing.agentName.includes(scAgentName)) {
+        existing.agentName = `${existing.agentName}, ${scAgentName}`;
+      }
+    } else {
+      byPath.set(sc.path, {
+        path: sc.path,
+        kind: sc.kind as "written" | "edited",
+        touches: sc.touches,
+        diff: sc.diff,
+        row: -1,
+        agentName: scAgentName,
+        agentId: sc.agentId,
+      });
+    }
+  }
+
+  return [...byPath.values()].map((file) => {
     const path = relativeTo(file.path, props.cwd);
     const cut = path.lastIndexOf("/");
     return {
@@ -55,8 +132,8 @@ const changed = computed(() =>
       /** The engine's own diff, counted, or null when it reported no diff for this file. */
       stats: diffStats(file.diff),
     };
-  }),
-);
+  });
+});
 
 /** The spilled results, each carrying what the card that spilled it said about the file. */
 const spilled = computed(() =>
@@ -202,9 +279,16 @@ async function copy(text: string): Promise<void> {
           <button
             class="min-w-0 flex-1 truncate text-left font-mono text-[12px] text-fg"
             :title="file.path"
-            @click="emit('jump', file.row)"
+            @click="file.row >= 0 && emit('jump', file.row)"
           >
             <span class="text-faint">{{ file.folder }}</span><span>{{ file.name }}</span>
+            <span
+              v-if="file.agentName && file.agentName !== 'task'"
+              class="ml-1.5 shrink-0 rounded bg-raised px-1 py-0.5 text-[10px] text-accent font-sans"
+              :title="`Changed by subagent ${file.agentName}`"
+            >
+              {{ file.agentName }}
+            </span>
           </button>
           <span v-if="file.touches > 1" class="shrink-0 font-mono text-[10.5px] text-faint">
             ×{{ file.touches }}

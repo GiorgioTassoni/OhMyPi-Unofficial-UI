@@ -15,9 +15,11 @@ import {
   availableCommands,
   type SearchHit,
   onActivity,
+  onAgents,
   onCommandsUpdated,
   onRows,
   onUiRequests,
+  subagentFileChanges,
   threadStatus,
   transcript as readTranscript,
   uiRequests as readUiRequests,
@@ -27,6 +29,7 @@ import {
   type RowPatch,
   type RowSnapshot,
   type SessionStatus,
+  type SubagentFileChange,
   type UiRequestSnapshot,
 } from "../bridge";
 import { applyRowPatch } from "../lib/rows";
@@ -40,8 +43,9 @@ import DialogPanel from "./DialogPanel.vue";
 import Icon from "./ui/Icon.vue";
 import TurnFiles from "./TurnFiles.vue";
 import TurnActivity from "./TurnActivity.vue";
+import type { ConversationTurn } from "../lib/turnActivity";
 import MeasuredTurn from "./MeasuredTurn.vue";
-import type { TurnFileSummary } from "../lib/panel";
+import { mergeSubagentFileSummaries, type TurnFileSummary } from "../lib/panel";
 import { initialProjection, projectTranscript, type TranscriptProjection } from "../lib/transcriptCache";
 import { estimatedTurnHeight, turnContainingRow, turnLayout, visibleTurns } from "../lib/virtualTurns";
 import { createDisclosureMemory } from "../lib/disclosureMemory";
@@ -94,10 +98,12 @@ const emit = defineEmits<{
 const status = ref<SessionStatus | null>(null);
 const rows = shallowRef<RowSnapshot[]>([]);
 const projection = shallowRef<TranscriptProjection>({ turns: [], summaries: new Map() });
+const subagentChanges = shallowRef<SubagentFileChange[]>([]);
 const disclosureMemory = createDisclosureMemory();
 const dialogs = ref<UiRequestSnapshot[]>([]);
 const activity = ref<ActivitySnapshot[]>([]);
 const commands = ref<CommandEntry[]>([]);
+const measuredHeights = shallowRef<Map<number, number>>(new Map());
 
 /** The tail is capped: it exists to show liveness, not to keep history. */
 const ACTIVITY_TAIL = 60;
@@ -115,11 +121,38 @@ let unlisten: UnlistenFn[] = [];
 let lastStatusRead = 0;
 let trailing: ReturnType<typeof setTimeout> | null = null;
 
+let subagentDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleSubagentFileChanges(delayMs = 1500): void {
+  if (subagentDebounceTimer) {
+    clearTimeout(subagentDebounceTimer);
+  }
+  subagentDebounceTimer = setTimeout(() => {
+    subagentDebounceTimer = null;
+    void refreshSubagentFileChanges();
+  }, delayMs);
+}
+
+async function refreshSubagentFileChanges(): Promise<void> {
+  if (!props.thread) return;
+  const hasSpawned = turns.value.some((t) => t.spawnedAgents.length > 0);
+  if (!hasSpawned) {
+    if (subagentChanges.value.length > 0) subagentChanges.value = [];
+    return;
+  }
+  try {
+    subagentChanges.value = await subagentFileChanges(props.thread);
+  } catch {
+    // Non-fatal if session has no artifacts
+  }
+}
+
 /** A reset discards measurements; a patch retains the untouched turn prefix. */
 function replaceTranscript(next: RowSnapshot[]): void {
   rows.value = next;
   projection.value = initialProjection(next, streaming.value);
   measuredHeights.value = new Map();
+  scheduleSubagentFileChanges(200);
 }
 
 function patchTranscript(next: RowSnapshot[], from: number): void {
@@ -153,6 +186,9 @@ onMounted(async () => {
     onCommandsUpdated((event) => {
       if (event.thread === props.thread) commands.value = event.payload;
     }),
+    onAgents((event) => {
+      if (event.thread === props.thread) scheduleSubagentFileChanges();
+    }),
   ]);
 
   // Read rather than wait for an event: extensions push dialogs and the engine pushes its
@@ -174,6 +210,7 @@ onMounted(async () => {
 onUnmounted(() => {
   for (const off of unlisten) off();
   if (trailing) clearTimeout(trailing);
+  if (subagentDebounceTimer) clearTimeout(subagentDebounceTimer);
 });
 
 /**
@@ -269,9 +306,25 @@ const chips = computed<ChipRow>(() => ({
 /** What the composer needs to know about the turn in flight. */
 const streaming = computed(() => status.value?.control.isStreaming ?? false);
 const queued = computed(() => status.value?.control.queuedMessageCount ?? 0);
-const fileSummaries = computed(() => projection.value.summaries);
 const turns = computed(() => projection.value.turns);
-watch(streaming, () => {
+const fileSummaries = computed<Map<number, TurnFileSummary>>(() => {
+  const baseSummaries = projection.value.summaries;
+  if (subagentChanges.value.length === 0) return baseSummaries;
+  return mergeSubagentFileSummaries(
+    baseSummaries,
+    turns.value,
+    rows.value,
+    subagentChanges.value,
+  );
+});
+watch(
+  () => turns.value.map((t) => t.spawnedAgents.join(",")).join(";"),
+  () => {
+    void refreshSubagentFileChanges();
+  },
+);
+watch(streaming, (isStreaming) => {
+  if (!isStreaming) void refreshSubagentFileChanges();
   if (rows.value.length > 0) projection.value = projectTranscript(projection.value, rows.value, streaming.value, rows.value.length);
 });
 /** The turn has started, but the engine has not produced a row the reader can follow yet. */
@@ -415,8 +468,12 @@ const conversationRef = ref<HTMLElement | null>(null);
 const isScrolledUp = ref(false);
 const viewportTop = ref(0);
 const viewportHeight = ref(800);
-const measuredHeights = shallowRef<Map<number, number>>(new Map());
-const layout = computed(() => turnLayout(turns.value, measuredHeights.value, (end) => fileSummaries.value.has(end)));
+const hasTurnSummary = (turn: ConversationTurn | undefined): boolean =>
+  !!turn && !turn.working && fileSummaries.value.has(turn.end);
+const layout = computed(() => turnLayout(turns.value, measuredHeights.value, (end) => {
+  const turn = turns.value.find((t) => t.end === end);
+  return hasTurnSummary(turn);
+}));
 const visible = computed(() => visibleTurns(layout.value, viewportTop.value, viewportHeight.value));
 const visibleTurnEntries = computed(() => turns.value.slice(visible.value.start, visible.value.end));
 let viewportObserver: ResizeObserver | null = null;
@@ -441,7 +498,7 @@ function onTurnMeasured(start: number, height: number): void {
   const index = turnContainingRow(turns.value, start);
   if (index < 0) return;
   const previous = measuredHeights.value.get(start)
-    ?? estimatedTurnHeight(turns.value[index], fileSummaries.value.has(turns.value[index].end));
+    ?? estimatedTurnHeight(turns.value[index], hasTurnSummary(turns.value[index]));
   if (Math.abs(previous - height) < 0.5) return;
   const above = layout.value.offsets[index + 1] <= viewportTop.value;
   const next = new Map(measuredHeights.value);
@@ -623,12 +680,16 @@ defineExpose({
             <ConversationRow :row="turn.answer.row" @failed="emit('failed', $event)" />
           </div>
           <TurnFiles
-            v-if="fileSummaries.get(turn.end)"
+            v-if="!turn.working && fileSummaries.get(turn.end)"
             :summary="fileSummaries.get(turn.end)!"
             :workspace="status?.workspace ?? null"
             @jump="revealRow"
             @review="emit('review', $event)"
           />
+          <div v-for="notice in turn.notices" :key="notice.index" :data-row-index="notice.index" class="flex items-start gap-2 rounded-[7px] border border-line/50 bg-raised/35 px-3 py-2" role="status">
+            <Icon :name="notice.row.role === 'notice:info' ? 'check' : 'close'" class="mt-0.5 h-3.5 w-3.5 shrink-0" :class="notice.row.role === 'notice:error' ? 'text-err' : notice.row.role === 'notice:warning' ? 'text-warn' : 'text-accent'" />
+            <p class="min-w-0 break-words text-[12px]" :class="notice.row.role === 'notice:error' ? 'text-err' : 'text-dim'">{{ notice.row.text }}</p>
+          </div>
         </article>
         </MeasuredTurn>
         <div aria-hidden="true" :style="{ height: `${visible.after}px` }" />
@@ -660,6 +721,10 @@ defineExpose({
     </div>
 
     <div class="mx-auto w-full max-w-[46rem] px-4 pb-4">
+      <p v-if="chips.compacting" class="mb-2 flex items-center gap-2 text-[12px] text-dim" role="status" aria-live="polite">
+        <Icon name="refresh" class="h-3.5 w-3.5 animate-spin text-accent" />
+        Compacting context…
+      </p>
       <!--
         What this session's extensions pushed (`session-chrome`). Both surfaces sit by the
         composer because that is where the engine's own status and widget rows are — a thin

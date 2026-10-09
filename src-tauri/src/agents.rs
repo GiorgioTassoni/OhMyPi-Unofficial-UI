@@ -33,14 +33,38 @@
 //! `__advisor.<slug>.jsonl` are the advisor's transcript rather than a peer agent's
 //! (`isAdvisorTranscriptName`).
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
 
 use omp_store::listing;
+use serde_json::Value;
 
-use crate::dto::{BrokerDaemon, BrokerScope, ParkedAgent};
+use crate::dto::{BrokerDaemon, BrokerScope, ParkedAgent, SubagentFileChange};
 use crate::panel;
+
+#[derive(Clone)]
+struct SubagentTranscriptCacheEntry {
+    mtime: Option<SystemTime>,
+    len: u64,
+    agent_id: String,
+    agent_name: String,
+    changes: Vec<SubagentFileChange>,
+}
+
+fn subagent_transcript_cache() -> &'static Mutex<HashMap<PathBuf, SubagentTranscriptCacheEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, SubagentTranscriptCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(test)]
+pub fn clear_subagent_transcript_cache() {
+    if let Ok(mut guard) = subagent_transcript_cache().lock() {
+        guard.clear();
+    }
+}
 
 /// How many entries one level of the scan will look at.
 ///
@@ -82,6 +106,394 @@ pub fn parked_by_id(session_file: &str, agent: &str) -> Result<ParkedAgent, Stri
                  that agent for it, and no file named after it is beside the session"
             )
         })
+}
+
+/// Added and removed lines in a unified diff, headers aside.
+pub fn diff_line_counts(diff: &str) -> (usize, usize) {
+    let mut added = 0;
+    let mut removed = 0;
+    for line in diff.lines() {
+        if line.starts_with("+++ ") || line.starts_with("--- ") {
+            continue;
+        }
+        if line.starts_with('+') {
+            added += 1;
+        } else if line.starts_with('-') {
+            removed += 1;
+        }
+    }
+    (added, removed)
+}
+
+fn is_mutating(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "write" | "edit" | "ast_edit" | "apply_patch" | "memory_edit"
+    )
+}
+
+/// A successful preview is not a mutation. Explicit no-op results are not either.
+fn confirmed_change(details: Option<&Value>) -> bool {
+    let Some(d) = details else { return true };
+    if d.get("applied").and_then(Value::as_bool) == Some(false)
+        || d.get("totalReplacements").and_then(Value::as_u64) == Some(0)
+    {
+        return false;
+    }
+    if let (Some(old), Some(new)) = (
+        d.get("oldText").and_then(Value::as_str),
+        d.get("newText").and_then(Value::as_str),
+    ) {
+        if old == new {
+            return false;
+        }
+    }
+    d.get("op").and_then(Value::as_str) != Some("update")
+        || d.get("diff")
+            .and_then(Value::as_str)
+            .is_none_or(|diff| diff_line_counts(diff) != (0, 0))
+}
+
+fn transcript_cwd(path: &Path) -> Option<PathBuf> {
+    use std::io::BufRead;
+    let file = fs::File::open(path).ok()?;
+    for line in std::io::BufReader::new(file).lines().take(5).flatten() {
+        let header: Value = serde_json::from_str(&line).ok()?;
+        if header.get("type").and_then(Value::as_str) == Some("session") {
+            return header.get("cwd").and_then(Value::as_str).map(PathBuf::from);
+        }
+    }
+    None
+}
+
+fn external_scratch(path: &str, cwd: Option<&Path>) -> bool {
+    let Some(cwd) = cwd else { return false };
+    let path = Path::new(path);
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    let temporary = normalized.starts_with(std::env::temp_dir())
+        || normalized.starts_with("/tmp")
+        || normalized.starts_with("/var/tmp");
+    temporary && !normalized.starts_with(cwd)
+}
+
+fn extract_touched_paths(tool_name: &str, details: Option<&Value>, args: &Value) -> Vec<String> {
+    if let Some(details) = details {
+        if tool_name == "ast_edit" {
+            if let Some(replacements) = details.get("fileReplacements").and_then(Value::as_array) {
+                let paths: Vec<String> = replacements
+                    .iter()
+                    .filter_map(|r| {
+                        r.get("path")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string)
+                    })
+                    .collect();
+                if !paths.is_empty() {
+                    return paths;
+                }
+            }
+            if let Some(files) = details.get("files").and_then(Value::as_array) {
+                let paths: Vec<String> = files
+                    .iter()
+                    .filter_map(|f| f.as_str().map(ToString::to_string))
+                    .collect();
+                if !paths.is_empty() {
+                    return paths;
+                }
+            }
+        }
+
+        let single = details
+            .get("resolvedPath")
+            .and_then(Value::as_str)
+            .or_else(|| details.get("path").and_then(Value::as_str));
+
+        if let Some(single_path) = single {
+            let moved = details.get("sourcePath").and_then(Value::as_str);
+            if let Some(moved_path) = moved {
+                if moved_path != single_path {
+                    return vec![single_path.to_string(), moved_path.to_string()];
+                }
+            }
+            return vec![single_path.to_string()];
+        }
+
+        if let Some(per_file) = details.get("perFileResults").and_then(Value::as_array) {
+            let paths: Vec<String> = per_file
+                .iter()
+                .filter_map(|r| {
+                    r.get("path")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                })
+                .collect();
+            if !paths.is_empty() {
+                return paths;
+            }
+        }
+    }
+
+    for key in &["path", "file_path"] {
+        if let Some(p) = args.get(*key).and_then(Value::as_str) {
+            if !p.is_empty() {
+                return vec![p.to_string()];
+            }
+        }
+    }
+
+    Vec::new()
+}
+
+fn extract_diff(details: Option<&Value>, args: &Value) -> Option<String> {
+    let diff = details
+        .and_then(|d| d.get("diff").and_then(Value::as_str))
+        .or_else(|| args.get("diff").and_then(Value::as_str));
+    diff.filter(|d| !d.is_empty()).map(ToString::to_string)
+}
+
+/// Parse the session header in the JSONL to discover the agent's name if written.
+/// Avoids returning the generic tool/type name `task`.
+fn resolve_agent_name(path: &Path, default_id: &str) -> String {
+    let fallback = if default_id.is_empty() || default_id == "task" {
+        String::new()
+    } else {
+        default_id.to_string()
+    };
+    let Ok(file) = fs::File::open(path) else {
+        return fallback;
+    };
+    use std::io::BufRead;
+    let reader = std::io::BufReader::new(file);
+    for line in reader.lines().take(5) {
+        let Ok(line) = line else { break };
+        if let Ok(entry) = serde_json::from_str::<Value>(&line) {
+            if entry.get("type").and_then(Value::as_str) == Some("session") {
+                if let Some(agent_name) = entry.get("agentName").and_then(Value::as_str) {
+                    if !agent_name.is_empty() && agent_name != "task" {
+                        return agent_name.to_string();
+                    }
+                }
+            }
+        }
+    }
+    fallback
+}
+
+/// Scan a single subagent transcript for all file mutations.
+pub fn scan_subagent_file_changes(
+    path: &Path,
+    agent_id: &str,
+    agent_name: &str,
+) -> Vec<SubagentFileChange> {
+    let (mtime, file_len) = match fs::metadata(path) {
+        Ok(meta) => (meta.modified().ok(), meta.len()),
+        Err(_) => return Vec::new(),
+    };
+
+    if let Ok(guard) = subagent_transcript_cache().lock() {
+        if let Some(entry) = guard.get(path) {
+            if entry.len == file_len
+                && entry.mtime == mtime
+                && entry.agent_id == agent_id
+                && entry.agent_name == agent_name
+            {
+                return entry.changes.clone();
+            }
+        }
+    }
+
+    let Ok(page) = omp_session::read_transcript(path, 0) else {
+        return Vec::new();
+    };
+
+    let mut transcript = omp_session::Transcript::default();
+    transcript.restore(&page.messages);
+    let cwd = transcript_cwd(path);
+
+    struct PathAccumulator {
+        kind: &'static str,
+        touches: usize,
+        diffs: Vec<String>,
+        lines_added: usize,
+        lines_removed: usize,
+    }
+
+    let mut map: std::collections::BTreeMap<String, PathAccumulator> =
+        std::collections::BTreeMap::new();
+    let mut order: Vec<String> = Vec::new();
+
+    for row in transcript.rows() {
+        let omp_session::Row::Tool(card) = row else {
+            continue;
+        };
+        if !card.is_finished() {
+            continue;
+        }
+        let omp_session::ToolOutcome::Done(ref result) = card.outcome else {
+            continue;
+        };
+        if result.is_error {
+            continue;
+        }
+        // Resolve reports the applied result separately from the original preview.
+        let (tool_name, details) = if card.tool_name == "resolve" {
+            let Some(d) = result.details.as_ref() else {
+                continue;
+            };
+            if d.get("action").and_then(Value::as_str) != Some("apply") {
+                continue;
+            }
+            let Some(source) = d.get("sourceToolName").and_then(Value::as_str) else {
+                continue;
+            };
+            (source, d.get("sourceResultDetails"))
+        } else {
+            (card.tool_name.as_str(), result.details.as_ref())
+        };
+        if !is_mutating(tool_name) || !confirmed_change(details) {
+            continue;
+        }
+
+        let is_write = tool_name == "write";
+        let touched = extract_touched_paths(tool_name, details, &card.args)
+            .into_iter()
+            .filter(|p| !external_scratch(p, cwd.as_deref()))
+            .collect::<Vec<_>>();
+        if touched.is_empty() {
+            continue;
+        }
+
+        let diff = if is_write {
+            None
+        } else {
+            extract_diff(details, &card.args)
+        };
+
+        let (added, removed) = if let Some(ref d) = diff {
+            diff_line_counts(d)
+        } else {
+            (0, 0)
+        };
+
+        for file_path in touched {
+            if let Some(acc) = map.get_mut(&file_path) {
+                acc.touches += 1;
+                if is_write {
+                    acc.kind = "written";
+                }
+                if let Some(ref d) = diff {
+                    acc.diffs.push(d.clone());
+                    acc.lines_added += added;
+                    acc.lines_removed += removed;
+                }
+            } else {
+                order.push(file_path.clone());
+                map.insert(
+                    file_path,
+                    PathAccumulator {
+                        kind: if is_write { "written" } else { "edited" },
+                        touches: 1,
+                        diffs: diff.clone().map(|d| vec![d]).unwrap_or_default(),
+                        lines_added: added,
+                        lines_removed: removed,
+                    },
+                );
+            }
+        }
+    }
+
+    let changes: Vec<SubagentFileChange> = order
+        .into_iter()
+        .filter_map(|path| {
+            let acc = map.remove(&path)?;
+            let diff = if acc.diffs.is_empty() {
+                None
+            } else {
+                Some(acc.diffs.join("\n"))
+            };
+            let final_name = if agent_name.is_empty() || agent_name == "task" {
+                if agent_id.is_empty() || agent_id == "task" {
+                    String::new()
+                } else {
+                    agent_id.to_string()
+                }
+            } else {
+                agent_name.to_string()
+            };
+            Some(SubagentFileChange {
+                agent_id: agent_id.to_string(),
+                agent_name: final_name,
+                path,
+                kind: acc.kind.to_string(),
+                diff,
+                lines_added: acc.lines_added,
+                lines_removed: acc.lines_removed,
+                touches: acc.touches,
+            })
+        })
+        .collect();
+
+    if let Ok(mut guard) = subagent_transcript_cache().lock() {
+        if guard.len() > 1000 {
+            guard.clear();
+        }
+        guard.insert(
+            path.to_path_buf(),
+            SubagentTranscriptCacheEntry {
+                mtime,
+                len: file_len,
+                agent_id: agent_id.to_string(),
+                agent_name: agent_name.to_string(),
+                changes: changes.clone(),
+            },
+        );
+    }
+
+    changes
+}
+
+/// Every file touched by subagents for this session.
+///
+/// If `agent_id` is supplied, only that subagent's changes are returned.
+/// Otherwise, all parked non-advisor subagents are scanned.
+pub fn subagent_file_changes(
+    session_file: &str,
+    agent_id: Option<&str>,
+) -> Result<Vec<SubagentFileChange>, String> {
+    let parked_agents = parked(session_file)?;
+    let mut changes = Vec::new();
+
+    for agent in parked_agents {
+        if agent.advisor {
+            continue;
+        }
+        if let Some(requested_id) = agent_id {
+            if agent.id != requested_id {
+                continue;
+            }
+        }
+
+        let agent_name = resolve_agent_name(Path::new(&agent.path), &agent.id);
+        let agent_changes =
+            scan_subagent_file_changes(Path::new(&agent.path), &agent.id, &agent_name);
+        changes.extend(agent_changes);
+    }
+
+    Ok(changes)
 }
 
 /// Read one level of the artifacts tree.
@@ -711,6 +1123,175 @@ mod tests {
             error.contains("../secrets"),
             "the id is named back: {error}"
         );
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn diff_line_counts_works() {
+        let diff =
+            "--- a/file.txt\n+++ b/file.txt\n@@ -1,3 +1,4 @@\n context\n-removed\n+added 1\n+added 2\n";
+        let (added, removed) = diff_line_counts(diff);
+        assert_eq!(added, 2);
+        assert_eq!(removed, 1);
+    }
+
+    #[test]
+    fn scanning_subagent_transcript_extracts_mutating_tool_changes() {
+        let root = scratch("subagent_changes");
+        let transcript_path = root.join("coder.jsonl");
+        fs::create_dir_all(&root).expect("a scratch dir");
+
+        let content = r#"{"type":"session","version":3,"id":"sub-1","agent":"coder","timestamp":"2026-09-20T16:52:31.559Z","cwd":"/tmp"}
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"call_1","name":"write","arguments":{"path":"/tmp/created.ts","content":"hello"}}]}}
+{"type":"message","message":{"role":"toolResult","toolCallId":"call_1","toolName":"write","content":"written","isError":false,"details":{"resolvedPath":"/tmp/created.ts"}}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"call_2","name":"edit","arguments":{"path":"/tmp/edited.ts"}}]}}
+{"type":"message","message":{"role":"toolResult","toolCallId":"call_2","toolName":"edit","content":"ok","isError":false,"details":{"path":"/tmp/edited.ts","diff":"@@ -1 +1,2 @@\n-old\n+new 1\n+new 2"}}}
+"#;
+        fs::write(&transcript_path, content).expect("write transcript");
+
+        let changes = scan_subagent_file_changes(&transcript_path, "sub-1", "coder");
+        assert_eq!(changes.len(), 2);
+
+        assert_eq!(changes[0].path, "/tmp/created.ts");
+        assert_eq!(changes[0].kind, "written");
+        assert_eq!(changes[0].touches, 1);
+        assert_eq!(changes[0].diff, None);
+        assert_eq!(changes[0].lines_added, 0);
+        assert_eq!(changes[0].lines_removed, 0);
+
+        assert_eq!(changes[1].path, "/tmp/edited.ts");
+        assert_eq!(changes[1].kind, "edited");
+        assert_eq!(changes[1].touches, 1);
+        assert!(changes[1].diff.is_some());
+        assert_eq!(changes[1].lines_added, 2);
+        assert_eq!(changes[1].lines_removed, 1);
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn review_counts_applied_changes_not_previews_noops_or_external_scratch_files() {
+        let root = scratch("confirmed-changes");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("agent.jsonl");
+        let cases = vec![
+            (
+                "ast_edit",
+                serde_json::json!({"path":"/work/app/preview.py"}),
+                serde_json::json!({"applied":false,"fileReplacements":[{"path":"/work/app/preview.py","count":1}]}),
+            ),
+            (
+                "edit",
+                serde_json::json!({"path":"/work/app/same.py"}),
+                serde_json::json!({"path":"/work/app/same.py","oldText":"same","newText":"same","diff":" context"}),
+            ),
+            (
+                "edit",
+                serde_json::json!({"path":"/work/app/empty.py"}),
+                serde_json::json!({"op":"update","path":"/work/app/empty.py","diff":""}),
+            ),
+            (
+                "write",
+                serde_json::json!({"path":"/tmp/review-helper.py"}),
+                serde_json::json!({"resolvedPath":"/tmp/review-helper.py"}),
+            ),
+            (
+                "write",
+                serde_json::json!({"path":"created.py"}),
+                serde_json::json!({"resolvedPath":"/work/app/created.py"}),
+            ),
+            (
+                "edit",
+                serde_json::json!({"path":"../website/docs.md"}),
+                serde_json::json!({"path":"../website/docs.md","diff":"-old\n+new"}),
+            ),
+            (
+                "resolve",
+                serde_json::json!({"action":"apply"}),
+                serde_json::json!({"action":"apply","sourceToolName":"ast_edit","sourceResultDetails":{"applied":true,"totalReplacements":1,"fileReplacements":[{"path":"/work/app/applied.py","count":1}]}}),
+            ),
+            (
+                "resolve",
+                serde_json::json!({"action":"reject"}),
+                serde_json::json!({"action":"reject","sourceToolName":"ast_edit"}),
+            ),
+        ];
+        let mut lines = vec![
+            serde_json::json!({"type":"session","version":3,"id":"test","cwd":"/work/app"})
+                .to_string(),
+        ];
+        for (i, (name, args, details)) in cases.into_iter().enumerate() {
+            let id = format!("call-{i}");
+            lines.push(serde_json::json!({"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":id,"name":name,"arguments":args}]}}).to_string());
+            lines.push(serde_json::json!({"type":"message","message":{"role":"toolResult","toolCallId":id,"toolName":name,"content":"ok","isError":false,"details":details}}).to_string());
+        }
+        fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
+        let changes = scan_subagent_file_changes(&path, "coder", "Coder");
+        assert_eq!(
+            changes.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(),
+            vec![
+                "/work/app/created.py",
+                "../website/docs.md",
+                "/work/app/applied.py"
+            ]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resolve_agent_name_prefers_default_id_over_task_tool_type() {
+        let root = scratch("resolve_agent_name");
+        let transcript_path = root.join("PlaylistDownloadExtraction.jsonl");
+        fs::create_dir_all(&root).expect("a scratch dir");
+
+        let content = r#"{"type":"session","version":3,"id":"uuid-123","agent":"task","timestamp":"2026-09-20T16:52:31.559Z","cwd":"/tmp"}
+{"type":"message","message":{"role":"assistant","content":[]}}
+"#;
+        fs::write(&transcript_path, content).expect("write transcript");
+
+        let resolved = resolve_agent_name(&transcript_path, "PlaylistDownloadExtraction");
+        assert_eq!(resolved, "PlaylistDownloadExtraction");
+
+        let resolved_task = resolve_agent_name(&transcript_path, "task");
+        assert_eq!(resolved_task, "");
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn subagent_transcript_cache_reuses_result_and_invalidates_on_file_change() {
+        let root = scratch("cache_test");
+        let transcript_path = root.join("worker.jsonl");
+        fs::create_dir_all(&root).expect("a scratch dir");
+        clear_subagent_transcript_cache();
+
+        let initial_content = r#"{"type":"session","version":3,"id":"sub-c","agent":"worker","timestamp":"2026-09-20T16:52:31.559Z","cwd":"/tmp"}
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"write","arguments":{"path":"/tmp/initial.ts","content":"v1"}}]}}
+{"type":"message","message":{"role":"toolResult","toolCallId":"c1","toolName":"write","content":"ok","isError":false,"details":{"resolvedPath":"/tmp/initial.ts"}}}
+"#;
+        fs::write(&transcript_path, initial_content).expect("initial write");
+
+        let first = scan_subagent_file_changes(&transcript_path, "sub-c", "worker");
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].path, "/tmp/initial.ts");
+
+        // Second call should return cached result
+        let second = scan_subagent_file_changes(&transcript_path, "sub-c", "worker");
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].path, "/tmp/initial.ts");
+
+        // Appending to the transcript should invalidate cache and return new results
+        let updated_content = format!(
+            "{initial_content}{}\n{}\n",
+            r#"{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"c2","name":"write","arguments":{"path":"/tmp/second.ts","content":"v2"}}]}}"#,
+            r#"{"type":"message","message":{"role":"toolResult","toolCallId":"c2","toolName":"write","content":"ok","isError":false,"details":{"resolvedPath":"/tmp/second.ts"}}}"#
+        );
+        fs::write(&transcript_path, updated_content).expect("append write");
+
+        let third = scan_subagent_file_changes(&transcript_path, "sub-c", "worker");
+        assert_eq!(third.len(), 2);
+        assert_eq!(third[1].path, "/tmp/second.ts");
 
         fs::remove_dir_all(&root).ok();
     }

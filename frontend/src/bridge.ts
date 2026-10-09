@@ -10,6 +10,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+/** Linux native fallback, used only for an explicit image paste. */
+export async function clipboardImage(): Promise<Blob | null> {
+  const data = await invoke<string | null>("clipboard_image");
+  if (data === null) return null;
+  const bytes = Uint8Array.from(atob(data), (character) => character.charCodeAt(0));
+  return new Blob([bytes], { type: "image/png" });
+}
+
 /** Mirrors `dto::ReadySnapshot`. */
 export interface ReadySnapshot {
   protocolVersion: number;
@@ -117,7 +125,8 @@ export interface RowSnapshot {
   attachments: AttachmentSnapshot[];
   /**
    * The engine's own type for a message the app did not write: `async-result` for a
-   * background job's delivered result (`docs/12` §9). `null` for ordinary messages.
+   * background job's delivered result (`docs/12` §9). For maintenance notices,
+   * this is the lifecycle kind, such as `manual_compaction_end`. `null` for ordinary messages.
    */
   customType: string | null;
   /** The jobs this row accounts for — a delivery's, and empty for everything else. */
@@ -1025,6 +1034,18 @@ export interface AgentTranscript {
   rows: RowSnapshot[];
 }
 
+/** A file modified by a subagent during a session. */
+export interface SubagentFileChange {
+  agentId: string;
+  agentName: string;
+  path: string;
+  kind: "written" | "edited";
+  diff: string | null;
+  linesAdded: number;
+  linesRemoved: number;
+  touches: number;
+}
+
 /** One supervised process from `omp ps --json`. */
 export interface BrokerDaemon {
   /** The name `omp ps stop <name>` takes. */
@@ -1081,6 +1102,35 @@ export async function agentMessages(
   fromByte?: number,
 ): Promise<AgentTranscript> {
   return invoke<AgentTranscript>("agent_messages", { thread, agent, fromByte });
+}
+
+/**
+ * Files touched by subagents for this thread.
+ *
+ * If `agentId` is supplied, scans that specific subagent's transcript.
+ * Otherwise, scans all subagent transcripts in the session's artifacts directory.
+ */
+const inFlightSubagentFileChanges = new Map<string, Promise<SubagentFileChange[]>>();
+
+export async function subagentFileChanges(
+  thread: string,
+  agentId?: string | null,
+): Promise<SubagentFileChange[]> {
+  const key = `${thread}::${agentId ?? ""}`;
+  const existing = inFlightSubagentFileChanges.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const promise = invoke<SubagentFileChange[]>("subagent_file_changes", {
+    thread,
+    agentId: agentId ?? null,
+  }).finally(() => {
+    inFlightSubagentFileChanges.delete(key);
+  });
+
+  inFlightSubagentFileChanges.set(key, promise);
+  return promise;
 }
 
 /** Every broker-owned process the engine is supervising. */
