@@ -25,8 +25,8 @@ use crate::agents;
 use crate::dto::{
     ActivitySnapshot, AgentSnapshot, AgentTranscript, ArtifactSnapshot, BranchTarget, BrokerScope,
     CommandSnapshot, ImageIn, IndexStatus, LaunchContext, ModelCatalogue, ParkedAgent,
-    ProjectSnapshot, RowPatch, RowSnapshot, SearchHit, SessionStatus, SessionSummaryDto,
-    SidebarSnapshot, TerminalSnapshot, ThreadAgents, ThreadSnapshot, TodoPhaseInput,
+    ProjectSnapshot, RowSnapshot, SearchHit, SessionStatus, SessionSummaryDto, SidebarSnapshot,
+    SubagentFileChange, TerminalSnapshot, ThreadAgents, ThreadSnapshot, TodoPhaseInput,
     TodoPhaseSnapshot, UiAnswer, UiRequestSnapshot, WorkspaceEntry,
 };
 use crate::favourites::Favourites;
@@ -413,100 +413,21 @@ pub async fn follow_up(
     .await
 }
 
-/// Recycles the thread's underlying sidecar process.
-///
-/// Used when stopping a turn that has in-flight subagents: because subagents
-/// run inside the sidecar process tree, shutting down the sidecar process guarantees
-/// that 100% of subagents and background worker tasks terminate immediately.
-/// The session is then re-opened using its persisted session file on disk,
-/// smoothly restoring the conversation with an empty/clean subagents roster.
-pub async fn recycle_thread_sidecar(
-    app: &AppHandle,
-    state: &AppState,
-    thread: &str,
-    live: &Arc<LiveSession>,
-) -> Result<Arc<LiveSession>, String> {
-    let session_file = match live.session_file() {
-        Some(file) => file,
-        None => {
-            let _ = app.emit(
-                crate::dto::AGENTS_EVENT,
-                session::tagged(thread, Vec::<AgentSnapshot>::new()),
-            );
-            return Ok(Arc::clone(live));
-        }
-    };
-    let workspace = live.workspace.clone();
-    let approval_mode = live.approval_mode.clone();
-
-    // The registry loses the thread before its sidecar is stopped: a command arriving
-    // mid-restart is refused rather than written to a pipe that is going away.
-    state
-        .threads
-        .remove_if_same(thread, live)
-        .ok_or_else(|| "the session changed while recycling".to_string())?;
-
-    live.shutdown(SHUTDOWN_GRACE).await;
-
-    let mut spec = SidecarSpec::omp(&workspace).resuming(&session_file);
-    if let Some(mode) = &approval_mode {
-        spec = spec.with_approval_mode(mode);
-    }
-    let tried = spec.program.display().to_string();
-    let roster: Arc<dyn Roster> = state.threads.clone();
-    let next = session::open(&spec, ClientOptions::default(), app.clone(), roster)
-        .await
-        .map_err(|error| format!("{error}\n  tried: {tried}"))?;
-
-    let restored_rows = next.rows()?;
-    state.threads.insert(Arc::clone(&next));
-    state.threads.publish(app);
-
-    // Notify the frontend of the clean restored rows and empty agent roster
-    let _ = app.emit(
-        crate::dto::ROWS_EVENT,
-        session::tagged(
-            thread,
-            RowPatch {
-                from: 0,
-                rows: restored_rows,
-            },
-        ),
-    );
-    let _ = app.emit(
-        crate::dto::AGENTS_EVENT,
-        session::tagged(thread, Vec::<AgentSnapshot>::new()),
-    );
-    let _ = app.emit(
-        crate::dto::ACTIVITY_EVENT,
-        session::tagged(
-            thread,
-            ActivitySnapshot {
-                kind: "agent_end".to_string(),
-                sequence: 0,
-            },
-        ),
-    );
-
-    Ok(next)
-}
-
 /// Stop the turn in flight.
 ///
 /// Goes through the session rather than straight to `abort` because a run parked on
 /// an approval has to be refused before it can be stopped — `LiveSession::stop_turn`
 /// carries the measurement behind that.
-///
-/// When the session has active subagents in flight, this also recycles the sidecar
-/// process to ensure all background worker tasks and subagents are terminated immediately.
 #[tauri::command]
 pub async fn stop_turn(
     app: AppHandle,
     state: State<'_, AppState>,
     thread: String,
 ) -> Result<(), String> {
-    let live = thread_of(&state, &thread)?;
-    let has_subagents = live.has_active_agents();
+    let live = match thread_of(&state, &thread) {
+        Ok(live) => live,
+        Err(_) => return Ok(()),
+    };
 
     if live.abort_active_agents() {
         let snapshots: Vec<AgentSnapshot> =
@@ -517,24 +438,29 @@ pub async fn stop_turn(
         );
     }
 
-    if has_subagents {
-        let _ = tokio::time::timeout(Duration::from_millis(1000), live.stop_turn()).await;
-        recycle_thread_sidecar(&app, &state, &thread, &live).await?;
-    } else {
-        let stop_result = live.stop_turn().await;
-        stop_result?;
-        // Give the sidecar a brief window to settle and flip is_streaming
-        let start = std::time::Instant::now();
-        while start.elapsed() < Duration::from_millis(1500) {
-            if let Ok(st) = live.status() {
-                if !st.control.is_streaming {
-                    break;
-                }
+    let stop_result = live.stop_turn().await;
+    stop_result?;
+    // Give the sidecar a brief window to settle and flip is_streaming
+    let start = std::time::Instant::now();
+    while start.elapsed() < Duration::from_millis(1500) {
+        if let Ok(st) = live.status() {
+            if !st.control.is_streaming {
+                break;
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        let _ = live.reread_control().await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
+    let _ = live.reread_control().await;
+    let _ = app.emit(
+        crate::dto::ACTIVITY_EVENT,
+        session::tagged(
+            &thread,
+            ActivitySnapshot {
+                kind: "agent_end".to_string(),
+                sequence: 0,
+            },
+        ),
+    );
 
     Ok(())
 }
@@ -549,16 +475,16 @@ pub async fn stop_turn_and_send(
     images: Option<Vec<ImageIn>>,
 ) -> Result<(), String> {
     let live = thread_of(&state, &thread)?;
-    let has_subagents = live.has_active_agents();
-    live.abort_active_agents();
-
-    if has_subagents {
-        let _ = tokio::time::timeout(Duration::from_millis(1000), live.stop_turn()).await;
-        let next = recycle_thread_sidecar(&app, &state, &thread, &live).await?;
-        session::prompt(next, message, &wire_images(images)).await
-    } else {
-        live.stop_turn_and_send(message, &wire_images(images)).await
+    if live.abort_active_agents() {
+        let snapshots: Vec<AgentSnapshot> =
+            live.agents().await.iter().map(agent_snapshot).collect();
+        let _ = app.emit(
+            crate::dto::AGENTS_EVENT,
+            session::tagged(&thread, snapshots),
+        );
     }
+
+    live.stop_turn_and_send(message, &wire_images(images)).await
 }
 
 /// The wire images for a command, in the order the composer attached them.
@@ -1110,6 +1036,20 @@ pub async fn agent_messages(
     })
 }
 
+/// Every file touched by subagents for this thread.
+///
+/// If `agent_id` is supplied, only that subagent's changes are returned.
+/// Otherwise, all subagents in the session's artifacts directory are scanned.
+#[tauri::command]
+pub async fn subagent_file_changes(
+    state: State<'_, AppState>,
+    thread: String,
+    agent_id: Option<String>,
+) -> Result<Vec<SubagentFileChange>, String> {
+    let session_file = thread_session_file(&state, &thread).await?;
+    scan(move || agents::subagent_file_changes(&session_file, agent_id.as_deref())).await
+}
+
 /// Every broker-owned process the engine is supervising (`docs/12` §9)
 ///
 /// `omp ps` is the only supported way to see or stop these, and it runs with the app's own
@@ -1286,21 +1226,19 @@ pub struct LaunchState {
 /// Close one thread, letting its engine finish cleanly.
 ///
 /// The registry loses the thread before its sidecar is stopped, so a command that races
-/// the close is refused instead of being written to a pipe that is going away — and so is
-/// a second close of the same row, which is the correct answer for a stale click.
+/// the close is refused instead of being written to a pipe that is going away.
+/// A second close of the same row is an idempotent no-op so a stale click or race
+/// does not pop up a spurious error.
 #[tauri::command]
 pub async fn close_thread(
     app: AppHandle,
     state: State<'_, AppState>,
     thread: String,
 ) -> Result<(), String> {
-    let live = state
-        .threads
-        .remove(&thread)
-        .ok_or_else(|| format!("no live thread {thread}"))?;
-
-    live.shutdown(SHUTDOWN_GRACE).await;
-    state.threads.publish(&app);
+    if let Some(live) = state.threads.remove(&thread) {
+        live.shutdown(SHUTDOWN_GRACE).await;
+        state.threads.publish(&app);
+    }
 
     Ok(())
 }
@@ -1934,5 +1872,6 @@ mod tests {
     fn threads_returns_empty_when_no_sessions_are_live() {
         let registry = Arc::new(Threads::default());
         assert!(registry.snapshots().is_empty());
+        assert!(registry.remove("unknown").is_none());
     }
 }

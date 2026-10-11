@@ -55,7 +55,7 @@ import {
   parkedAgents,
   type ParkedAgent,
 } from "./bridge";
-import { activeCount, agentInFlight, buildChatSubagents, type ChatSubagent } from "./lib/agents";
+import { activeCount, agentInFlight, buildChatSubagents, tabAgentLabel as resolveTabAgentLabel, type ChatSubagent } from "./lib/agents";
 import { readAppTheme, setAppTheme, type AppTheme } from "./lib/appTheme";
 import { applyChrome, chromeFor, draftTarget, type ThreadChrome } from "./lib/chrome";
 import {
@@ -180,12 +180,8 @@ const currentChatSubagents = computed<ChatSubagent[]>(() => {
   return buildChatSubagents(thread, live, parked, history, activeRows.value, agentSpawnTimes.value);
 });
 
-function tabAgentLabel(thread: string, id: string): string {
-  const agent = tabAgent(thread, id);
-  if (agent?.agent) return agent.agent;
-  const subagent = currentChatSubagents.value.find((s) => s.id === id);
-  if (subagent?.name) return subagent.name;
-  return id;
+function tabAgentLabel(_thread: string, id: string): string {
+  return resolveTabAgentLabel(currentChatSubagents.value, id);
 }
 
 function closeAgentTab(thread: string, id: string): void {
@@ -1007,7 +1003,9 @@ async function onActionRefresh(): Promise<void> {
   await refresh();
   // The active thread's own view is asked too: a handoff moves the context ring without
   // adding a row, and nothing else would re-read the status for it.
-  await activeView.value?.reload();
+  if (activeId.value && live.value.some((t) => t.id === activeId.value)) {
+    await activeView.value?.reload();
+  }
 }
 
 /** A fork answered with a session the catalogue has never seen. */

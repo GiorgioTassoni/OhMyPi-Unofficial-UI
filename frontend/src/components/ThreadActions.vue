@@ -149,7 +149,12 @@ async function act(action: MenuAction): Promise<void> {
       }
       case "stop":
         busy.value = true;
-        await closeThread(id);
+        try {
+          await closeThread(id);
+        } catch (cause) {
+          const msg = describe(cause);
+          if (!msg.includes("no live thread")) throw cause;
+        }
         emit("refresh");
         return;
       case "delete":
@@ -211,7 +216,12 @@ async function remove(): Promise<void> {
   busy.value = true;
   try {
     if (context.live) {
-      await closeThread(id);
+      try {
+        await closeThread(id);
+      } catch (cause) {
+        const msg = describe(cause);
+        if (!msg.includes("no live thread")) throw cause;
+      }
     }
     if (context.session !== null) {
       await deleteSession(id);

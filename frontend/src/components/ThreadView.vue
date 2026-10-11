@@ -33,6 +33,7 @@ import {
   type UiRequestSnapshot,
 } from "../bridge";
 import { applyRowPatch } from "../lib/rows";
+import { isNoLiveThreadError } from "../lib/threads";
 import type { ThreadChrome } from "../lib/chrome";
 import { jumpTarget } from "../lib/search";
 import { type ChipRow } from "../lib/chips";
@@ -149,6 +150,9 @@ async function refreshSubagentFileChanges(): Promise<void> {
 
 /** A reset discards measurements; a patch retains the untouched turn prefix. */
 function replaceTranscript(next: RowSnapshot[]): void {
+  if (next.length === 0 && rows.value.length > 0) {
+    return;
+  }
   rows.value = next;
   projection.value = initialProjection(next, streaming.value);
   measuredHeights.value = new Map();
@@ -194,16 +198,28 @@ onMounted(async () => {
   // Read rather than wait for an event: extensions push dialogs and the engine pushes its
   // command list at startup, before this window can hear either.
   try {
-    status.value = await threadStatus(props.thread);
-    replaceTranscript(await readTranscript(props.thread));
+    status.value = await threadStatus(props.thread).catch((cause) => {
+      if (isNoLiveThread(cause)) return null;
+      throw cause;
+    });
+    const initialRows = await readTranscript(props.thread).catch((cause) => {
+      if (isNoLiveThread(cause)) return [];
+      throw cause;
+    });
+    replaceTranscript(initialRows);
     // A resumed conversation is rendered above the composer; open at its latest
     // message, after Vue has put the restored rows into the scroll container.
     await nextTick();
     if (props.active) scrollToLatest();
-    dialogs.value = await readUiRequests(props.thread);
+    dialogs.value = await readUiRequests(props.thread).catch((cause) => {
+      if (isNoLiveThread(cause)) return [];
+      throw cause;
+    });
     commands.value = await availableCommands(props.thread).catch(() => []);
   } catch (cause) {
-    emit("failed", describe(cause));
+    if (!isNoLiveThread(cause)) {
+      emit("failed", describe(cause));
+    }
   }
 });
 
@@ -252,6 +268,12 @@ async function refreshStatus(): Promise<void> {
   try {
     status.value = await threadStatus(props.thread);
   } catch (cause) {
+    if (isNoLiveThread(cause)) {
+      if (status.value?.control) {
+        status.value.control.isStreaming = false;
+      }
+      return;
+    }
     emit("failed", describe(cause));
   }
 }
@@ -269,7 +291,9 @@ async function onChanged(): Promise<void> {
     replaceTranscript(await readTranscript(props.thread));
     activity.value = [];
   } catch (cause) {
-    emit("failed", describe(cause));
+    if (!isNoLiveThread(cause)) {
+      emit("failed", describe(cause));
+    }
   }
 }
 
@@ -280,6 +304,10 @@ function describe(cause: unknown): string {
     : cause instanceof Error
       ? cause.message
       : String(cause);
+}
+
+function isNoLiveThread(cause: unknown): boolean {
+  return isNoLiveThreadError(cause);
 }
 
 /**
@@ -349,10 +377,21 @@ watch(waitingForOutput, (waiting) => {
  */
 async function reload(): Promise<void> {
   try {
-    status.value = await threadStatus(props.thread);
-    replaceTranscript(await readTranscript(props.thread));
+    status.value = await threadStatus(props.thread).catch((cause) => {
+      if (isNoLiveThread(cause)) return null;
+      throw cause;
+    });
+    const refreshed = await readTranscript(props.thread).catch((cause) => {
+      if (isNoLiveThread(cause)) return null;
+      throw cause;
+    });
+    if (refreshed !== null) {
+      replaceTranscript(refreshed);
+    }
   } catch (cause) {
-    emit("failed", describe(cause));
+    if (!isNoLiveThread(cause)) {
+      emit("failed", describe(cause));
+    }
   }
 }
 

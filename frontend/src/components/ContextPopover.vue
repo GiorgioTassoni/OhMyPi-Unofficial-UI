@@ -31,6 +31,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: "close"): void;
   (event: "failed", message: string): void;
+  (event: "changed"): void;
 }>();
 
 const instructions = ref("");
@@ -58,6 +59,7 @@ async function toggle(): Promise<void> {
   busy.value = "toggle";
   try {
     await setAutoCompaction(props.thread, !props.autoCompaction);
+    emit("changed");
   } catch (cause) {
     emit("failed", describe(cause));
   } finally {
@@ -75,6 +77,7 @@ async function compact(): Promise<void> {
     const text = instructions.value.trim();
     await compactSession(props.thread, text === "" ? null : text);
     instructions.value = "";
+    emit("changed");
   } catch (cause) {
     emit("failed", describe(cause));
   } finally {
@@ -146,7 +149,7 @@ function describe(cause: unknown): string {
         class="w-full rounded-[6px] bg-accent px-2.5 py-1 text-[12px] font-medium text-canvas disabled:opacity-40"
         @click="compact"
       >
-        {{ props.compacting ? "compacting…" : busy === "compact" ? "asking…" : "compact now" }}
+        {{ props.compacting || busy === "compact" ? "compacting…" : "compact now" }}
       </button>
     </div>
   </div>

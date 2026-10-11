@@ -8,9 +8,18 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { artifacts, changedFiles, fileReview, relativeTo, taskRow, turnFileSummaries } from "./panel";
+import {
+  artifacts,
+  changedFiles,
+  fileReview,
+  mergeSubagentFileSummaries,
+  mergeSubagentTurnFiles,
+  relativeTo,
+  taskRow,
+  turnFileSummaries,
+} from "./panel";
 import { row } from "./rows.fixture";
-import type { ToolSnapshot } from "../bridge";
+import type { SubagentFileChange, ToolSnapshot } from "../bridge";
 
 function tool(extra: Partial<ToolSnapshot> = {}): ToolSnapshot {
   return {
@@ -27,6 +36,15 @@ function tool(extra: Partial<ToolSnapshot> = {}): ToolSnapshot {
 }
 
 describe("the changed files", () => {
+  test("previews and no-op edits are not changes, but resolved AST applications are", () => {
+    const files = changedFiles([
+      row({ tool: tool({ toolName: "ast_edit", args: '{"path":"preview.py"}', details: '{"applied":false,"fileReplacements":[{"path":"preview.py","count":1}]}' }) }),
+      row({ tool: tool({ args: '{"path":"same.py"}', details: '{"path":"same.py","oldText":"same","newText":"same","diff":" context"}' }) }),
+      row({ tool: tool({ args: '{"path":"empty.py"}', details: '{"op":"update","path":"empty.py","diff":""}' }) }),
+      row({ tool: tool({ toolName: "resolve", details: '{"action":"apply","sourceToolName":"ast_edit","sourceResultDetails":{"applied":true,"fileReplacements":[{"path":"applied.py","count":1}]}}' }) }),
+    ]);
+    expect(files.map((file) => file.path)).toEqual(["applied.py"]);
+  });
   test("a write then two edits is one file, written, with the latest diff", () => {
     const files = changedFiles([
       row({
@@ -322,5 +340,167 @@ describe("shortening a path", () => {
     // `/application` is not inside `/app`, which a prefix test without the separator would miss.
     expect(relativeTo("/application/a.ts", "/app")).toBe("/application/a.ts");
     expect(relativeTo("/app/a.ts", null)).toBe("/app/a.ts");
+  });
+});
+
+describe("subagent file changes integration", () => {
+  const subagentChange: SubagentFileChange = {
+    agentId: "sub-1",
+    agentName: "coder",
+    path: "/app/sub.ts",
+    kind: "edited",
+    diff: "@@ -1 +1,2 @@\n-old\n+new 1\n+new 2",
+    linesAdded: 2,
+    linesRemoved: 1,
+    touches: 1,
+  };
+
+  test("mergeSubagentTurnFiles creates a summary when no base exists", () => {
+    const summary = mergeSubagentTurnFiles(undefined, 3, [subagentChange], 1);
+    expect(summary.after).toBe(3);
+    expect(summary.files.length).toBe(1);
+    expect(summary.files[0]).toEqual({
+      path: "/app/sub.ts",
+      kind: "edited",
+      touches: 1,
+      diff: "@@ -1 +1,2 @@\n-old\n+new 1\n+new 2",
+      row: 1,
+      lines: { added: 2, removed: 1 },
+      agentName: "coder",
+      agentId: "sub-1",
+    });
+    expect(summary.lines).toEqual({ added: 2, removed: 1 });
+    expect(summary.changes).toEqual([
+      { row: 1, paths: ["/app/sub.ts"], diff: "@@ -1 +1,2 @@\n-old\n+new 1\n+new 2" },
+    ]);
+  });
+
+  test("mergeSubagentTurnFiles merges into existing turn summary", () => {
+    const baseSummary = {
+      after: 3,
+      files: [
+        {
+          path: "/app/main.ts",
+          kind: "written" as const,
+          touches: 1,
+          diff: null,
+          row: 2,
+          lines: null,
+        },
+      ],
+      changes: [{ row: 2, paths: ["/app/main.ts"], diff: null }],
+      lines: null,
+    };
+
+    const summary = mergeSubagentTurnFiles(baseSummary, 3, [subagentChange], 1);
+    expect(summary.files.length).toBe(2);
+    expect(summary.files.map((f) => f.path)).toEqual(["/app/main.ts", "/app/sub.ts"]);
+    expect(summary.files[1].agentName).toBe("coder");
+  });
+
+  test("mergeSubagentTurnFiles aggregates when main agent and subagent touch same file", () => {
+    const baseSummary = {
+      after: 3,
+      files: [
+        {
+          path: "/app/sub.ts",
+          kind: "edited" as const,
+          touches: 1,
+          diff: "@@ -1 +1 @@\n-a\n+b",
+          row: 2,
+          lines: { added: 1, removed: 1 },
+        },
+      ],
+      changes: [{ row: 2, paths: ["/app/sub.ts"], diff: "@@ -1 +1 @@\n-a\n+b" }],
+      lines: { added: 1, removed: 1 },
+    };
+
+    const summary = mergeSubagentTurnFiles(baseSummary, 3, [subagentChange], 1);
+    expect(summary.files.length).toBe(1);
+    expect(summary.files[0].touches).toBe(2);
+    expect(summary.files[0].lines).toEqual({ added: 3, removed: 2 });
+    expect(summary.files[0].agentName).toBe("coder");
+    expect(summary.changes.length).toBe(2);
+  });
+
+  test("mergeSubagentFileSummaries merges changes for turns that spawned agents", () => {
+    const baseSummaries = new Map();
+    const turns = [
+      {
+        start: 0,
+        end: 2,
+        user: null,
+        answer: null,
+        items: [],
+        notices: [],
+        spawnedAgents: ["sub-1"],
+        working: false,
+        durationMs: null,
+      },
+    ];
+    const rows = [
+      row({
+        tool: tool({
+          toolName: "task",
+          details: '{"progress":[{"id":"sub-1","agent":"coder"}]}',
+        }),
+      }),
+    ];
+
+    const merged = mergeSubagentFileSummaries(baseSummaries, turns, rows, [subagentChange]);
+    expect(merged.has(2)).toBe(true);
+    const summary = merged.get(2)!;
+    expect(summary.files[0].path).toBe("/app/sub.ts");
+    expect(summary.files[0].agentName).toBe("coder");
+  });
+
+  test("mergeSubagentFileSummaries skips turns that are still working", () => {
+    const baseSummaries = new Map();
+    const turns = [
+      {
+        start: 0,
+        end: 2,
+        user: null,
+        answer: null,
+        items: [],
+        notices: [],
+        spawnedAgents: ["sub-1"],
+        working: true,
+        durationMs: null,
+      },
+    ];
+    const rows = [
+      row({
+        tool: tool({
+          toolName: "task",
+          details: '{"progress":[{"id":"sub-1","agent":"coder"}]}',
+        }),
+      }),
+    ];
+
+    const merged = mergeSubagentFileSummaries(baseSummaries, turns, rows, [subagentChange]);
+    expect(merged.has(2)).toBe(false);
+  });
+
+  test("mergeSubagentTurnFiles rejects 'task' agentName and falls back to agentId", () => {
+    const changeWithTask: SubagentFileChange = {
+      agentId: "DatabaseCallerCutover",
+      agentName: "task",
+      path: "/app/service.py",
+      kind: "edited",
+      diff: "@@ -1 +1 @@\n-a\n+b",
+      linesAdded: 1,
+      linesRemoved: 1,
+      touches: 1,
+    };
+
+    const summary = mergeSubagentTurnFiles(undefined, 3, [changeWithTask], 1);
+    expect(summary.files[0].agentName).toBe("DatabaseCallerCutover");
+  });
+
+  test("relativeTo resolves sibling workspace paths with leading ..", () => {
+    const root = "/home/GioViale/Projects/Python/Zephyr/app";
+    const path = "/home/GioViale/Projects/Python/Zephyr/website/docs/files/index.md";
+    expect(relativeTo(path, root)).toBe("../website/docs/files/index.md");
   });
 });

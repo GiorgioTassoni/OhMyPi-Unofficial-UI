@@ -297,7 +297,8 @@ pub struct RowSnapshot {
     /// Empty for every row that is not a message with attachments.
     pub attachments: Vec<AttachmentSnapshot>,
     /// The engine's own type for a message the app did not write: `async-result` for a
-    /// background job's delivered result (`docs/12` §9). `None` for ordinary messages.
+    /// background job's delivered result (`docs/12` §9). Maintenance notices carry their
+    /// lifecycle kind here (for example `manual_compaction_end`). `None` for ordinary messages.
     pub custom_type: Option<String>,
     /// The jobs this row accounts for — a delivery's, and empty for everything else.
     pub jobs: Vec<JobDeliverySnapshot>,
@@ -777,6 +778,20 @@ pub struct AgentTranscript {
     /// Where the page came from: the engine, or the file the engine would not read.
     pub source: String,
     pub rows: Vec<RowSnapshot>,
+}
+
+/// A file modified by a subagent during a session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentFileChange {
+    pub agent_id: String,
+    pub agent_name: String,
+    pub path: String,
+    pub kind: String,
+    pub diff: Option<String>,
+    pub lines_added: usize,
+    pub lines_removed: usize,
+    pub touches: usize,
 }
 
 /// One broker scope from `omp ps --json`.

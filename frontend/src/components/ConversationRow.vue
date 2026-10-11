@@ -16,6 +16,8 @@ import ToolCard from "./ToolCard.vue";
 import { describeBytes } from "../lib/attachments";
 import { displayMessage } from "../lib/attachedText";
 import { systemNotice } from "../lib/systemNotice";
+import { agentMessage } from "../lib/agentMessage";
+import AgentMessageCard from "./AgentMessageCard.vue";
 import { isSystemReminder as checkSystemReminder } from "../lib/turnActivity";
 
 const props = withDefaults(
@@ -33,6 +35,7 @@ const emit = defineEmits<{ (event: "failed", message: string): void }>();
 const isSystemReminder = computed(() => checkSystemReminder(props.row.text));
 const isNotice = computed(() => props.row.role.startsWith("notice:"));
 const agentNotice = computed(() => systemNotice(props.row));
+const ircMessage = computed(() => agentMessage(props.row));
 const userMessage = computed(() => displayMessage(props.row.text));
 /** `notice:warning` reads as `warning`; the level is the line's tint. */
 const level = computed(() => (isNotice.value ? props.row.role.slice(7) : ""));
@@ -81,9 +84,10 @@ function source(attachment: AttachmentSnapshot): string {
 </script>
 
 <template>
+  <AgentMessageCard v-if="ircMessage" :message="ircMessage" @failed="emit('failed', $event)" />
   <!-- A delivery sent to the agent is distinct from both its answer and app status. -->
   <details
-    v-if="agentNotice && !isSystemReminder"
+    v-else-if="agentNotice && !isSystemReminder"
     class="group/system my-1 min-w-0 overflow-hidden rounded-[9px] border border-line/60 bg-raised/35"
   >
     <summary class="flex min-w-0 cursor-pointer list-none items-center gap-2 px-3 py-2 text-[12px] text-dim select-none hover:bg-raised/55 [&::-webkit-details-marker]:hidden">

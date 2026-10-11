@@ -2472,6 +2472,7 @@ name = "omp-desktop"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "gtk",
  "libc",
  "omp-session",
  "omp-settings",

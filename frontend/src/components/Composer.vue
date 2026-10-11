@@ -42,6 +42,8 @@ import {
   type Attachment,
 } from "../lib/attachments";
 import { readImage } from "../lib/image-encode";
+import { pasteImages } from "../lib/image-paste";
+import { clipboardImage } from "../bridge";
 import { readTextAttachment } from "../lib/text-attachment";
 import { type ChipRow } from "../lib/chips";
 import AttachmentStrip from "./AttachmentStrip.vue";
@@ -276,22 +278,13 @@ async function onPaste(event: ClipboardEvent): Promise<void> {
     return;
   }
 
-  const images = Array.from(event.clipboardData?.items ?? [])
-    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-    .flatMap((item) => {
-      const file = item.getAsFile();
-      return file === null ? [] : [file];
-    });
-
-  if (images.length === 0) {
-    // Ordinary text: the text area's own paste, untouched. Only a clipboard that
-    // brought an image is intercepted, so nothing about typing changes.
-    return;
-  }
-
-  event.preventDefault();
-  for (const image of images) {
-    await attachImage(image, "pasted image");
+  readingFiles.value = true;
+  try {
+    await pasteImages(event, clipboardImage, (image) => attachImage(image, "pasted image"));
+  } catch (cause) {
+    refusal.value = cause instanceof Error ? cause.message : String(cause);
+  } finally {
+    readingFiles.value = false;
   }
 }
 
@@ -533,7 +526,10 @@ async function stop(): Promise<void> {
     await stopTurn(props.thread);
     emit("changed");
   } catch (cause) {
-    emit("failed", String(cause));
+    const msg = String(cause);
+    if (!msg.includes("no live thread")) {
+      emit("failed", msg);
+    }
   } finally {
     stopping.value = false;
   }

@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { displayName, dotFor, projectName, sidebarModel } from "./threads";
+import { displayName, dotFor, isNoLiveThreadError, projectName, sidebarModel } from "./threads";
 import type { SessionSummary, ThreadSnapshot } from "../bridge";
 
 const NOW = 1_700_000_000_000;
@@ -296,3 +296,16 @@ describe("suspended", () => {
     expect(groups[0]?.threads[0]?.suspended).toBe(false);
   });
 });
+
+describe("isNoLiveThreadError", () => {
+  test("identifies backend no live thread error messages", () => {
+    expect(isNoLiveThreadError("no live thread 01a11b34-4d52-7480-b84f-7609b3aae13f")).toBe(true);
+    expect(isNoLiveThreadError(new Error("no live thread 01a11b34-4d52-7480-b84f-7609b3aae13f"))).toBe(true);
+  });
+
+  test("does not match other errors", () => {
+    expect(isNoLiveThreadError("network timeout")).toBe(false);
+    expect(isNoLiveThreadError(new Error("failed to spawn sidecar"))).toBe(false);
+  });
+});
+

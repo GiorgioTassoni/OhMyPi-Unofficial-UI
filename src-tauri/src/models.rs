@@ -477,7 +477,53 @@ pub async fn set_auto_compaction(live: &LiveSession, enabled: bool) -> Result<()
 
 /// Compact now, with the popover's optional free-text instructions.
 pub async fn compact(live: &LiveSession, instructions: Option<&str>) -> Result<(), String> {
-    send(live, commands::compact(instructions), "compaction").await
+    let client = live
+        .client()
+        .ok_or_else(|| "the session is shutting down".to_string())?;
+    {
+        let mut control = live
+            .control
+            .lock()
+            .map_err(|_| "the control state lock was poisoned")?;
+        let mut transcript = live
+            .transcript
+            .lock()
+            .map_err(|_| "the transcript lock was poisoned")?;
+        if control.is_compacting {
+            return Err("a compaction is already running".to_string());
+        }
+        control.is_compacting = true;
+        transcript.apply_maintenance("info", "Compacting context…", "manual_compaction_start");
+    }
+    // This response waits for a model-generated summary, unlike prompt's immediate
+    // acknowledgement. The default command-acceptance timeout is too short.
+    let result = session::call(
+        &client,
+        commands::compact(instructions),
+        Some(Duration::from_secs(600)),
+        "compaction",
+    )
+    .await
+    .map(|_| ());
+    if let Ok(mut control) = live.control.lock() {
+        control.is_compacting = false;
+    }
+    if let Err(error) = live.reread_control().await {
+        eprintln!("[omp-desktop] could not refresh state after compaction: {error}");
+    }
+    if let Ok(mut transcript) = live.transcript.lock() {
+        match &result {
+            Ok(()) => {
+                transcript.apply_maintenance("info", "Context compacted", "manual_compaction_end")
+            }
+            Err(error) => transcript.apply_maintenance(
+                "error",
+                &format!("Compaction failed: {error}"),
+                "manual_compaction_end",
+            ),
+        }
+    }
+    result
 }
 
 /// Send one chip-row command and leave the control snapshot current.

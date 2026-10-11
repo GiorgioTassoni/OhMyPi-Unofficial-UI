@@ -126,8 +126,8 @@ impl SessionControl {
     ///
     /// `true` means an event invalidated something this snapshot does not carry
     /// — currently `model_changed` and `config_warnings_changed`, which are
-    /// pure notifications, and the end of a `todo` tool call, whose result is the
-    /// plan. The caller should re-read `get_state`; ignoring the return value is the
+    /// pure notifications, compaction completion, and the end of a `todo` tool call.
+    /// The caller should re-read `get_state`; ignoring the return value is the
     /// one way to end up showing a stale model chip or a plan the engine has moved on
     /// from.
     pub fn apply(&mut self, event: &SessionEvent) -> bool {
@@ -142,7 +142,11 @@ impl SessionControl {
                 }
             }
             SessionEvent::AutoCompactionStart(_) => self.is_compacting = true,
-            SessionEvent::AutoCompactionEnd(_) => self.is_compacting = false,
+            SessionEvent::AutoCompactionEnd(_) => {
+                self.is_compacting = false;
+                // The event carries the outcome, not the remaining prompt's token count.
+                return true;
+            }
             // There is no todo *event* — the engine's stream carries `todo_reminder`
             // and `todo_auto_clear` and nothing else — so the end of a tool call is the
             // only thing on the wire that says the plan moved. That result does carry

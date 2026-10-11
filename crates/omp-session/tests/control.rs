@@ -148,6 +148,22 @@ fn streaming_and_compaction_flags_track_their_events() {
 }
 
 #[test]
+fn compaction_completion_requests_fresh_context_usage() {
+    let mut control = SessionControl::decode(&state()).expect("decode");
+    control.apply(&SessionEvent::decode(&json!({
+        "type": "auto_compaction_start", "reason": "threshold", "action": "context-full"
+    })));
+    let stale = control.apply(&SessionEvent::decode(&json!({
+        "type": "auto_compaction_end", "action": "context-full", "aborted": false, "willRetry": false
+    })));
+    assert!(!control.is_compacting);
+    assert!(
+        stale,
+        "the end event has no post-compaction usage; re-read get_state"
+    );
+}
+
+#[test]
 fn payloadless_notifications_ask_for_a_refresh_instead_of_guessing() {
     // `model_changed` says *something* changed but not what. Inventing a model
     // name would be worse than re-reading state.

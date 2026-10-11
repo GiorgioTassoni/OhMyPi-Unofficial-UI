@@ -268,3 +268,21 @@ function compare(a: ThreadRow, b: ThreadRow): number {
 function newest(rows: ThreadRow[]): number {
   return rows.reduce((latest, row) => Math.max(latest, row.modifiedAt), 0);
 }
+
+/**
+ * Whether an error indicates that the sidecar process for a thread is not currently running.
+ *
+ * During thread shutdown, sidecar restart, or after stopping a thread, backend IPC commands
+ * that require a live process answer with `no live thread <id>`. This is normal lifecycle state,
+ * not an unexpected error that should be surfaced as a user-facing failure.
+ */
+export function isNoLiveThreadError(cause: unknown): boolean {
+  if (typeof cause === "string") {
+    return cause.includes("no live thread");
+  }
+  if (cause instanceof Error) {
+    return cause.message.includes("no live thread");
+  }
+  return String(cause).includes("no live thread");
+}
+

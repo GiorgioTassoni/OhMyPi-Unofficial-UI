@@ -29,6 +29,7 @@ import {
   tokens,
   tone,
   buildChatSubagents,
+  tabAgentLabel,
 } from "./agents";
 
 /** A live roster row, as `get_subagents` and the frames describe one. */
@@ -552,5 +553,38 @@ describe("buildChatSubagents", () => {
     expect(subagents[0].id).toBe("agent-stopped");
     expect(subagents[0].running).toBe(false);
     expect(subagents[0].status).toBe("completed");
+  });
+});
+
+describe("tabAgentLabel", () => {
+  test("uses the agent name rather than the generic agent type (e.g. task)", () => {
+    const thread = "thread-1";
+    const liveAgent = agent({
+      id: "RenderEngine",
+      agent: "task",
+      status: "running",
+    });
+    const subagents = buildChatSubagents(thread, [liveAgent], []);
+    expect(tabAgentLabel(subagents, "RenderEngine")).toBe("RenderEngine");
+  });
+
+  test("uses the advisor slug when the agent is an advisor", () => {
+    const thread = "thread-1";
+    const advisorAgent: ParkedAgent = {
+      id: "advisor-1",
+      path: "/sessions/sess/advisor-1.jsonl",
+      bytes: 500,
+      modifiedMs: 2_000,
+      cwd: "/tmp",
+      parent: null,
+      advisor: true,
+      advisorSlug: "reviewer",
+    };
+    const subagents = buildChatSubagents(thread, [], [advisorAgent]);
+    expect(tabAgentLabel(subagents, "advisor-1")).toBe("advisor (reviewer)");
+  });
+
+  test("falls back to the agent id when the agent is not in the subagents list", () => {
+    expect(tabAgentLabel([], "CustomWorker")).toBe("CustomWorker");
   });
 });

@@ -385,6 +385,11 @@ impl Transcript {
         self.notice("info", text.to_string(), "command_output", None);
     }
 
+    /// Maintenance initiated by the host, whose command has no lifecycle events.
+    pub fn apply_maintenance(&mut self, level: &str, text: &str, kind: &str) {
+        self.notice(level, text.to_string(), kind, None);
+    }
+
     /// A failure the host itself saw, as an error notice row.
     ///
     /// Two callers need it, and both are facts the *engine* cannot report: a sidecar that

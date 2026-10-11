@@ -419,6 +419,13 @@ export interface ChatSubagent {
   hasTranscript: boolean;
 }
 
+/** Friendly label for an agent tab, showing the agent's name rather than its generic type. */
+export function tabAgentLabel(subagents: readonly ChatSubagent[], id: string): string {
+  const subagent = subagents.find((s) => s.id === id);
+  if (subagent?.name && subagent.name !== "task") return subagent.name;
+  return id;
+}
+
 /** Extracts spawn timestamp and index for agents mentioned in tool calls. */
 export function spawnTimesFromRows(rows: RowSnapshot[] = []): Map<string, { timestamp: number; index: number }> {
   const result = new Map<string, { timestamp: number; index: number }>();
@@ -510,11 +517,12 @@ export function buildChatSubagents(
           ? "completed"
           : (h.status as "completed" | "failed" | "aborted") || existing?.status || "completed");
     const spawnedAt = existing?.spawnedAt ?? resolveSpawnedAt(h.id, h.index ?? 0, h.createdAtMs || h.lastUpdateMs || 0);
+    const name = existing?.name || (h.agent && h.agent !== "task" && h.id.startsWith("agent-") ? h.agent : (h.id || h.agent));
     map.set(h.id, {
       id: h.id,
       index: h.index ?? existing?.index ?? 0,
       thread,
-      name: h.agent || existing?.name || h.id,
+      name,
       status,
       running,
       spawnedAt,
@@ -536,11 +544,12 @@ export function buildChatSubagents(
           ? "completed"
           : (a.status as "completed" | "failed" | "aborted") || existing?.status || "completed");
     const spawnedAt = existing?.spawnedAt ?? resolveSpawnedAt(a.id, a.index ?? 0, a.createdAtMs || a.lastUpdateMs || 0);
+    const name = existing?.name || (a.agent && a.agent !== "task" && a.id.startsWith("agent-") ? a.agent : (a.id || a.agent));
     map.set(a.id, {
       id: a.id,
       index: a.index ?? existing?.index ?? 0,
       thread,
-      name: a.agent || existing?.name || a.id,
+      name,
       status,
       running,
       spawnedAt,

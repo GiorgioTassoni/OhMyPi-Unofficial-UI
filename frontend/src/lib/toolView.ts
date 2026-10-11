@@ -89,11 +89,18 @@ export interface TouchedFile {
  * answers "what did this session change".
  */
 export function touchedFiles(tool: ToolSnapshot): TouchedFile[] {
+  const details = parseObject(tool.details);
+  if (tool.toolName === "resolve") {
+    if (details?.action !== "apply" || typeof details.sourceToolName !== "string" || !MUTATING_TOOLS.has(details.sourceToolName) || !details.sourceResultDetails) return [];
+    return touchedFiles({ ...tool, toolName: details.sourceToolName, args: "", details: JSON.stringify(details.sourceResultDetails) });
+  }
   if (!MUTATING_TOOLS.has(tool.toolName)) return [];
 
   const kind = FILE_TOOLS.has(tool.toolName) ? "written" : "edited";
-  const details = parseObject(tool.details);
   if (details !== null) {
+    if (details.applied === false || details.totalReplacements === 0) return [];
+    if (typeof details.oldText === "string" && typeof details.newText === "string" && details.oldText === details.newText) return [];
+    if (details.op === "update" && typeof details.diff === "string" && !details.diff.split("\n").some((line) => /^[+-]/.test(line) && !/^(?:\+\+\+|---) /.test(line))) return [];
     const paths = pathsIn(details, tool.toolName);
     if (paths.length > 0) return paths.map((path) => ({ path, kind }));
   }

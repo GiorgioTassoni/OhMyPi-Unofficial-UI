@@ -11,6 +11,19 @@ function call(toolName: string, args: string, details = "", extra: Partial<ToolS
 }
 
 describe("conversation turn activity", () => {
+  test("compaction receipts stay visible outside collapsed tool activity", () => {
+    const receipt = row({ role: "notice:info", text: "Context compacted", customType: "manual_compaction_end" });
+    const turns = conversationTurns([
+      row({ role: "user", text: "check" }),
+      call("read", '{"path":"one.ts"}'),
+      said("done"),
+      receipt,
+    ], false);
+    expect(turns[0].notices?.map((entry) => entry.row)).toEqual([receipt]);
+    expect(turns[0].items.some((item) => item.kind === "row" && item.entry.row === receipt)).toBe(false);
+    expect(turns[0].answer?.row.text).toBe("done");
+  });
+
   test("keeps each answer outside the grouped work and uses real timestamps", () => {
     const rows = [
       row({ role: "user", text: "please check", timestamp: 1_000 }),

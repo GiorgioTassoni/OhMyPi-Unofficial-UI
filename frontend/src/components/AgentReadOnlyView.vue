@@ -12,7 +12,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ failed: [message: string] }>();
 
-const displayName = computed(() => props.agent?.agent || props.agentName || props.agentId);
+const displayName = computed(() => props.agentName || props.agentId || props.agent?.agent);
 const statusDisplay = computed(() => {
   if (props.agent?.status) {
     if (props.agent.status === "running" || props.agent.status === "pending") {
@@ -73,6 +73,7 @@ onUnmounted(() => { if (polling !== null) clearInterval(polling); });
       <div class="mx-auto flex max-w-[760px] flex-wrap items-center gap-x-3 gap-y-1">
         <span class="text-[13px] font-medium text-fg">{{ displayName }}</span>
         <span class="text-[11px] text-dim">{{ statusDisplay }}</span>
+        <span v-if="agent?.agent && agent.agent !== displayName && agent.agent !== 'task'" class="rounded bg-raised px-1.5 py-0.5 font-mono text-[10.5px] text-dim">{{ agent.agent }}</span>
         <span v-if="agent?.progress?.resolvedModel" class="font-mono text-[11px] text-faint">{{ agent.progress.resolvedModel }}</span>
         <span class="ml-auto text-[11px] text-faint">Read-only</span>
       </div>

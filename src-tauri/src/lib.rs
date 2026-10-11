@@ -35,6 +35,7 @@
 
 pub mod agents;
 pub mod bridge;
+pub mod clipboard;
 pub mod dialogs;
 pub mod dto;
 pub mod external;
@@ -157,6 +158,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            clipboard::clipboard_image,
             bridge::open_thread,
             bridge::close_thread,
             bridge::threads,
@@ -206,6 +208,7 @@ pub fn run() {
             bridge::agents,
             bridge::parked_agents,
             bridge::agent_messages,
+            bridge::subagent_file_changes,
             bridge::broker_processes,
             bridge::stop_broker_process,
             bridge::terminals,

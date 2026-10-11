@@ -11,7 +11,8 @@
  * it is rather than presenting itself as a complete diff of the working tree.
  */
 
-import type { RowSnapshot, ToolSnapshot } from "../bridge";
+import type { RowSnapshot, SubagentFileChange, ToolSnapshot } from "../bridge";
+import type { ConversationTurn } from "./turnActivity";
 import { parseObject, touchedFiles, toolView } from "./toolView";
 import { batchReviewPiece, orderedReviewPieces, type ReviewPiece } from "./reviewDiff";
 
@@ -31,6 +32,9 @@ export interface ChangedFile {
   diff: string | null;
   /** Index into the transcript's rows: where the last touch was recorded. */
   row: number;
+  /** The subagent that touched the file, if attributable to one. */
+  agentName?: string | undefined;
+  agentId?: string | undefined;
 }
 
 /**
@@ -184,6 +188,144 @@ export function turnFileSummaries(rows: RowSnapshot[], streaming: boolean): Turn
   return summaries;
 }
 
+/** Find the row index of the task tool call that spawned the given agent id. */
+export function findTaskRowForAgent(
+  rows: RowSnapshot[],
+  start: number,
+  end: number,
+  agentId: string,
+): number {
+  for (let i = start; i <= end && i < rows.length; i++) {
+    const tool = rows[i]?.tool;
+    if (tool?.toolName === "task") {
+      const details = parseObject(tool.details);
+      const progress = details?.progress;
+      if (Array.isArray(progress)) {
+        for (const item of progress) {
+          if (item && typeof item === "object" && (item as Record<string, unknown>).id === agentId) {
+            return i;
+          }
+        }
+      }
+    }
+  }
+  return -1;
+}
+
+/** Merge subagent file mutations into a turn's file summary. */
+export function mergeSubagentTurnFiles(
+  base: TurnFileSummary | undefined,
+  turnEnd: number,
+  subagentChanges: SubagentFileChange[],
+  defaultRowOrResolver: number | ((agentId: string) => number) = -1,
+): TurnFileSummary {
+  const byPath = new Map<string, TurnChangedFile>();
+  const changes = base ? [...base.changes] : [];
+
+  if (base) {
+    for (const file of base.files) {
+      byPath.set(file.path, { ...file });
+    }
+  }
+
+  for (const sc of subagentChanges) {
+    const scAgentName = sc.agentName && sc.agentName !== "task"
+      ? sc.agentName
+      : (sc.agentId && sc.agentId !== "task" ? sc.agentId : undefined);
+    const existing = byPath.get(sc.path);
+    const scLines = sc.diff ? { added: sc.linesAdded, removed: sc.linesRemoved } : null;
+    const row = typeof defaultRowOrResolver === "function"
+      ? defaultRowOrResolver(sc.agentId)
+      : defaultRowOrResolver;
+
+    if (existing) {
+      existing.touches += sc.touches;
+      if (sc.kind === "written") existing.kind = "written";
+      if (!existing.diff && sc.diff) existing.diff = sc.diff;
+      if (existing.lines !== null && scLines !== null) {
+        existing.lines = {
+          added: existing.lines.added + scLines.added,
+          removed: existing.lines.removed + scLines.removed,
+        };
+      } else {
+        existing.lines = null;
+      }
+      if (!existing.agentName) {
+        existing.agentName = scAgentName;
+      } else if (scAgentName && !existing.agentName.includes(scAgentName)) {
+        existing.agentName = `${existing.agentName}, ${scAgentName}`;
+      }
+    } else {
+      byPath.set(sc.path, {
+        path: sc.path,
+        kind: sc.kind,
+        touches: sc.touches,
+        diff: sc.diff,
+        row,
+        lines: scLines,
+        agentName: scAgentName,
+        agentId: sc.agentId,
+      });
+    }
+
+    changes.push({
+      row,
+      paths: [sc.path],
+      diff: sc.diff,
+    });
+  }
+
+  const files = [...byPath.values()];
+  const allCounted = files.every((f) => f.lines !== null);
+  const lines = allCounted
+    ? files.reduce(
+        (sum, f) => ({
+          added: sum.added + (f.lines?.added ?? 0),
+          removed: sum.removed + (f.lines?.removed ?? 0),
+        }),
+        { added: 0, removed: 0 },
+      )
+    : null;
+
+  return {
+    after: turnEnd,
+    files,
+    changes,
+    lines,
+  };
+}
+
+/** Merge subagent file changes across all turns. */
+export function mergeSubagentFileSummaries(
+  baseSummaries: Map<number, TurnFileSummary>,
+  turns: ConversationTurn[],
+  rows: RowSnapshot[],
+  subagentChanges: SubagentFileChange[],
+): Map<number, TurnFileSummary> {
+  const result = new Map<number, TurnFileSummary>(baseSummaries);
+  if (subagentChanges.length === 0) return result;
+
+  for (const turn of turns) {
+    if (turn.working) continue;
+    if (turn.spawnedAgents.length === 0) continue;
+
+    const turnChanges = subagentChanges.filter((sc) =>
+      turn.spawnedAgents.includes(sc.agentId),
+    );
+    if (turnChanges.length === 0) continue;
+
+    const rowResolver = (agentId: string) => {
+      const taskRow = findTaskRowForAgent(rows, turn.start, turn.end, agentId);
+      return taskRow >= 0 ? taskRow : turn.start;
+    };
+    const base = baseSummaries.get(turn.end);
+    const merged = mergeSubagentTurnFiles(base, turn.end, turnChanges, rowResolver);
+    result.set(turn.end, merged);
+  }
+
+  return result;
+}
+
 /** Keep counts honest: a joined batch diff or a whole-file write has no per-file line total. */
 function changedFilesInTurn(rows: RowSnapshot[]): TurnChangedFile[] {
   const counts = new Map<string, { added: number; removed: number } | null>();
@@ -290,7 +432,21 @@ export function formatBytes(bytes: number): string {
 export function relativeTo(path: string, root: string | null): string {
   if (root === null || root === "") return path;
   const base = root.endsWith("/") ? root : `${root}/`;
-  return path.startsWith(base) ? path.slice(base.length) : path;
+  if (path.startsWith(base)) return path.slice(base.length);
+
+  // If path is outside root, check if they share a common project/parent folder (e.g. sibling folders)
+  const rootParts = root.split("/").filter(Boolean);
+  const pathParts = path.split("/").filter(Boolean);
+  let common = 0;
+  while (common < rootParts.length && common < pathParts.length && rootParts[common] === pathParts[common]) {
+    common++;
+  }
+  if (common >= 2 && rootParts.length - common <= 2) {
+    const up = "../".repeat(rootParts.length - common);
+    return `${up}${pathParts.slice(common).join("/")}`;
+  }
+
+  return path;
 }
 
 /** The engine's own unified diff for a call, when the tool reported one. */

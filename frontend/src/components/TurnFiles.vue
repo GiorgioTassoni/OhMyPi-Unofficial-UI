@@ -58,8 +58,15 @@ function toggleFile(path: string): void {
           :aria-expanded="openFiles.includes(file.path)"
           @click="toggleFile(file.path)"
         >
-          <span class="min-w-0 flex-1 truncate font-mono text-[11.5px] text-dim">
-            {{ relativeTo(file.path, props.workspace) }}
+          <span class="min-w-0 flex-1 flex items-center gap-1.5 truncate font-mono text-[11.5px] text-dim">
+            <span class="truncate">{{ relativeTo(file.path, props.workspace) }}</span>
+            <span
+              v-if="file.agentName && file.agentName !== 'task'"
+              class="shrink-0 rounded bg-raised px-1 py-0.5 text-[10px] text-accent font-sans"
+              :title="`Changed by subagent ${file.agentName}`"
+            >
+              {{ file.agentName }}
+            </span>
           </span>
           <span v-if="file.lines" class="shrink-0 font-mono text-[10.5px]">
             <span class="text-ok">+{{ file.lines.added }}</span>
@@ -79,15 +86,16 @@ function toggleFile(path: string): void {
           </p>
           <div v-if="reviews.get(file.path)?.withoutDiff.length" class="flex flex-wrap items-center gap-1.5 px-3 py-2 text-[11px] text-faint">
             <span>Some changes have no displayable diff:</span>
-            <button
-              v-for="row in reviews.get(file.path)?.withoutDiff"
-              :key="row"
-              type="button"
-              class="rounded-[5px] px-1.5 py-0.5 text-dim hover:bg-raised hover:text-fg"
-              @click="emit('jump', row)"
-            >
-              view tool call
-            </button>
+            <template v-for="row in reviews.get(file.path)?.withoutDiff" :key="row">
+              <button
+                v-if="row >= 0"
+                type="button"
+                class="rounded-[5px] px-1.5 py-0.5 text-dim hover:bg-raised hover:text-fg"
+                @click="emit('jump', row)"
+              >
+                view tool call
+              </button>
+            </template>
           </div>
         </div>
       </div>

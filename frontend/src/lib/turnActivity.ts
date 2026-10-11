@@ -20,6 +20,8 @@ export interface ConversationTurn {
   user: IndexedRow | null;
   answer: IndexedRow | null;
   items: ActivityItem[];
+  /** Maintenance receipts are visible even when tool activity is collapsed. */
+  notices: IndexedRow[];
   /** Confirmed spawns recorded in task tool details, kept visible when work is collapsed. */
   spawnedAgents: string[];
   working: boolean;
@@ -89,7 +91,10 @@ function turn(segment: IndexedRow[], working: boolean, jobNames: ReadonlyMap<str
   const user = segment.find(({ row }) => row.role === "user" && !isSystemReminder(row.text)) ?? null;
   const lastTool = segment.reduce((last, entry) => entry.row.role === "tool" ? entry.index : last, -1);
   const answer = [...segment].reverse().find(({ row, index }) => row.role === "assistant" && row.customType === null && !!row.text && index > lastTool) ?? null;
-  const activity = segment.filter((entry) => entry !== user && entry !== answer);
+  const compactionNotice = (entry: IndexedRow): boolean => entry.row.role.startsWith("notice:")
+    && ["auto_compaction_start", "auto_compaction_end", "manual_compaction_start", "manual_compaction_end"].includes(entry.row.customType ?? "");
+  const notices = segment.filter((entry) => compactionNotice(entry) && entry.row.customType?.endsWith("_end"));
+  const activity = segment.filter((entry) => entry !== user && entry !== answer && !compactionNotice(entry));
   const items: ActivityItem[] = [];
   let runKind: GroupKind = "other";
   let runRows: IndexedRow[] = [];
@@ -145,7 +150,7 @@ function turn(segment: IndexedRow[], working: boolean, jobNames: ReadonlyMap<str
   const durationMs = !working && typeof startTime === "number" && Number.isFinite(startTime)
     && typeof endTime === "number" && Number.isFinite(endTime) && endTime >= startTime
     ? endTime - startTime : null;
-  return { start: segment[0].index, end: segment[segment.length - 1].index, user, answer, items, spawnedAgents: [...spawnedAgents], working, durationMs };
+  return { start: segment[0].index, end: segment[segment.length - 1].index, user, answer, items, notices, spawnedAgents: [...spawnedAgents], working, durationMs };
 }
 
 function turnsFrom(rows: RowSnapshot[], streaming: boolean, start: number): ConversationTurn[] {
