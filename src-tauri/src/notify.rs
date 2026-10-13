@@ -418,6 +418,7 @@ mod tests {
             title: title.to_string(),
             message: String::new(),
             options: vec!["Approve".to_string(), "Deny".to_string()],
+            option_details: Vec::new(),
             prefill: None,
             placeholder: None,
             timeout_ms: None,

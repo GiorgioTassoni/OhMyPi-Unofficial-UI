@@ -690,6 +690,14 @@ pub mod ui {
         }
     }
 
+    /// Details accompanying an option in a `select` dialog.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+    #[serde(rename_all = "camelCase")]
+    pub struct UiOptionDetail {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub description: Option<String>,
+    }
+
     /// A dialog the engine is waiting on.
     #[derive(Debug, Clone, PartialEq)]
     pub struct UiRequest {
@@ -700,6 +708,8 @@ pub mod ui {
         pub message: String,
         /// `select` labels, in presentation order.
         pub options: Vec<String>,
+        /// Optional per-option details (such as description) matching `options` by index.
+        pub option_details: Vec<UiOptionDetail>,
         /// The starting text of an `editor`; `None` for the other kinds.
         pub prefill: Option<String>,
         /// The hint shown inside an `input`'s empty field.
@@ -742,22 +752,14 @@ pub mod ui {
         }
 
         let kind = UiRequestKind::from_method(method)?;
+        let (options, option_details) = decode_options(frame);
         Some(Incoming::Request(UiRequest {
             id: frame.get("id").and_then(Value::as_str)?.to_string(),
             kind,
             title: text(frame, "title"),
             message: text(frame, "message"),
-            options: frame
-                .get("options")
-                .and_then(Value::as_array)
-                .map(|options| {
-                    options
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(ToString::to_string)
-                        .collect()
-                })
-                .unwrap_or_default(),
+            options,
+            option_details,
             prefill: frame
                 .get("prefill")
                 .and_then(Value::as_str)
@@ -768,6 +770,87 @@ pub mod ui {
                 .map(ToString::to_string),
             timeout_ms: frame.get("timeout").and_then(Value::as_u64),
         }))
+    }
+
+    fn decode_options(frame: &Value) -> (Vec<String>, Vec<UiOptionDetail>) {
+        let mut labels = Vec::new();
+        let mut details = Vec::new();
+
+        if let Some(options_array) = frame.get("options").and_then(Value::as_array) {
+            for item in options_array {
+                match item {
+                    Value::String(s) => {
+                        labels.push(s.clone());
+                        details.push(UiOptionDetail { description: None });
+                    }
+                    Value::Object(map) => {
+                        let label = map
+                            .get("label")
+                            .or_else(|| map.get("text"))
+                            .or_else(|| map.get("value"))
+                            .or_else(|| map.get("name"))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string();
+                        let description = map
+                            .get("description")
+                            .or_else(|| map.get("desc"))
+                            .or_else(|| map.get("hint"))
+                            .and_then(Value::as_str)
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty());
+                        labels.push(label);
+                        details.push(UiOptionDetail { description });
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let option_details_val = frame
+            .get("optionDetails")
+            .or_else(|| frame.get("option_details"))
+            .or_else(|| frame.get("optionDescriptions"))
+            .or_else(|| frame.get("option_descriptions"));
+
+        if let Some(details_array) = option_details_val.and_then(Value::as_array) {
+            for (i, item) in details_array.iter().enumerate() {
+                let desc = match item {
+                    Value::Object(map) => map
+                        .get("description")
+                        .or_else(|| map.get("desc"))
+                        .or_else(|| map.get("hint"))
+                        .and_then(Value::as_str)
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty()),
+                    Value::String(s) => {
+                        let trimmed = s.trim();
+                        if !trimmed.is_empty() {
+                            Some(trimmed.to_string())
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(desc) = desc {
+                    if i < details.len() {
+                        details[i].description = Some(desc);
+                    } else if i < labels.len() {
+                        while details.len() <= i {
+                            details.push(UiOptionDetail { description: None });
+                        }
+                        details[i].description = Some(desc);
+                    }
+                }
+            }
+        }
+
+        while details.len() < labels.len() {
+            details.push(UiOptionDetail { description: None });
+        }
+
+        (labels, details)
     }
 
     fn text(frame: &Value, key: &str) -> String {
@@ -1292,5 +1375,59 @@ mod tests {
         assert_eq!(request.timeout_ms, Some(600_000));
         assert_eq!(request.kind, ui::UiRequestKind::Input);
         assert_eq!(request.placeholder.as_deref(), Some("feature/"));
+    }
+
+    #[test]
+    fn a_select_dialog_decodes_options_and_descriptions() {
+        // Frame with optionDetails
+        let frame = json!({
+            "type": "extension_ui_request",
+            "id": "ui_8",
+            "method": "select",
+            "title": "What next?",
+            "options": ["First", "Second", "Third"],
+            "optionDetails": [
+                { "description": "Details for first" },
+                { "description": "Details for second" }
+            ]
+        });
+
+        let Some(ui::Incoming::Request(request)) = ui::decode(&frame) else {
+            panic!("must decode select dialog");
+        };
+        assert_eq!(request.options, vec!["First", "Second", "Third"]);
+        assert_eq!(
+            request.option_details,
+            vec![
+                ui::UiOptionDetail {
+                    description: Some("Details for first".to_string())
+                },
+                ui::UiOptionDetail {
+                    description: Some("Details for second".to_string())
+                },
+                ui::UiOptionDetail { description: None },
+            ]
+        );
+
+        // Frame with objects in options
+        let obj_frame = json!({
+            "type": "extension_ui_request",
+            "id": "ui_9",
+            "method": "select",
+            "title": "Pick one",
+            "options": [
+                { "label": "Batch 1", "description": "Run batch 1" },
+                { "text": "Batch 2" }
+            ]
+        });
+        let Some(ui::Incoming::Request(obj_req)) = ui::decode(&obj_frame) else {
+            panic!("must decode select dialog with objects");
+        };
+        assert_eq!(obj_req.options, vec!["Batch 1", "Batch 2"]);
+        assert_eq!(
+            obj_req.option_details[0].description.as_deref(),
+            Some("Run batch 1")
+        );
+        assert_eq!(obj_req.option_details[1].description, None);
     }
 }

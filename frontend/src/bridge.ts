@@ -151,6 +151,11 @@ export interface ActivitySnapshot {
   sequence: number;
 }
 
+/** Mirrors `dto::UiOptionDetail`. */
+export interface UiOptionDetail {
+  description?: string | null;
+}
+
 /** Mirrors `dto::UiRequestSnapshot`. */
 export interface UiRequestSnapshot {
   id: string;
@@ -159,6 +164,7 @@ export interface UiRequestSnapshot {
   title: string;
   message: string;
   options: string[];
+  optionDetails?: UiOptionDetail[];
   prefill: string | null;
   placeholder: string | null;
   timeoutMs: number | null;
@@ -648,8 +654,11 @@ export async function exportHtml(thread: string): Promise<string> {
 }
 
 /** Open the native OS folder picker dialog and return the selected directory path, or null if cancelled. */
-export async function pickDirectory(title?: string): Promise<string | null> {
-  return invoke<string | null>("pick_directory", { title: title ?? null });
+export async function pickDirectory(title?: string, defaultPath?: string): Promise<string | null> {
+  return invoke<string | null>("pick_directory", {
+    title: title ?? null,
+    defaultPath: defaultPath ?? null,
+  });
 }
 
 /** Open a file or directory in the user's default application, under the host's allowlist. */

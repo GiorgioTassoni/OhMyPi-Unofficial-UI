@@ -215,6 +215,14 @@ pub struct SubcommandSnapshot {
     pub description: Option<String>,
 }
 
+/// Details accompanying an option in a `select` dialog.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UiOptionDetail {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
 /// A dialog the agent is waiting on, flattened for the frontend.
 ///
 /// `kind` is the wire method (`select`, `confirm`, `input`, `editor`) as a plain
@@ -233,6 +241,8 @@ pub struct UiRequestSnapshot {
     pub message: String,
     /// `select` labels, in the engine's presentation order.
     pub options: Vec<String>,
+    /// `select` option details matching `options` by index.
+    pub option_details: Vec<UiOptionDetail>,
     pub prefill: Option<String>,
     /// The hint shown inside an `input`'s empty field.
     pub placeholder: Option<String>,

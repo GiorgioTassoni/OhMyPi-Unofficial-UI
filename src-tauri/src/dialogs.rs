@@ -186,6 +186,13 @@ fn snapshots(pending: &UiRequests) -> Vec<UiRequestSnapshot> {
             title: request.title.clone(),
             message: request.message.clone(),
             options: request.options.clone(),
+            option_details: request
+                .option_details
+                .iter()
+                .map(|detail| crate::dto::UiOptionDetail {
+                    description: detail.description.clone(),
+                })
+                .collect(),
             prefill: request.prefill.clone(),
             placeholder: request.placeholder.clone(),
             timeout_ms: request.timeout_ms,

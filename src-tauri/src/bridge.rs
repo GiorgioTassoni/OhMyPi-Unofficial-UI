@@ -1347,14 +1347,64 @@ pub async fn delete_session(state: State<'_, AppState>, id: String) -> Result<()
     .await
 }
 
+/// Resolve the starting directory for the native folder picker.
+///
+/// If an explicit directory is provided and exists, use it. Otherwise, default
+/// to the user's home directory (e.g. `/home/<user>` on Fedora/Linux,
+/// `%USERPROFILE%` on Windows), falling back to the current working directory.
+pub fn default_start_directory(requested: Option<&str>) -> Option<std::path::PathBuf> {
+    if let Some(path_str) = requested {
+        let trimmed = path_str.trim();
+        if !trimmed.is_empty() {
+            let p = std::path::PathBuf::from(trimmed);
+            if p.is_dir() {
+                return Some(p);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+            if home.is_dir() {
+                return Some(home);
+            }
+        }
+        if let Ok(user) = std::env::var("USER") {
+            let candidate = std::path::PathBuf::from(format!("/home/{user}"));
+            if candidate.is_dir() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(profile) = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from) {
+            if profile.is_dir() {
+                return Some(profile);
+            }
+        }
+    }
+
+    std::env::current_dir().ok().filter(|p| p.is_dir())
+}
+
 /// Open the OS native folder picker dialog and return the selected path, or None if cancelled.
 ///
 /// On KDE Plasma, delegates directly to `kdialog` to show the user's default Dolphin folder
 /// navigator with their native bookmarks and Plasma theme.
+///
+/// Starts navigation at `default_path` if given and existing, or defaults to the user's
+/// home directory (`$HOME` / `%USERPROFILE%`).
 #[tauri::command]
-pub async fn pick_directory(title: Option<String>) -> Result<Option<String>, String> {
+pub async fn pick_directory(
+    title: Option<String>,
+    default_path: Option<String>,
+) -> Result<Option<String>, String> {
     scan(move || {
         let title_str = title.unwrap_or_else(|| "Open Project Folder".to_string());
+        let start_dir = default_start_directory(default_path.as_deref());
 
         #[cfg(target_os = "linux")]
         {
@@ -1362,28 +1412,40 @@ pub async fn pick_directory(title: Option<String>) -> Result<Option<String>, Str
                 .map(|d| d.to_uppercase().contains("KDE"))
                 .unwrap_or(false);
 
-            if is_kde {
-                if let Ok(output) = std::process::Command::new("kdialog")
-                    .arg("--title")
-                    .arg(&title_str)
-                    .arg("--getexistingdirectory")
-                    .output()
-                {
-                    if output.status.success() {
-                        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                        if !path.is_empty() {
-                            return Ok(Some(path));
-                        }
-                    }
-                    return Ok(None);
+            let run_kdialog = || {
+                let mut cmd = std::process::Command::new("kdialog");
+                cmd.arg("--title").arg(&title_str);
+                cmd.arg("--getexistingdirectory");
+                if let Some(ref start) = start_dir {
+                    cmd.arg(start);
                 }
-            }
+                cmd.output()
+            };
 
-            if let Ok(output) = std::process::Command::new("zenity")
-                .args(["--file-selection", "--directory"])
-                .arg(format!("--title={title_str}"))
-                .output()
-            {
+            let run_zenity = || {
+                let mut cmd = std::process::Command::new("zenity");
+                cmd.args(["--file-selection", "--directory"]);
+                cmd.arg(format!("--title={title_str}"));
+                if let Some(ref start) = start_dir {
+                    let mut s = start.to_string_lossy().to_string();
+                    if !s.ends_with('/') {
+                        s.push('/');
+                    }
+                    cmd.arg(format!("--filename={s}"));
+                }
+                cmd.output()
+            };
+
+            let primary = if is_kde { run_kdialog() } else { run_zenity() };
+            let outcome = match primary {
+                Ok(output) => Some(output),
+                Err(_) => {
+                    let fallback = if is_kde { run_zenity() } else { run_kdialog() };
+                    fallback.ok()
+                }
+            };
+
+            if let Some(output) = outcome {
                 if output.status.success() {
                     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     if !path.is_empty() {
@@ -1392,11 +1454,24 @@ pub async fn pick_directory(title: Option<String>) -> Result<Option<String>, Str
                 }
                 return Ok(None);
             }
+
+            return Err("no native folder dialog found (kdialog or zenity required)".to_string());
         }
 
         #[cfg(target_os = "macos")]
         {
-            let script = format!("POSIX path of (choose folder with prompt \"{}\")", title_str);
+            let script = if let Some(ref start) = start_dir {
+                format!(
+                    "POSIX path of (choose folder with prompt \"{}\" default location POSIX file \"{}\")",
+                    title_str.replace('\"', "\\\""),
+                    start.to_string_lossy().replace('\"', "\\\"")
+                )
+            } else {
+                format!(
+                    "POSIX path of (choose folder with prompt \"{}\")",
+                    title_str.replace('\"', "\\\"")
+                )
+            };
             if let Ok(output) = std::process::Command::new("osascript")
                 .args(["-e", &script])
                 .output()
@@ -1409,13 +1484,19 @@ pub async fn pick_directory(title: Option<String>) -> Result<Option<String>, Str
                 }
                 return Ok(None);
             }
+            return Err("native folder dialog failed via osascript".to_string());
         }
 
         #[cfg(target_os = "windows")]
         {
+            let initial = start_dir
+                .as_ref()
+                .map(|p| format!("$f.SelectedPath = '{}';", p.to_string_lossy().replace('\'', "''")))
+                .unwrap_or_default();
             let script = format!(
-                "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = '{}'; if ($f.ShowDialog() -eq 'OK') {{ $f.SelectedPath }}",
-                title_str
+                "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = '{}'; {} if ($f.ShowDialog() -eq 'OK') {{ $f.SelectedPath }}",
+                title_str.replace('\'', "''"),
+                initial
             );
             if let Ok(output) = std::process::Command::new("powershell")
                 .args(["-NoProfile", "-Command", &script])
@@ -1429,8 +1510,10 @@ pub async fn pick_directory(title: Option<String>) -> Result<Option<String>, Str
                 }
                 return Ok(None);
             }
+            return Err("native folder dialog failed via powershell".to_string());
         }
 
+        #[allow(unreachable_code)]
         Ok(None)
     })
     .await
@@ -1873,5 +1956,19 @@ mod tests {
         let registry = Arc::new(Threads::default());
         assert!(registry.snapshots().is_empty());
         assert!(registry.remove("unknown").is_none());
+    }
+
+    #[test]
+    fn default_start_directory_resolves_valid_requested_or_default_home() {
+        let temp = std::env::temp_dir();
+        assert_eq!(default_start_directory(temp.to_str()), Some(temp));
+
+        let fallback = default_start_directory(Some("/path/that/does/not/exist/definitely"));
+        assert!(fallback.is_some());
+        assert!(fallback.unwrap().is_dir());
+
+        let default_dir = default_start_directory(None);
+        assert!(default_dir.is_some());
+        assert!(default_dir.unwrap().is_dir());
     }
 }

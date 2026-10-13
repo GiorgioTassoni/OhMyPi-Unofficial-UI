@@ -79,9 +79,11 @@ function submitDirectory(): void {
   if (path !== "") emit("open", path);
 }
 
-async function chooseDirectory(): Promise<void> {
+async function chooseDirectory(preferredPath?: string | Event): Promise<void> {
   try {
-    const path = await pickDirectory("Open Project");
+    const raw = typeof preferredPath === "string" ? preferredPath : "";
+    const candidate = raw.trim() || typed.value.trim() || undefined;
+    const path = await pickDirectory("Open Project", candidate);
     if (path) {
       adding.value = false;
       typed.value = "";
@@ -276,7 +278,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
           class="grid h-5 w-5 shrink-0 place-items-center rounded text-faint hover:bg-surface hover:text-fg"
           title="browse folders…"
           type="button"
-          @mousedown.prevent="chooseDirectory"
+          @mousedown.prevent="chooseDirectory(typed)"
         >
           <Icon name="folder-open" class="h-3.5 w-3.5" />
         </button>

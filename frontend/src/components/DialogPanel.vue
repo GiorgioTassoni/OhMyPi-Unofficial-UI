@@ -237,6 +237,11 @@ async function allowCommandForConversation(
   await answer(dialog, { value: APPROVE });
 }
 
+function optionDescription(dialog: UiRequestSnapshot, index: number): string | null {
+  const desc = dialog.optionDetails?.[index]?.description?.trim();
+  return desc && desc.length > 0 ? desc : null;
+}
+
 /** Tauri rejects with a plain string, and a thrown `Error` would stringify badly. */
 function describe(cause: unknown): string {
   return typeof cause === "string"
@@ -388,13 +393,24 @@ function describe(cause: unknown): string {
 
         <div v-if="card.dialog.kind === 'select'" class="mt-3 flex flex-col gap-1.5">
           <button
-            v-for="option in card.dialog.options"
-            :key="option"
-            class="group flex items-center gap-2.5 rounded-[8px] border border-line-strong/50 bg-surface/60 px-3.5 py-2 text-left text-[12.5px] text-fg transition-all hover:border-accent/70 hover:bg-raised hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            v-for="(option, optIndex) in card.dialog.options"
+            :key="`${option}_${optIndex}`"
+            class="group flex items-start gap-2.5 rounded-[8px] border border-line-strong/50 bg-surface/60 px-3.5 py-2.5 text-left text-[12.5px] text-fg transition-all hover:border-accent/70 hover:bg-raised hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             @click="answer(card.dialog, { value: option })"
           >
-            <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-faint/60 transition-colors group-hover:bg-accent" />
-            <span class="flex-1 leading-snug">{{ option }}</span>
+            <span
+              class="h-1.5 w-1.5 shrink-0 rounded-full bg-faint/60 transition-colors group-hover:bg-accent"
+              :class="optionDescription(card.dialog, optIndex) ? 'mt-1.5' : 'mt-1'"
+            />
+            <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span class="leading-snug text-fg">{{ option }}</span>
+              <span
+                v-if="optionDescription(card.dialog, optIndex)"
+                class="text-[11.5px] leading-relaxed text-dim transition-colors whitespace-pre-wrap group-hover:text-fg/80"
+              >
+                {{ optionDescription(card.dialog, optIndex) }}
+              </span>
+            </div>
           </button>
         </div>
 
