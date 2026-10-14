@@ -225,7 +225,13 @@ function describe(cause: unknown): string {
     </Popover>
 
     <!-- Effort: the session's thinking level. -->
-    <Popover :open="openChip === 'effort'" label="effort" :width="300" @close="openChip = null">
+    <Popover
+      :open="openChip === 'effort'"
+      label="effort"
+      :width="320"
+      :hide-header="true"
+      @close="openChip = null"
+    >
       <template #trigger>
         <button type="button" :class="CHIP" @click="toggle('effort')">
           {{ effortLabel(props.thinkingLevel) }}
@@ -238,6 +244,7 @@ function describe(cause: unknown): string {
         :level="props.thinkingLevel"
         :model="currentModel"
         @close="openChip = null"
+        @changed="emit('changed')"
         @failed="emit('failed', $event)"
       />
     </Popover>

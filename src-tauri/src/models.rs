@@ -208,7 +208,11 @@ impl Catalogue {
 
         match serde_json::from_str::<Cached>(&text) {
             Ok(cached) => {
-                cache.options = cached.options;
+                cache.options = cached
+                    .options
+                    .into_iter()
+                    .map(normalize_model_option)
+                    .collect();
                 cache.fetched_at = cached.fetched_at;
             }
             Err(error) => eprintln!(
@@ -345,12 +349,14 @@ pub fn parse(response: &Value) -> Result<Vec<ModelOption>, String> {
 pub fn option(row: &Value) -> Option<ModelOption> {
     let id = string(row, "id")?;
     let provider = string(row, "provider")?;
-    let reasoning = row
+    let raw_reasoning = row
         .get("reasoning")
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    let efforts = efforts(row, reasoning);
+    let raw_efforts = efforts(row, raw_reasoning);
+    let (reasoning, efforts) =
+        normalize_reasoning_and_efforts(Some(row), &id, raw_reasoning, raw_efforts);
     let default_effort = thinking_object(row).and_then(|block| string(block, "defaultLevel"));
 
     Some(ModelOption {
@@ -422,6 +428,123 @@ fn efforts(row: &Value, reasoning: bool) -> Vec<String> {
     } else {
         Vec::new()
     }
+}
+
+/// Whether this model is known to support thinking / reasoning even if
+/// the upstream aggregator omitted the root `reasoning` or `thinking` block.
+pub fn is_known_reasoning_model(id: &str) -> bool {
+    let lower = id.to_ascii_lowercase();
+
+    // Claude reasoning models:
+    // Claude 3.7 Sonnet, Claude 4.x, Claude 5.x (Haiku 4.5/5.5, Sonnet, Opus, Fable)
+    if lower.contains("claude-") || lower.contains("anthropic") {
+        if is_legacy_non_reasoning_model(&lower) {
+            return false;
+        }
+        if lower.contains("haiku-5")
+            || lower.contains("haiku-4")
+            || lower.contains("sonnet-5")
+            || lower.contains("sonnet-4")
+            || lower.contains("sonnet-3-7")
+            || lower.contains("sonnet-3.7")
+            || lower.contains("opus-5")
+            || lower.contains("opus-4")
+            || lower.contains("fable")
+        {
+            return true;
+        }
+    }
+
+    // OpenAI o-series: o1, o3, o4
+    if lower.contains("o1") || lower.contains("o3") || lower.contains("o4") {
+        return true;
+    }
+
+    // DeepSeek R1 / reasoner models
+    if lower.contains("deepseek-r1") || lower.contains("reasoner") {
+        return true;
+    }
+
+    // Qwen reasoning models: QwQ
+    if lower.contains("qwq") {
+        return true;
+    }
+
+    false
+}
+
+fn is_legacy_non_reasoning_model(lower: &str) -> bool {
+    lower.contains("3-haiku")
+        || lower.contains("3.5-haiku")
+        || lower.contains("3-5-haiku")
+        || lower.contains("3-sonnet")
+        || lower.contains("3.5-sonnet")
+        || lower.contains("3-5-sonnet")
+        || lower.contains("3-opus")
+}
+
+pub fn normalize_reasoning_and_efforts(
+    row: Option<&Value>,
+    id: &str,
+    mut reasoning: bool,
+    mut efforts: Vec<String>,
+) -> (bool, Vec<String>) {
+    let compat = row.and_then(|r| r.get("compat"));
+    let supports_output_effort = compat
+        .and_then(|c| c.get("supportsOutputEffort"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let supports_reasoning_effort = compat
+        .and_then(|c| c.get("supportsReasoningEffort"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let lower = id.to_ascii_lowercase();
+    let known_reasoning = is_known_reasoning_model(&lower);
+
+    if !reasoning
+        && (known_reasoning
+            || supports_reasoning_effort
+            || (supports_output_effort && !is_legacy_non_reasoning_model(&lower)))
+    {
+        reasoning = true;
+    }
+
+    if reasoning && efforts.is_empty() {
+        if lower.contains("claude-") || supports_output_effort {
+            efforts = vec![
+                "low".to_string(),
+                "medium".to_string(),
+                "high".to_string(),
+                "xhigh".to_string(),
+                "max".to_string(),
+            ];
+        } else if lower.contains("o1")
+            || lower.contains("o3")
+            || lower.contains("o4")
+            || supports_reasoning_effort
+        {
+            efforts = vec!["low".to_string(), "medium".to_string(), "high".to_string()];
+        } else {
+            efforts = vec![
+                "low".to_string(),
+                "medium".to_string(),
+                "high".to_string(),
+                "max".to_string(),
+            ];
+        }
+    }
+
+    (reasoning, efforts)
+}
+
+pub fn normalize_model_option(mut option: ModelOption) -> ModelOption {
+    let (reasoning, efforts) =
+        normalize_reasoning_and_efforts(None, &option.id, option.reasoning, option.efforts);
+    option.reasoning = reasoning;
+    option.efforts = efforts;
+    option
 }
 
 /// The model's `thinking` block, when structured as an object.
@@ -830,5 +953,55 @@ mod tests {
         assert_eq!(settled.options[0].id, "one", "the first fetch's rows won");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reasoning_models_with_missing_metadata_are_normalized() {
+        // Simulates upstream CommandCode metadata for claude-haiku-5-5 where
+        // root reasoning is false and thinking is null, but compat has supportsOutputEffort
+        let haiku_row = json!({
+            "id": "claude-haiku-5-5",
+            "name": "Claude Haiku 5.5",
+            "provider": "commandcode",
+            "reasoning": false,
+            "compat": {
+                "supportsOutputEffort": true,
+                "disableAdaptiveThinking": false
+            }
+        });
+        let parsed = option(&haiku_row).expect("row parses");
+        assert!(parsed.reasoning);
+        assert_eq!(parsed.efforts, ["low", "medium", "high", "xhigh", "max"]);
+
+        // Normalizing an already-cached option
+        let raw = ModelOption {
+            provider: "commandcode".to_string(),
+            id: "claude-haiku-5-5".to_string(),
+            name: "Claude Haiku 5.5".to_string(),
+            context_window: Some(1_000_000),
+            reasoning: false,
+            default_effort: None,
+            efforts: Vec::new(),
+        };
+        let normalized = normalize_model_option(raw);
+        assert!(normalized.reasoning);
+        assert_eq!(
+            normalized.efforts,
+            ["low", "medium", "high", "xhigh", "max"]
+        );
+
+        // Legacy non-reasoning Haiku is not inferred as reasoning
+        let legacy_haiku = json!({
+            "id": "claude-3-haiku-20240307",
+            "name": "Claude 3 Haiku",
+            "provider": "anthropic",
+            "reasoning": false,
+            "compat": {
+                "supportsOutputEffort": true
+            }
+        });
+        let legacy_opt = option(&legacy_haiku).expect("row parses");
+        assert!(!legacy_opt.reasoning);
+        assert!(legacy_opt.efforts.is_empty());
     }
 }

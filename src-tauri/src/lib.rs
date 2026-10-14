@@ -131,6 +131,9 @@ pub fn run() {
             // stores are constructed with the config directory the app will write to,
             // and that only exists once there is an app.
             let state = AppState::new(bridge::config_dir(app.handle()));
+            if let Err(err) = providers::ensure_model_overrides() {
+                eprintln!("[omp-desktop] could not ensure model overrides: {err}");
+            }
 
             // The first index pass starts with the window and runs on a worker of its own:
             // a cold pass reads every session file (`crate::search`), so it cannot be

@@ -30,6 +30,8 @@ const props = defineProps<{
   matchTriggerWidth?: boolean;
   /** Focus the first control on open — right for a popover you came to type in. */
   focusOnOpen?: boolean;
+  /** Hide the default header (when the child supplies its own bespoke header). */
+  hideHeader?: boolean;
 }>();
 
 const emit = defineEmits<{ (event: "close"): void }>();
@@ -159,7 +161,7 @@ onUnmounted(() => listen(false));
         is kept — this window closes a popover with Escape and nothing else says so — but it is
         as quiet as the label.
       -->
-      <header class="flex items-center gap-2 px-3.5 pb-0.5 pt-3">
+      <header v-if="!hideHeader" class="flex items-center gap-2 px-3.5 pb-0.5 pt-3">
         <span class="text-[11px] text-faint">{{ label }}</span>
         <button
           class="ml-auto text-[10.5px] text-faint/80 hover:text-dim"
@@ -169,7 +171,7 @@ onUnmounted(() => listen(false));
           esc
         </button>
       </header>
-      <div class="min-h-0 flex-1 overflow-auto p-1.5">
+      <div :class="['min-h-0 flex-1 overflow-auto', hideHeader ? 'p-0' : 'p-1.5']">
         <slot />
       </div>
     </div>

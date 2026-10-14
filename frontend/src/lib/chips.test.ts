@@ -12,6 +12,8 @@ import {
   APPROVAL_MODES,
   contextSummary,
   effortLabel,
+  effortStepShortLabel,
+  effortStepTitle,
   effortSupported,
   folderName,
   modeLabel,
@@ -19,6 +21,7 @@ import {
   modelChipLabel,
   percentLabel,
   ringDash,
+  supportedEffortSteps,
 } from "./chips";
 import type { ModelOption } from "./models";
 
@@ -107,6 +110,32 @@ describe("effortSupported", () => {
     expect(effortSupported("high", customReasoning)).toBe(true);
     expect(effortSupported("max", customReasoning)).toBe(true);
   });
+
+  test("a known reasoning model like claude-haiku-5-5 supports reasoning even if metadata omitted it", () => {
+    const haiku55: ModelOption = {
+      provider: "commandcode",
+      id: "claude-haiku-5-5",
+      name: "Claude Haiku 5.5",
+      contextWindow: 1_000_000,
+      reasoning: false,
+      defaultEffort: null,
+      efforts: [],
+    };
+    expect(effortSupported("low", haiku55)).toBe(true);
+    expect(effortSupported("medium", haiku55)).toBe(true);
+    expect(effortSupported("high", haiku55)).toBe(true);
+
+    const legacyHaiku: ModelOption = {
+      provider: "anthropic",
+      id: "claude-3-haiku-20240307",
+      name: "Claude 3 Haiku",
+      contextWindow: 200_000,
+      reasoning: false,
+      defaultEffort: null,
+      efforts: [],
+    };
+    expect(effortSupported("low", legacyHaiku)).toBe(false);
+  });
 });
 
 describe("mode", () => {
@@ -190,5 +219,53 @@ describe("contextSummary", () => {
       text: "18,414 / 1,000,000 tokens",
       percent: 1.8414,
     });
+  });
+});
+
+describe("effort stepped slider helpers", () => {
+  test("supportedEffortSteps filters to model capabilities with off always included", () => {
+    expect(supportedEffortSteps(fable)).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+
+    expect(supportedEffortSteps(plain)).toEqual(["off"]);
+
+    // If model is null, returns all manual ladder steps
+    expect(supportedEffortSteps(null)).toEqual([
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+  });
+
+  test("effortStepTitle maps identifiers to readable titles", () => {
+    expect(effortStepTitle("auto")).toBe("Auto");
+    expect(effortStepTitle("off")).toBe("Off");
+    expect(effortStepTitle("minimal")).toBe("Minimal");
+    expect(effortStepTitle("low")).toBe("Low");
+    expect(effortStepTitle("medium")).toBe("Medium");
+    expect(effortStepTitle("high")).toBe("High");
+    expect(effortStepTitle("xhigh")).toBe("Extra High");
+    expect(effortStepTitle("max")).toBe("Max");
+    expect(effortStepTitle(null)).toBe("Off");
+  });
+
+  test("effortStepShortLabel produces compact tick abbreviations", () => {
+    expect(effortStepShortLabel("off")).toBe("Off");
+    expect(effortStepShortLabel("minimal")).toBe("Min");
+    expect(effortStepShortLabel("low")).toBe("Low");
+    expect(effortStepShortLabel("medium")).toBe("Med");
+    expect(effortStepShortLabel("high")).toBe("High");
+    expect(effortStepShortLabel("xhigh")).toBe("X-High");
+    expect(effortStepShortLabel("max")).toBe("Max");
   });
 });

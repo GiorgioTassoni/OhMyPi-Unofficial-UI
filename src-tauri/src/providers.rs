@@ -229,6 +229,13 @@ pub async fn get_configured_providers() -> Result<Vec<ProviderAccountDto>, Strin
                                 }
                             }
 
+                            // A provider entry in models.yml with no baseUrl and no custom models
+                            // is an override for a standard provider (such as modelOverrides),
+                            // not a custom provider endpoint.
+                            if base_url.is_none() && models.is_empty() {
+                                continue;
+                            }
+
                             results.push(ProviderAccountDto {
                                 id: None,
                                 provider: provider_id.to_string(),
@@ -490,6 +497,124 @@ pub async fn remove_custom_provider(provider_id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Ensure known models with broken upstream reasoning metadata (e.g. Claude 4.5/5.5 on CommandCode)
+/// have explicit overrides in `~/.omp/agent/models.yml`.
+pub fn ensure_model_overrides() -> Result<(), String> {
+    let agent_dir = match resolve_agent_dir() {
+        Ok(dir) => dir,
+        Err(_) => return Ok(()),
+    };
+    ensure_model_overrides_in(&agent_dir)
+}
+
+pub(crate) fn ensure_model_overrides_in(agent_dir: &Path) -> Result<(), String> {
+    let yml_path = models_yml_path(agent_dir);
+    let mut root: serde_yaml::Value = if yml_path.is_file() {
+        let contents = fs::read_to_string(&yml_path).map_err(|e| e.to_string())?;
+        serde_yaml::from_str(&contents)
+            .unwrap_or_else(|_| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+
+    let root_map = match root.as_mapping_mut() {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+
+    let providers_key = serde_yaml::Value::String("providers".to_string());
+    if !root_map.contains_key(&providers_key) {
+        root_map.insert(
+            providers_key.clone(),
+            serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+        );
+    }
+
+    let providers_map = match root_map.get_mut(&providers_key).and_then(|v| v.as_mapping_mut()) {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+
+    let cmd_code_key = serde_yaml::Value::String("commandcode".to_string());
+    if !providers_map.contains_key(&cmd_code_key) {
+        providers_map.insert(
+            cmd_code_key.clone(),
+            serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+        );
+    }
+
+    let cmd_code_map = match providers_map.get_mut(&cmd_code_key).and_then(|v| v.as_mapping_mut()) {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+
+    let overrides_key = serde_yaml::Value::String("modelOverrides".to_string());
+    if !cmd_code_map.contains_key(&overrides_key) {
+        cmd_code_map.insert(
+            overrides_key.clone(),
+            serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+        );
+    }
+
+    let overrides_map = match cmd_code_map.get_mut(&overrides_key).and_then(|v| v.as_mapping_mut()) {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+
+    let mut changed = false;
+    let target_models = [
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
+        "claude-opus-5-5",
+        "claude-haiku-4-5-20251001",
+    ];
+
+    for model_id in target_models {
+        let key = serde_yaml::Value::String(model_id.to_string());
+        if !overrides_map.contains_key(&key) {
+            let mut model_map = serde_yaml::Mapping::new();
+            model_map.insert(
+                serde_yaml::Value::String("reasoning".to_string()),
+                serde_yaml::Value::Bool(true),
+            );
+
+            let mut thinking_map = serde_yaml::Mapping::new();
+            thinking_map.insert(
+                serde_yaml::Value::String("mode".to_string()),
+                serde_yaml::Value::String("anthropic-adaptive".to_string()),
+            );
+            let efforts = vec![
+                serde_yaml::Value::String("low".to_string()),
+                serde_yaml::Value::String("medium".to_string()),
+                serde_yaml::Value::String("high".to_string()),
+                serde_yaml::Value::String("xhigh".to_string()),
+                serde_yaml::Value::String("max".to_string()),
+            ];
+            thinking_map.insert(
+                serde_yaml::Value::String("efforts".to_string()),
+                serde_yaml::Value::Sequence(efforts),
+            );
+            model_map.insert(
+                serde_yaml::Value::String("thinking".to_string()),
+                serde_yaml::Value::Mapping(thinking_map),
+            );
+
+            overrides_map.insert(key, serde_yaml::Value::Mapping(model_map));
+            changed = true;
+        }
+    }
+
+    if changed {
+        if let Some(parent) = yml_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let serialized = serde_yaml::to_string(&root).map_err(|e| e.to_string())?;
+        fs::write(&yml_path, serialized).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -534,6 +659,26 @@ mod tests {
         let read_back: serde_yaml::Value =
             serde_yaml::from_str(&fs::read_to_string(&yml_path).unwrap()).expect("deserializes");
         assert!(read_back.get("providers").is_some());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn ensure_model_overrides_adds_commandcode_overrides() {
+        let temp_dir = std::env::temp_dir().join(format!("omp-test-overrides-{}", std::process::id()));
+        let _ = fs::create_dir_all(&temp_dir);
+
+        ensure_model_overrides_in(&temp_dir).expect("ensures overrides without models.yml existing");
+
+        let yml_path = models_yml_path(&temp_dir);
+        let contents = fs::read_to_string(&yml_path).expect("file created");
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&contents).expect("valid yaml");
+
+        assert!(parsed["providers"]["commandcode"]["modelOverrides"]["claude-haiku-5-5"].is_mapping());
+        assert_eq!(
+            parsed["providers"]["commandcode"]["modelOverrides"]["claude-haiku-5-5"]["reasoning"],
+            serde_yaml::Value::Bool(true)
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

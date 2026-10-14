@@ -34,6 +34,7 @@ import {
   Plug,
   Plus,
   RefreshCw,
+  RotateCcw,
   ScrollText,
   Search,
   Settings,
@@ -48,6 +49,7 @@ import {
   WandSparkles,
   Wrench,
   X,
+  Zap,
   type LucideIcon,
 } from "@lucide/vue";
 
@@ -107,6 +109,8 @@ export const ICONS = {
   dots: Ellipsis,
   message: MessageSquare,
   copy: Copy,
+  zap: Zap,
+  "rotate-ccw": RotateCcw,
 } as const satisfies Record<string, LucideIcon>;
 
 /** Every glyph this window can draw. */

@@ -93,9 +93,95 @@ export const EFFORT_LEVELS = [
 
 export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
+/** Manual ladder steps ordered from lowest to highest reasoning intensity. */
+export const MANUAL_EFFORT_LEVELS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+export type ManualEffortLevel = (typeof MANUAL_EFFORT_LEVELS)[number];
+
+/** Descriptive title for a given effort level. */
+export function effortStepTitle(level: string | null): string {
+  if (level === "auto") return "Auto";
+  if (level === "off") return "Off";
+  if (level === "minimal") return "Minimal";
+  if (level === "low") return "Low";
+  if (level === "medium") return "Medium";
+  if (level === "high") return "High";
+  if (level === "xhigh") return "Extra High";
+  if (level === "max") return "Max";
+  return level ? level.charAt(0).toUpperCase() + level.slice(1) : "Off";
+}
+
+/** Short label for slider ticks and compact badges. */
+export function effortStepShortLabel(level: string): string {
+  switch (level) {
+    case "off":
+      return "Off";
+    case "minimal":
+      return "Min";
+    case "low":
+      return "Low";
+    case "medium":
+      return "Med";
+    case "high":
+      return "High";
+    case "xhigh":
+      return "X-High";
+    case "max":
+      return "Max";
+    default:
+      return level;
+  }
+}
+
+/** Return the ordered manual steps supported by the given model. */
+export function supportedEffortSteps(model: ModelOption | null): string[] {
+  const list = MANUAL_EFFORT_LEVELS.filter((lvl) => effortSupported(lvl, model));
+  return list.length > 0 ? list : ["off"];
+}
+
 /** The effort chip's text. */
 export function effortLabel(level: string | null): string {
   return level === null || level === "" ? "Effort —" : `Effort ${level}`;
+}
+
+export function isKnownReasoningModel(id: string): boolean {
+  const lower = id.toLowerCase();
+  if (
+    lower.includes("3-haiku") ||
+    lower.includes("3.5-haiku") ||
+    lower.includes("3-5-haiku") ||
+    lower.includes("3-sonnet") ||
+    lower.includes("3.5-sonnet") ||
+    lower.includes("3-5-sonnet") ||
+    lower.includes("3-opus")
+  ) {
+    return false;
+  }
+  return (
+    lower.includes("haiku-5") ||
+    lower.includes("haiku-4") ||
+    lower.includes("sonnet-5") ||
+    lower.includes("sonnet-4") ||
+    lower.includes("sonnet-3-7") ||
+    lower.includes("sonnet-3.7") ||
+    lower.includes("opus-5") ||
+    lower.includes("opus-4") ||
+    lower.includes("fable") ||
+    lower.includes("o1") ||
+    lower.includes("o3") ||
+    lower.includes("o4") ||
+    lower.includes("deepseek-r1") ||
+    lower.includes("reasoner") ||
+    lower.includes("qwq")
+  );
 }
 
 /**
@@ -113,10 +199,13 @@ export function effortSupported(level: string, model: ModelOption | null): boole
   if (model === null) {
     return true;
   }
-  if (model.reasoning && model.efforts.length === 0) {
+  if (model.efforts.length > 0) {
+    return model.efforts.includes(level);
+  }
+  if (model.reasoning || isKnownReasoningModel(model.id)) {
     return true;
   }
-  return model.efforts.includes(level);
+  return false;
 }
 
 /** The permission ladder (`docs/12` §7.2), in the order the popover shows it. */
