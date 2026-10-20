@@ -86,7 +86,7 @@ export interface PaletteView {
  * sorts after these rather than being dropped, because a newer engine's sixth source is still
  * a command the user can run.
  */
-const SOURCE_ORDER = ["window", "builtin", "custom", "extension", "file"];
+const SOURCE_ORDER = ["window", "builtin", "skill", "custom", "extension", "file"];
 
 /** The source the window's own actions group under. */
 const WINDOW_SOURCE = "window";
@@ -99,6 +99,27 @@ const WINDOW_SOURCE = "window";
  */
 /** The actions the window offers in the palette, in the order it lists them. */
 export const WINDOW_ACTIONS: AppAction[] = [
+  {
+    id: "add-skill",
+    label: "Add skill",
+    name: "add-skill",
+    description: "Import a skill from GitHub or create a custom one",
+    key: null,
+  },
+  {
+    id: "help",
+    label: "Help",
+    name: "help",
+    description: "Show available slash commands, shortcuts, and usage",
+    key: null,
+  },
+  {
+    id: "clear",
+    label: "Clear transcript",
+    name: "clear",
+    description: "Clear conversation transcript in current view",
+    key: "Esc",
+  },
   {
     id: "settings",
     label: "Settings",
@@ -173,9 +194,17 @@ export function paletteFor(
       kind: "app" as const,
       app,
     })),
-    ...rank(commands, first.toLowerCase(), (entry) => entry.name, (entry) => entry.aliases).map(
-      (command) => ({ kind: "command" as const, command }),
-    ),
+    ...rank(
+      commands,
+      first.toLowerCase(),
+      (entry) => entry.name,
+      (entry) => {
+        if (entry.name.startsWith("skill:")) {
+          return [...entry.aliases, entry.name.slice(6)];
+        }
+        return entry.aliases;
+      },
+    ).map((command) => ({ kind: "command" as const, command })),
   ];
   const groups = group(items);
 
@@ -294,6 +323,23 @@ export function insertionOf(item: PaletteItem): string {
 }
 
 /**
+ * Whether a command strictly requires arguments or subcommands from the user.
+ * Angle brackets `<...>` or `arguments` indicate mandatory arguments.
+ * Brackets `[...]`, empty, or null indicate optional arguments.
+ */
+export function requiresArguments(command: CommandEntry): boolean {
+  if (command.source === "skill") {
+    return false;
+  }
+  if (command.hint !== null && command.hint !== undefined) {
+    const hint = command.hint.trim();
+    if (hint === "" || hint.startsWith("[")) return false;
+    return hint.startsWith("<") || hint.toLowerCase() === "arguments";
+  }
+  return command.subcommands.length > 0;
+}
+
+/**
  * The prompt to send when the row can be dispatched as it stands, or `null` when the
  * command still wants something from the user.
  *
@@ -302,12 +348,16 @@ export function insertionOf(item: PaletteItem): string {
 export function dispatchOf(item: PaletteItem): string | null {
   // An app action is never a prompt: the composer runs it, and returning text here would put
   // a word the engine does not know into a live session.
-  if (item.kind === "app" || item.kind === "subcommand") {
+  if (item.kind === "app") {
     return null;
   }
 
+  if (item.kind === "subcommand") {
+    return `/${item.command.name} ${item.sub.name}`;
+  }
+
   const { command } = item;
-  if (command.hint !== null || command.subcommands.length > 0) {
+  if (requiresArguments(command)) {
     return null;
   }
 

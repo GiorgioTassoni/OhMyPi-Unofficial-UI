@@ -51,6 +51,7 @@ import SettingsSources from "./settings/SettingsSources.vue";
 const props = defineProps<{
   /** The session whose workspace holds the project config file; `null` with nothing open. */
   thread: string | null;
+  workspace?: string | null | undefined;
   /** The OS user and app version, for the rail's footer. */
   identity: { user: string | null; version: string };
   /** How many sessions the catalogue holds. */
@@ -334,6 +335,7 @@ function describe(cause: unknown): string {
               :locate="needsOf"
               :notification-sound-enabled="props.notificationSoundEnabled"
               :app-theme="props.appTheme"
+              :workspace="props.workspace"
               @write="(row: SettingsRow, value: unknown) => request(row, value, false)"
               @reset="request($event, null, true)"
               @restart="restart"

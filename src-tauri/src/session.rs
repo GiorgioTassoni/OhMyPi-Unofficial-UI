@@ -219,6 +219,8 @@ pub struct LiveSession {
     pub agents_error: Option<String>,
     /// Prevent two fast prompts from starting two model calls for the same missing title.
     title_generation_in_flight: Arc<AtomicBool>,
+    /// Last invoked slash command, correlated with command_output.
+    pub last_slash_command: Arc<Mutex<Option<String>>>,
     pub pump: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -503,6 +505,28 @@ impl LiveSession {
         message: String,
         images: &[ImageContent],
     ) -> Result<(), String> {
+        let trimmed = message.trim();
+        if trimmed == "/help" || trimmed == "/?" {
+            if let Ok(mut transcript) = self.transcript.lock() {
+                transcript.apply_command_output_with_command(HELP_TEXT, Some("/help"));
+            }
+            return Ok(());
+        }
+        if trimmed == "/clear" || trimmed == "/cls" {
+            if let Ok(mut transcript) = self.transcript.lock() {
+                transcript.clear();
+                transcript.apply_command_output_with_command(
+                    "Conversation transcript cleared. (Use New Thread to start an entirely fresh session)",
+                    Some("/clear"),
+                );
+            }
+            return Ok(());
+        }
+        if trimmed.starts_with('/') {
+            if let Ok(mut slot) = self.last_slash_command.lock() {
+                *slot = Some(trimmed.to_string());
+            }
+        }
         let _gate = self.turn_gate.lock().await;
         self.ensure_turn_admitted()?;
         self.end_turn(commands::abort_and_prompt(message, images), "stop-and-send")
@@ -802,7 +826,7 @@ impl LiveSession {
             ));
         }
 
-        let list = palette::commands_from(&response);
+        let list = with_desktop_builtins(palette::commands_from(&response));
         if let Ok(mut cached) = self.commands.lock() {
             *cached = list.clone();
         }
@@ -1168,6 +1192,7 @@ pub async fn open(
     let agents = Arc::new(Mutex::new(AgentRoster::new()));
 
     let title_generation_in_flight = Arc::new(AtomicBool::new(false));
+    let last_slash_command = Arc::new(Mutex::new(None));
     let pump = spawn_pump(
         reporting,
         Arc::clone(&client),
@@ -1181,6 +1206,7 @@ pub async fn open(
             commands: Arc::clone(&commands),
             agents: Arc::clone(&agents),
             title_generation_in_flight: Arc::clone(&title_generation_in_flight),
+            last_slash_command: Arc::clone(&last_slash_command),
         },
     );
 
@@ -1203,6 +1229,7 @@ pub async fn open(
         agents,
         agents_error: roster_error,
         title_generation_in_flight,
+        last_slash_command,
         pump: Mutex::new(Some(pump)),
     }))
 }
@@ -1231,6 +1258,55 @@ pub async fn hydrate(client: &OmpClient, transcript: &Mutex<Transcript>) -> Resu
         .restore(&outcome.messages);
 
     Ok(())
+}
+
+const HELP_TEXT: &str = r#"Available Commands:
+  /tools              List available tools and capabilities
+  /context            Show context window usage and breakdown
+  /model              Display the current model selection
+  /compact [focus]    Compact conversation context (options: soft, remote, snapcompact)
+  /fast [on|off]      Toggle or inspect fast response mode
+  /usage              Display token usage and costs
+  /stats              Display session and performance statistics
+  /browser            Configure or inspect browser automation (headless|visible)
+  /plugins            List, enable, or disable plugins
+  /advisor            Inspect or configure advisor model settings
+  /todo               Manage session tasks and todo items
+  /mcp                Manage MCP servers and tools
+  /ssh                Configure and manage SSH connections
+  /memory             View and manage persistent memory models
+  /rename [title]     Rename session (generates auto-title if blank)
+  /clear              Clear conversation transcript
+  /help               Show this help message
+
+Keyboard Shortcuts:
+  Enter               Run selected command / send message
+  Tab                 Complete command or subcommand into composer
+  ↑ / ↓               Navigate command palette
+  Esc                 Close command palette / clear composer"#;
+
+fn with_desktop_builtins(mut list: Vec<AdvertisedCommand>) -> Vec<AdvertisedCommand> {
+    if !list.iter().any(|c| c.name == "help") {
+        list.push(AdvertisedCommand {
+            name: "help".to_string(),
+            source: "builtin".to_string(),
+            aliases: vec!["?".to_string()],
+            description: Some("Show available commands, options, and shortcuts".to_string()),
+            hint: None,
+            subcommands: Vec::new(),
+        });
+    }
+    if !list.iter().any(|c| c.name == "clear") {
+        list.push(AdvertisedCommand {
+            name: "clear".to_string(),
+            source: "builtin".to_string(),
+            aliases: vec!["cls".to_string()],
+            description: Some("Clear conversation transcript".to_string()),
+            hint: None,
+            subcommands: Vec::new(),
+        });
+    }
+    list
 }
 
 /// The palette's rows, flattened for the frontend (`dto::CommandSnapshot`).
@@ -1319,6 +1395,28 @@ pub async fn prompt(
     message: String,
     images: &[ImageContent],
 ) -> Result<(), String> {
+    let trimmed = message.trim();
+    if trimmed == "/help" || trimmed == "/?" {
+        if let Ok(mut transcript) = live.transcript.lock() {
+            transcript.apply_command_output_with_command(HELP_TEXT, Some("/help"));
+        }
+        return Ok(());
+    }
+    if trimmed == "/clear" || trimmed == "/cls" {
+        if let Ok(mut transcript) = live.transcript.lock() {
+            transcript.clear();
+            transcript.apply_command_output_with_command(
+                "Conversation transcript cleared. (Use New Thread to start an entirely fresh session)",
+                Some("/clear"),
+            );
+        }
+        return Ok(());
+    }
+    if trimmed.starts_with('/') {
+        if let Ok(mut slot) = live.last_slash_command.lock() {
+            *slot = Some(trimmed.to_string());
+        }
+    }
     live.send_user_turn(commands::prompt(message, images, None), "prompt")
         .await
 }
@@ -1468,6 +1566,7 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
                 attachments: attachments(message),
                 custom_type: message.custom_type.clone(),
                 jobs: jobs(message),
+                command: None,
             }
         }
         omp_session::Row::Message(message) => RowSnapshot {
@@ -1480,6 +1579,7 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
             attachments: attachments(message),
             custom_type: message.custom_type.clone(),
             jobs: jobs(message),
+            command: None,
         },
         omp_session::Row::Assistant { message, streaming } => RowSnapshot {
             role: "assistant".to_string(),
@@ -1491,6 +1591,7 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
             attachments: attachments(message),
             custom_type: message.custom_type.clone(),
             jobs: jobs(message),
+            command: None,
         },
         omp_session::Row::Tool(card) => RowSnapshot {
             role: "tool".to_string(),
@@ -1523,9 +1624,14 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
             attachments: Vec::new(),
             custom_type: None,
             jobs: Vec::new(),
+            command: None,
         },
         omp_session::Row::Notice {
-            level, text, kind, ..
+            level,
+            text,
+            kind,
+            source,
+            ..
         } => RowSnapshot {
             role: format!("notice:{level}"),
             timestamp: None,
@@ -1536,6 +1642,7 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
             attachments: Vec::new(),
             custom_type: Some(kind.clone()),
             jobs: Vec::new(),
+            command: source.clone(),
         },
     }
 }
@@ -1778,6 +1885,7 @@ pub struct Reducers {
     pub commands: Arc<Mutex<Vec<AdvertisedCommand>>>,
     pub agents: Arc<Mutex<AgentRoster>>,
     pub title_generation_in_flight: Arc<AtomicBool>,
+    pub last_slash_command: Arc<Mutex<Option<String>>>,
 }
 
 /// A tool grant answers only that tool's exact approval. A command grant answers only a
@@ -1923,6 +2031,7 @@ pub fn spawn_pump(
         commands,
         agents,
         title_generation_in_flight,
+        last_slash_command,
     } = reducers;
 
     tokio::spawn(async move {
@@ -2026,6 +2135,11 @@ pub fn spawn_pump(
                             if let Err(error) = refresh_control(&client, &control).await {
                                 eprintln!("[omp-desktop] could not refresh session state: {error}");
                             }
+                            if matches!(event, omp_transport::events::SessionEvent::AutoCompactionEnd(_)) {
+                                if let Ok(mut ctrl) = control.lock() {
+                                    ctrl.is_compacting = false;
+                                }
+                            }
                         }
 
                         // Last, so the name and the last answer it reads are the ones the
@@ -2077,8 +2191,9 @@ pub fn spawn_pump(
                                     {
                                         continue;
                                     }
+                                    let cmd = last_slash_command.lock().ok().and_then(|mut slot| slot.take());
                                     if let Ok(mut transcript) = transcript.lock() {
-                                        transcript.apply_command_output(text);
+                                        transcript.apply_command_output_with_command(text, cmd.as_deref());
                                         if let Some(index) = transcript.take_dirty() {
                                             first_dirty = Some(first_dirty.map_or(index, |earliest| {
                                                 earliest.min(index)
@@ -2102,7 +2217,7 @@ pub fn spawn_pump(
                                 }
                             }
                             protocol::FrameClass::AvailableCommandsUpdate => {
-                                let list = palette::commands_from(&frame);
+                                let list = with_desktop_builtins(palette::commands_from(&frame));
                                 // An update with an empty list is dropped rather than
                                 // stored: it would empty a palette that works.
                                 if !list.is_empty() {

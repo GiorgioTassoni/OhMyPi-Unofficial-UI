@@ -22,8 +22,10 @@ import {
 import type { AppTheme } from "../../lib/appTheme";
 import { rowId } from "../../lib/settings";
 import AddProviderModal from "./AddProviderModal.vue";
+import AddSkillModal from "./AddSkillModal.vue";
 import AppThemeSetting from "./AppThemeSetting.vue";
 import ConfiguredProvidersCard from "./ConfiguredProvidersCard.vue";
+import ConfiguredSkillsCard from "./ConfiguredSkillsCard.vue";
 import NotificationSoundSetting from "./NotificationSoundSetting.vue";
 import SettingsRow from "./SettingsRow.vue";
 
@@ -41,6 +43,7 @@ const props = defineProps<{
   locate: (key: string) => { sectionId: string; title: string } | null;
   notificationSoundEnabled: boolean;
   appTheme: AppTheme;
+  workspace?: string | null | undefined;
 }>();
 
 const emit = defineEmits<{
@@ -59,6 +62,13 @@ const configuredProviders = ref<ProviderAccountDto[]>([]);
 const catalogProviders = ref<CatalogProviderDto[]>([]);
 const loadingProviders = ref(false);
 const showAddModal = ref(false);
+const showAddSkillModal = ref(false);
+const skillsCardRef = ref<InstanceType<typeof ConfiguredSkillsCard> | null>(null);
+
+function onSkillAdded(): void {
+  skillsCardRef.value?.reload();
+  emit("changed");
+}
 
 async function loadProviders(): Promise<void> {
   if (props.section.id !== "model-and-providers") return;
@@ -171,12 +181,27 @@ function needsFor(row: SettingsRowModel): { sectionId: string; title: string } |
       />
     </div>
 
+    <div v-if="props.section.id === 'skills'" class="mt-6">
+      <ConfiguredSkillsCard
+        ref="skillsCardRef"
+        :workspace="props.workspace"
+        @open-add-modal="showAddSkillModal = true"
+      />
+    </div>
+
     <AddProviderModal
       v-if="showAddModal"
       :catalog="catalogProviders"
       @close="showAddModal = false"
       @added="onProviderAdded"
       @open-terminal-login="emit('terminalLogin', $event)"
+    />
+
+    <AddSkillModal
+      v-if="showAddSkillModal"
+      :workspace="props.workspace"
+      @close="showAddSkillModal = false"
+      @added="onSkillAdded"
     />
 
     <section v-for="group in props.section.groups" :key="group.name" class="mt-8">

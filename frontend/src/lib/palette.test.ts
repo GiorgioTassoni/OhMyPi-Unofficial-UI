@@ -185,20 +185,23 @@ describe("what a row does when it is accepted", () => {
     expect(insertionOf(item)).toBe("/model ");
   });
 
-  test("a command that wants arguments is never dispatched on one keypress", () => {
-    // The rule that protects the user's intent: `/compact` and `/compact keep it` are
-    // different commands, and the engine's own `hint` is what says so.
-    for (const typed of ["/compact", "/security"]) {
-      const item = paletteFor(typed, commands)!.items[0]!;
-      expect(dispatchOf(item)).toBeNull();
-      expect(insertionOf(item)).toBe(`${typed} `);
-    }
+  test("a command with optional arguments is dispatched verbatim on Enter", () => {
+    const item = paletteFor("/compact", commands)!.items[0]!;
+
+    expect(dispatchOf(item)).toBe("/compact");
+    expect(insertionOf(item)).toBe("/compact ");
   });
 
-  test("a subcommand is offered as text, never as a finished command", () => {
+  test("a command that wants arguments is never dispatched on one keypress", () => {
+    const item = paletteFor("/security", commands)!.items[0]!;
+    expect(dispatchOf(item)).toBeNull();
+    expect(insertionOf(item)).toBe("/security ");
+  });
+
+  test("a subcommand is dispatched directly on Enter, and completed with space on Tab", () => {
     const item = paletteFor("/security ", commands)!.items[0]!;
 
-    expect(dispatchOf(item)).toBeNull();
+    expect(dispatchOf(item)).toBe("/security plan");
     expect(insertionOf(item)).toBe("/security plan ");
   });
 

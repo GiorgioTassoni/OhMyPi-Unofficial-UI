@@ -312,6 +312,9 @@ pub struct RowSnapshot {
     pub custom_type: Option<String>,
     /// The jobs this row accounts for — a delivery's, and empty for everything else.
     pub jobs: Vec<JobDeliverySnapshot>,
+    /// The slash command that triggered this command output, if applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 /// One job a delivery message reports on.

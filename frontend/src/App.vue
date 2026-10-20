@@ -32,6 +32,7 @@ import {
   openThread,
   sidebarSnapshot as readSidebarSnapshot,
   refreshModels,
+  prompt as sendPrompt,
   renameThread as sendRename,
   setFavourites,
   setFocusedThread,
@@ -88,6 +89,7 @@ import AgentsPanel from "./components/AgentsPanel.vue";
 import AgentReadOnlyView from "./components/AgentReadOnlyView.vue";
 import SearchOverlay from "./components/SearchOverlay.vue";
 import SettingsScreen from "./components/SettingsScreen.vue";
+import AddSkillModal from "./components/settings/AddSkillModal.vue";
 import Sidebar from "./components/Sidebar.vue";
 import ThreadActions from "./components/ThreadActions.vue";
 import TerminalPanel from "./components/TerminalPanel.vue";
@@ -580,6 +582,8 @@ async function closeTerminal(id: string): Promise<void> {
   }
 }
 
+const showAddSkillModal = ref(false);
+
 /**
  * What a window action asked for, by id (`lib/palette.ts`'s `WINDOW_ACTIONS`).
  *
@@ -587,6 +591,11 @@ async function closeTerminal(id: string): Promise<void> {
  * the window decides what that means — a mapping it needs the moment there are two rows.
  */
 function onAppAction(id: string): void {
+  if (id === "add-skill") {
+    showAddSkillModal.value = true;
+    return;
+  }
+
   if (id === "settings" || id === "add-provider") {
     openSettings(true);
     return;
@@ -594,6 +603,27 @@ function onAppAction(id: string): void {
 
   if (id === "log-in") {
     logIn();
+    return;
+  }
+
+  if (id === "help") {
+    if (activeId.value !== null) {
+      void sendPrompt(activeId.value, "/help", []);
+    }
+    return;
+  }
+
+  if (id === "clear") {
+    if (activeId.value !== null) {
+      void sendPrompt(activeId.value, "/clear", []);
+    }
+  }
+}
+
+function onSkillAdded(name: string): void {
+  showActionNotice(`Skill "${name}" added. Run it with /skill:${name}`);
+  if (activeId.value !== null) {
+    void sendPrompt(activeId.value, "/reload", []);
   }
 }
 
@@ -1271,6 +1301,7 @@ function describe(cause: unknown): string {
     <SettingsScreen
       v-if="settings"
       :thread="activeId"
+      :workspace="workspace"
       :identity="identity"
       :sessions="catalogue.length"
       :models="models"
@@ -1615,6 +1646,13 @@ function describe(cause: unknown): string {
         </button>
       </div>
     </Modal>
+
+    <AddSkillModal
+      v-if="showAddSkillModal"
+      :workspace="workspace"
+      @close="showAddSkillModal = false"
+      @added="onSkillAdded"
+    />
 
     <!--
       One bottom-right stack for both engine notifications and app action receipts. Several can

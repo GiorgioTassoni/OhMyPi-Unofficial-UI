@@ -634,6 +634,9 @@ pub async fn compact(live: &LiveSession, instructions: Option<&str>) -> Result<(
     if let Err(error) = live.reread_control().await {
         eprintln!("[omp-desktop] could not refresh state after compaction: {error}");
     }
+    if let Ok(mut control) = live.control.lock() {
+        control.is_compacting = false;
+    }
     if let Ok(mut transcript) = live.transcript.lock() {
         match &result {
             Ok(()) => {

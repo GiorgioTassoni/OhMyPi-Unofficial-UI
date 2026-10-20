@@ -176,6 +176,11 @@ onMounted(async () => {
     onRows((event) => {
       if (event.thread === props.thread) {
         void applyPatch(event.payload);
+        if (event.payload.rows.some((r) => r.customType?.endsWith("_end") && r.customType?.includes("compaction"))) {
+          if (status.value?.control) {
+            status.value.control.isCompacting = false;
+          }
+        }
         void refreshStatus();
       }
     }),
@@ -725,9 +730,26 @@ defineExpose({
             @jump="revealRow"
             @review="emit('review', $event)"
           />
-          <div v-for="notice in turn.notices" :key="notice.index" :data-row-index="notice.index" class="flex items-start gap-2 rounded-[7px] border border-line/50 bg-raised/35 px-3 py-2" role="status">
-            <Icon :name="notice.row.role === 'notice:info' ? 'check' : 'close'" class="mt-0.5 h-3.5 w-3.5 shrink-0" :class="notice.row.role === 'notice:error' ? 'text-err' : notice.row.role === 'notice:warning' ? 'text-warn' : 'text-accent'" />
-            <p class="min-w-0 break-words text-[12px]" :class="notice.row.role === 'notice:error' ? 'text-err' : 'text-dim'">{{ notice.row.text }}</p>
+          <div
+            v-for="notice in turn.notices"
+            :key="notice.index"
+            :data-row-index="notice.index"
+            class="my-2 flex items-center gap-2.5 py-1 text-[11.5px] select-none"
+            role="status"
+          >
+            <div class="h-px flex-1 bg-line/50" />
+            <div
+              class="flex items-center gap-1.5 font-medium"
+              :class="notice.row.role === 'notice:error' ? 'text-err' : notice.row.role === 'notice:warning' ? 'text-warn' : 'text-dim'"
+            >
+              <Icon
+                :name="notice.row.role === 'notice:error' ? 'close' : 'sparkle'"
+                class="h-3.5 w-3.5 shrink-0"
+                :class="notice.row.role === 'notice:error' ? 'text-err' : notice.row.role === 'notice:warning' ? 'text-warn' : 'text-accent'"
+              />
+              <span>{{ notice.row.text }}</span>
+            </div>
+            <div class="h-px flex-1 bg-line/50" />
           </div>
         </article>
         </MeasuredTurn>

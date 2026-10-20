@@ -51,6 +51,7 @@ pub mod pty;
 pub mod search;
 pub mod session;
 pub mod settings;
+pub mod skills;
 pub mod threads;
 
 use std::sync::Arc;
@@ -233,6 +234,11 @@ pub fn run() {
             providers::remove_provider_credential,
             providers::add_custom_provider,
             providers::remove_custom_provider,
+            skills::list_skills,
+            skills::create_custom_skill,
+            skills::inspect_remote_skill,
+            skills::import_remote_skill,
+            skills::open_skills_folder,
         ])
         .build(tauri::generate_context!())
         .expect("the Tauri application builds")

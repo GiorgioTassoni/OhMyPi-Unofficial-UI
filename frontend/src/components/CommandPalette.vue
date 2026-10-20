@@ -20,7 +20,13 @@ import Icon from "./ui/Icon.vue";
  * A row whose action is a thing with an icon in this window should look like that thing; one
  * this build has no glyph for gets the generic mark rather than an empty column.
  */
-const APP_ICONS: Record<string, IconName | undefined> = { settings: "gear" };
+const APP_ICONS: Record<string, IconName | undefined> = {
+  settings: "gear",
+  "add-skill": "sparkle",
+  "add-provider": "plug",
+  help: "info",
+  clear: "trash",
+};
 
 const props = defineProps<{
   view: PaletteView;
@@ -78,8 +84,9 @@ function hasSubcommands(item: PaletteItem): boolean {
     aria-label="commands"
   >
     <div v-for="group in rows" :key="group.source">
-      <p class="px-2 pb-1 pt-2 text-[10.5px] font-medium uppercase tracking-[0.09em] text-faint">
-        {{ group.source }}
+      <p class="flex items-center gap-1.5 px-2 pb-1 pt-2 text-[10.5px] font-medium uppercase tracking-[0.09em] text-faint">
+        <Icon v-if="group.source === 'skill'" name="zap" class="h-3 w-3 text-accent" />
+        <span>{{ group.source === 'skill' ? 'Skills' : group.source }}</span>
       </p>
 
       <button
@@ -94,6 +101,11 @@ function hasSubcommands(item: PaletteItem): boolean {
           v-if="row.item.kind === 'app'"
           :name="APP_ICONS[row.item.app.id] ?? 'sliders'"
           class="h-3.5 w-3.5 shrink-0 text-faint"
+        />
+        <Icon
+          v-else-if="row.item.kind === 'command' && row.item.command.source === 'skill'"
+          name="zap"
+          class="h-3.5 w-3.5 shrink-0 text-accent"
         />
         <span class="shrink-0 text-[13px] text-fg">{{ itemLabel(row.item) }}</span>
         <span v-if="itemAliases(row.item)" class="shrink-0 text-[11px] text-faint">
@@ -122,7 +134,7 @@ function hasSubcommands(item: PaletteItem): boolean {
 
     <p class="px-2 pb-0.5 pt-1.5 text-[10.5px] text-faint">
       <template v-if="view.level === 'subcommands'">
-        {{ view.of }} · ↑↓ choose · enter completes · esc closes
+        {{ view.of }} · ↑↓ choose · enter runs · tab completes · esc closes
       </template>
       <template v-else>↑↓ choose · enter runs · tab completes · esc closes</template>
     </p>

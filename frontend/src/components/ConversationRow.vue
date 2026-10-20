@@ -81,6 +81,28 @@ function tint(): string {
 function source(attachment: AttachmentSnapshot): string {
   return `data:${attachment.mimeType};base64,${attachment.data}`;
 }
+
+const showSkillDetails = ref(false);
+
+function isSkillInvocation(row: RowSnapshot): boolean {
+  return (
+    row.customType === "skill-prompt" ||
+    (row.role === "custom" && row.text.includes('User invoked the "'))
+  );
+}
+
+function skillInvocationName(text: string): string {
+  const match = text.match(/User invoked the "([^"]+)" skill/i);
+  if (match) return match[1];
+  const tokenMatch = text.match(/\/skill:([a-zA-Z0-9_-]+)/);
+  if (tokenMatch) return tokenMatch[1];
+  return "skill";
+}
+
+function skillInvocationArgs(text: string): string | null {
+  const match = text.match(/\nUser:\s*([^\n]+)/);
+  return match ? match[1].trim() : null;
+}
 </script>
 
 <template>
@@ -195,6 +217,53 @@ function source(attachment: AttachmentSnapshot): string {
 
   <!-- A tool call. -->
   <ToolCard v-else-if="(row.role === 'tool' || row.role === 'toolResult') && row.tool" :tool="row.tool" />
+
+  <!-- A skill prompt invocation (e.g. /skill:impeccable) -->
+  <div
+    v-else-if="isSkillInvocation(row)"
+    class="my-2 w-full overflow-hidden rounded-[10px] border border-accent/40 bg-surface shadow-sm"
+  >
+    <div class="flex items-center justify-between border-b border-line/40 bg-accent/10 px-3.5 py-2 text-[12px] select-none">
+      <div class="flex items-center gap-2 font-medium text-fg">
+        <Icon name="zap" class="h-4 w-4 text-accent" />
+        <span class="font-mono font-semibold text-accent">Skill: {{ skillInvocationName(row.text) }}</span>
+        <span v-if="skillInvocationArgs(row.text)" class="text-dim">· {{ skillInvocationArgs(row.text) }}</span>
+      </div>
+      <button
+        type="button"
+        class="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-faint transition-colors hover:bg-raised hover:text-fg"
+        @click="showSkillDetails = !showSkillDetails"
+      >
+        <span>{{ showSkillDetails ? 'Hide prompt' : 'Show prompt' }}</span>
+        <Icon :name="showSkillDetails ? 'chevron-up' : 'chevron-down'" class="h-3 w-3" />
+      </button>
+    </div>
+    <div v-if="showSkillDetails" class="max-h-80 overflow-auto border-t border-line/30 p-3 text-[12px] leading-relaxed text-dim select-text">
+      <MarkdownBody :text="row.text" @failed="emit('failed', $event)" />
+    </div>
+  </div>
+
+  <!-- Command output from slash commands (e.g. /tools, /context, /model, /usage, /help) -->
+  <div
+    v-else-if="row.customType === 'command_output'"
+    class="my-1.5 w-full overflow-hidden rounded-[10px] border border-line/60 bg-raised/40 shadow-sm"
+  >
+    <div class="flex items-center justify-between border-b border-line/40 bg-raised/60 px-3 py-1.5 text-[11.5px] text-dim select-none">
+      <div class="flex items-center gap-1.5 font-medium text-fg">
+        <Icon name="terminal" class="h-3.5 w-3.5 text-accent" />
+        <span class="font-mono text-accent">{{ row.command || 'Command Output' }}</span>
+      </div>
+      <button
+        type="button"
+        class="rounded p-1 text-faint transition-colors hover:bg-surface hover:text-fg"
+        :title="copied ? 'Copied' : 'Copy output'"
+        @click="copyMessage"
+      >
+        <Icon :name="copied ? 'check' : 'copy'" class="h-3 w-3" />
+      </button>
+    </div>
+    <pre class="max-h-96 overflow-auto p-3 whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-fg select-text">{{ row.text }}</pre>
+  </div>
 
   <!-- Maintenance activity: compaction, retries, mode changes, reminders. -->
   <span
