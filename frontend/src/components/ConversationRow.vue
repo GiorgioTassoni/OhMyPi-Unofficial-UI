@@ -136,7 +136,7 @@ function skillInvocationArgs(text: string): string | null {
     <div v-if="row.text" class="group/message flex max-w-[80%] min-w-0 flex-col items-end gap-1.5">
       <p
         v-if="userMessage.text"
-        class="whitespace-pre-wrap break-words rounded-[16px] bg-raised/90 border border-line/50 px-4 py-2.5 text-[13px] leading-relaxed text-fg shadow-sm select-text"
+        class="whitespace-pre-wrap break-words rounded-[16px] bg-raised/95 border border-line/60 border-t-line-strong/40 px-4 py-2.5 text-[13px] leading-relaxed text-fg shadow-sm select-text"
       >
         {{ userMessage.text }}
       </p>
@@ -177,7 +177,7 @@ function skillInvocationArgs(text: string): string | null {
         <Icon name="chevron-right" class="h-3 w-3 text-faint transition-transform group-open:rotate-90" />
       </summary>
       <div
-        class="mt-1.5 whitespace-pre-wrap break-words rounded-[8px] border-l-2 border-line-strong/60 bg-surface/50 px-3 py-2 text-[12px] italic leading-relaxed text-dim select-text"
+        class="mt-1.5 whitespace-pre-wrap break-words rounded-r-[8px] border-l border-line-strong/80 bg-surface/50 px-3.5 py-2 text-[12px] italic leading-relaxed text-dim select-text"
       >
         {{ row.thinking }}
       </div>
@@ -211,7 +211,7 @@ function skillInvocationArgs(text: string): string | null {
          makes the coalesced patch stream readable as a live turn. -->
     <span
       v-if="row.streaming"
-      class="inline-block h-3.5 w-1.5 animate-pulse self-start rounded-full bg-accent"
+      class="inline-block h-3.5 w-1.5 animate-pulse self-start rounded-full bg-accent streaming-dot"
     />
   </div>
 

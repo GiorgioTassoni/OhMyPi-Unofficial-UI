@@ -113,7 +113,7 @@ async function chooseModel(choice: { provider: string; modelId: string }): Promi
  * borrowed here: rules everywhere would make the composer look like a toolbar.
  */
 const CHIP =
-  "flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-[11.5px] text-dim hover:bg-surface hover:text-fg";
+  "flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-[11.5px] text-dim transition-all hover:bg-surface hover:text-fg active:scale-[0.98]";
 
 function describe(cause: unknown): string {
   return typeof cause === "string"
@@ -132,7 +132,7 @@ function describe(cause: unknown): string {
         <template #trigger>
           <button
             type="button"
-            class="flex items-center gap-1.5 rounded-[6px] bg-raised/80 border border-line/40 px-2.5 py-1 text-[11.5px] text-dim transition-colors hover:bg-surface hover:text-fg"
+            class="flex items-center gap-1.5 rounded-[6px] bg-raised/80 border border-line/50 px-2.5 py-1 text-[11.5px] text-dim transition-all hover:bg-surface hover:text-fg hover:border-line-strong/60 active:scale-[0.98]"
             data-chip="folder"
             @click="toggle('folder')"
           >
@@ -263,7 +263,7 @@ function describe(cause: unknown): string {
           title="how much of the model's context this thread has used"
           @click="toggle('context')"
         >
-          <svg viewBox="0 0 20 20" class="h-4 w-4" aria-hidden="true">
+          <svg viewBox="0 0 20 20" class="h-4 w-4 shrink-0 transition-transform hover:scale-105" aria-hidden="true">
             <circle cx="10" cy="10" r="7" fill="none" stroke="var(--color-line-strong)" stroke-width="2" />
             <circle
               v-if="!ring.empty"
@@ -272,7 +272,7 @@ function describe(cause: unknown): string {
               r="7"
               fill="none"
               :stroke-dasharray="ring.dash"
-              stroke="var(--color-accent)"
+              :stroke="(contextPercent ?? 0) >= 90 ? 'var(--color-err)' : (contextPercent ?? 0) >= 70 ? 'var(--color-warn)' : 'var(--color-accent)'"
               stroke-width="2.5"
               stroke-linecap="round"
               transform="rotate(-90 10 10)"

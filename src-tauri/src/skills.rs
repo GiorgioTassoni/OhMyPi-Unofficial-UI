@@ -194,20 +194,27 @@ pub fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 /// Normalize GitHub URL or shorthand to a cloneable git URL and a repo name.
-pub fn normalize_github_source(source: &str) -> (String, String) {
+/// Rejects empty inputs and strings starting with a dash to prevent git CLI argument injection.
+pub fn normalize_github_source(source: &str) -> Result<(String, String), String> {
     let trimmed = source.trim();
+    if trimmed.is_empty() {
+        return Err("repository source cannot be empty".to_string());
+    }
+    if trimmed.starts_with('-') {
+        return Err("invalid repository source: cannot start with a dash".to_string());
+    }
     if trimmed.starts_with("https://github.com/") || trimmed.starts_with("http://github.com/") {
         let stripped = trimmed.trim_end_matches(".git");
         let parts: Vec<&str> = stripped.split('/').collect();
         let name = parts.last().copied().unwrap_or("repository");
-        (format!("{stripped}.git"), name.to_string())
+        Ok((format!("{stripped}.git"), name.to_string()))
     } else if trimmed.contains('/') && !trimmed.contains(':') && !trimmed.starts_with("http") {
         // e.g. "pbakaus/impeccable"
         let parts: Vec<&str> = trimmed.split('/').collect();
         let name = parts.get(1).copied().unwrap_or("repository");
-        (format!("https://github.com/{trimmed}.git"), name.to_string())
+        Ok((format!("https://github.com/{trimmed}.git"), name.to_string()))
     } else {
-        (trimmed.to_string(), "repository".to_string())
+        Ok((trimmed.to_string(), "repository".to_string()))
     }
 }
 
@@ -350,100 +357,93 @@ pub async fn create_custom_skill(input: CreateSkillInput) -> Result<SkillInfo, S
     })
 }
 
-#[tauri::command]
-pub async fn inspect_remote_skill(source_url: String) -> Result<InspectSkillResult, String> {
-    let (git_url, repo_name) = normalize_github_source(&source_url);
+/// Clone a remote repository into a secure, unique temporary directory and execute an action on it.
+/// Automatically cleans up the directory on drop (RAII) and uses `--` argument isolation.
+fn with_cloned_repo<T, F>(source_url: &str, f: F) -> Result<T, String>
+where
+    F: FnOnce(&Path, &str) -> Result<T, String>,
+{
+    let (git_url, repo_name) = normalize_github_source(source_url)?;
 
-    let temp_dir = std::env::temp_dir().join(format!("omp-skill-inspect-{}", std::process::id()));
-    if temp_dir.exists() {
-        let _ = fs::remove_dir_all(&temp_dir);
-    }
+    let temp_dir = tempfile::Builder::new()
+        .prefix("omp-skill-")
+        .tempdir()
+        .map_err(|e| format!("failed to create temporary directory: {e}"))?;
 
     let output = Command::new("git")
-        .args(["clone", "--depth", "1", &git_url])
-        .arg(&temp_dir)
+        .args(["clone", "--depth", "1", "--", &git_url])
+        .arg(temp_dir.path())
         .output()
         .map_err(|e| format!("failed to run git clone: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let _ = fs::remove_dir_all(&temp_dir);
         return Err(format!("git clone failed: {stderr}"));
     }
 
-    let skills = find_skills_in_tree(&temp_dir);
-    let _ = fs::remove_dir_all(&temp_dir);
+    f(temp_dir.path(), &repo_name)
+}
 
-    if skills.is_empty() {
-        return Err("no skills (SKILL.md) found in repository".to_string());
-    }
+#[tauri::command]
+pub async fn inspect_remote_skill(source_url: String) -> Result<InspectSkillResult, String> {
+    with_cloned_repo(&source_url, |temp_path, repo_name| {
+        let skills = find_skills_in_tree(temp_path);
+        if skills.is_empty() {
+            return Err("no skills (SKILL.md) found in repository".to_string());
+        }
 
-    Ok(InspectSkillResult { repo_name, skills })
+        Ok(InspectSkillResult {
+            repo_name: repo_name.to_string(),
+            skills,
+        })
+    })
 }
 
 #[tauri::command]
 pub async fn import_remote_skill(input: ImportSkillInput) -> Result<SkillInfo, String> {
-    let (git_url, _) = normalize_github_source(&input.source_url);
+    let target_scope = input.scope.clone();
+    let target_workspace = input.workspace.clone();
+    let target_skill_name = input.skill_name.clone();
 
-    let temp_dir = std::env::temp_dir().join(format!("omp-skill-import-{}", std::process::id()));
-    if temp_dir.exists() {
-        let _ = fs::remove_dir_all(&temp_dir);
-    }
+    with_cloned_repo(&input.source_url, |temp_path, _| {
+        let skills = find_skills_in_tree(temp_path);
+        if skills.is_empty() {
+            return Err("no skills (SKILL.md) found in repository".to_string());
+        }
 
-    let output = Command::new("git")
-        .args(["clone", "--depth", "1", &git_url])
-        .arg(&temp_dir)
-        .output()
-        .map_err(|e| format!("failed to clone repository: {e}"))?;
+        let selected = if let Some(target_name) = &target_skill_name {
+            skills.into_iter().find(|s| s.name == *target_name)
+        } else {
+            skills.into_iter().next()
+        };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let _ = fs::remove_dir_all(&temp_dir);
-        return Err(format!("git clone failed: {stderr}"));
-    }
+        let Some(skill) = selected else {
+            return Err("specified skill was not found in repository".to_string());
+        };
 
-    let skills = find_skills_in_tree(&temp_dir);
-    if skills.is_empty() {
-        let _ = fs::remove_dir_all(&temp_dir);
-        return Err("no skills (SKILL.md) found in repository".to_string());
-    }
+        let target_dir = resolve_target_skill_dir(&target_scope, &skill.name, target_workspace.as_deref())?;
+        let source_dir = if skill.relative_path == "." {
+            temp_path.to_path_buf()
+        } else {
+            temp_path.join(&skill.relative_path)
+        };
 
-    let selected = if let Some(target_name) = &input.skill_name {
-        skills.into_iter().find(|s| s.name == *target_name)
-    } else {
-        skills.into_iter().next()
-    };
+        if target_dir.exists() {
+            let _ = fs::remove_dir_all(&target_dir);
+        }
 
-    let Some(skill) = selected else {
-        let _ = fs::remove_dir_all(&temp_dir);
-        return Err("specified skill was not found in repository".to_string());
-    };
+        copy_dir_all(&source_dir, &target_dir).map_err(|e| {
+            format!("failed to copy skill files to destination: {e}")
+        })?;
 
-    let target_dir = resolve_target_skill_dir(&input.scope, &skill.name, input.workspace.as_deref())?;
-    let source_dir = if skill.relative_path == "." {
-        temp_dir.clone()
-    } else {
-        temp_dir.join(&skill.relative_path)
-    };
-
-    if target_dir.exists() {
-        let _ = fs::remove_dir_all(&target_dir);
-    }
-
-    copy_dir_all(&source_dir, &target_dir).map_err(|e| {
-        let _ = fs::remove_dir_all(&temp_dir);
-        format!("failed to copy skill files to destination: {e}")
-    })?;
-
-    let _ = fs::remove_dir_all(&temp_dir);
-
-    Ok(SkillInfo {
-        name: skill.name,
-        description: skill.description,
-        path: target_dir.join("SKILL.md").to_string_lossy().to_string(),
-        scope: input.scope,
-        has_scripts: skill.has_scripts,
-        has_references: skill.has_references,
+        Ok(SkillInfo {
+            name: skill.name,
+            description: skill.description,
+            path: target_dir.join("SKILL.md").to_string_lossy().to_string(),
+            scope: target_scope,
+            has_scripts: skill.has_scripts,
+            has_references: skill.has_references,
+        })
     })
 }
 
@@ -490,12 +490,17 @@ Check everything carefully.
 
     #[test]
     fn normalize_github_sources() {
-        let (url1, name1) = normalize_github_source("pbakaus/impeccable");
+        let (url1, name1) = normalize_github_source("pbakaus/impeccable").unwrap();
         assert_eq!(url1, "https://github.com/pbakaus/impeccable.git");
         assert_eq!(name1, "impeccable");
 
-        let (url2, name2) = normalize_github_source("https://github.com/pbakaus/impeccable");
+        let (url2, name2) = normalize_github_source("https://github.com/pbakaus/impeccable").unwrap();
         assert_eq!(url2, "https://github.com/pbakaus/impeccable.git");
         assert_eq!(name2, "impeccable");
+
+        assert!(normalize_github_source("").is_err());
+        assert!(normalize_github_source("   ").is_err());
+        assert!(normalize_github_source("--upload-pack=evil").is_err());
+        assert!(normalize_github_source("-oProxyCommand=calc").is_err());
     }
 }

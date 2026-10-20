@@ -80,14 +80,14 @@ const groups = () => groupHits(hits.value, props.sessions);
 
 <template>
   <Modal title="search every thread" @close="emit('close')">
-    <div class="flex items-center gap-2 rounded-[6px] bg-raised px-2.5 py-2">
-      <Icon name="search" class="h-3.5 w-3.5 shrink-0 text-faint" />
+    <div class="flex items-center gap-2.5 rounded-[8px] bg-raised/80 border border-line/60 px-3 py-2 transition-all focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/30 shadow-sm">
+      <Icon name="search" class="h-4 w-4 shrink-0 text-faint" />
       <input
         v-model="query"
         spellcheck="false"
         placeholder="titles, messages, reasoning, tool calls and results"
         aria-label="search every thread"
-        class="min-w-0 flex-1 bg-transparent text-[12.5px] text-fg outline-none placeholder:text-faint"
+        class="min-w-0 flex-1 bg-transparent text-[13px] text-fg outline-none placeholder:text-faint"
       />
     </div>
 

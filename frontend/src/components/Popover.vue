@@ -152,7 +152,7 @@ onUnmounted(() => listen(false));
       ref="panel"
       role="dialog"
       :aria-label="label"
-      class="fixed z-30 flex flex-col overflow-hidden rounded-[10px] border border-line bg-surface shadow-xl shadow-black/50"
+      class="fixed z-30 flex flex-col overflow-hidden rounded-[12px] border border-line-strong/60 bg-surface/95 backdrop-blur-md shadow-2xl shadow-black/60 transition-all"
       :style="placement"
     >
       <!--

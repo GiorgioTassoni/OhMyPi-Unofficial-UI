@@ -66,7 +66,7 @@ const diffStats = computed(() => {
 </script>
 
 <template>
-  <div class="my-1 overflow-hidden rounded-[10px] border border-line/60 bg-surface shadow-sm">
+  <div class="my-1 overflow-hidden rounded-[10px] border border-line/70 bg-surface/90 shadow-sm transition-all hover:border-line-strong/60">
     <!-- Case 1: File Mutations -->
     <div v-if="isMutation">
       <button
@@ -80,9 +80,9 @@ const diffStats = computed(() => {
           <Icon name="pencil" class="h-3.5 w-3.5 shrink-0 text-accent" />
           <span class="flex min-w-0 flex-col gap-0.5">
             <span class="truncate text-[12.5px] font-medium text-fg" :title="mutationTitle">{{ mutationTitle }}</span>
-            <span v-if="diffStats" class="flex items-center gap-1 font-mono text-[11px] leading-none">
-              <span v-if="diffStats.added > 0" class="font-semibold text-ok">+{{ diffStats.added }}</span>
-              <span v-if="diffStats.removed > 0" class="font-semibold text-err">-{{ diffStats.removed }}</span>
+            <span v-if="diffStats" class="flex items-center gap-1 font-mono text-[10.5px] leading-none">
+              <span v-if="diffStats.added > 0" class="rounded bg-ok/10 px-1 py-0.5 font-semibold text-ok">+{{ diffStats.added }}</span>
+              <span v-if="diffStats.removed > 0" class="rounded bg-err/10 px-1 py-0.5 font-semibold text-err">-{{ diffStats.removed }}</span>
             </span>
           </span>
         </div>
@@ -127,7 +127,7 @@ const diffStats = computed(() => {
           <span class="shrink-0 text-[12px] font-medium text-fg">Run command</span>
           <code
             v-if="view.summary"
-            class="truncate rounded bg-raised/80 px-2 py-0.5 font-mono text-[11.5px] text-dim select-text cursor-text"
+            class="truncate rounded bg-raised/90 border border-line/50 px-2 py-0.5 font-mono text-[11px] text-dim select-text cursor-text"
             @click.stop
           >
             {{ view.summary }}
@@ -166,13 +166,13 @@ const diffStats = computed(() => {
         <div class="flex min-w-0 flex-1 items-center gap-2">
           <Icon name="wrench" class="h-3.5 w-3.5 shrink-0 text-faint" />
           <span class="shrink-0 text-[12px] font-medium text-fg">{{ tool.toolName }}</span>
-          <span
+          <code
             v-if="tool.intent || view.summary"
-            class="truncate font-mono text-[11.5px] text-dim select-text cursor-text"
+            class="truncate rounded bg-raised/70 border border-line/40 px-1.5 py-0.5 font-mono text-[11px] text-dim select-text cursor-text"
             @click.stop
           >
             {{ view.summary || tool.intent }}
-          </span>
+          </code>
         </div>
         <div class="flex shrink-0 items-center gap-2">
           <span v-if="failedOrDenied" class="text-err" role="img" :aria-label="denied ? 'Tool call denied' : 'Tool call failed'" :title="denied ? 'Tool call denied' : 'Tool call failed'">

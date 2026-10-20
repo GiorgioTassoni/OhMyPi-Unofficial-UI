@@ -338,17 +338,25 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
         <ul v-if="isOpen(group.path)" class="flex flex-col gap-px">
           <li v-for="row in group.threads" :key="row.id">
             <button
-              class="group/row flex w-full items-center gap-2 rounded-[6px] py-1.5 pr-1.5 text-left"
+              class="group/row relative flex w-full items-center gap-2 rounded-[6px] py-1.5 pr-1.5 text-left transition-colors"
               :class="
                 row.id === props.activeId
-                  ? 'bg-selected'
-                  : 'hover:bg-raised'
+                  ? 'bg-selected text-fg font-medium'
+                  : 'text-dim hover:bg-raised hover:text-fg'
               "
               :style="{ paddingLeft: `${row.depth === 0 ? 0.75 : 1.5}rem` }"
               :title="`${row.title}${row.note ? ` · ${row.note}` : ''}${row.suspended ? ' · suspended' : ''}`"
               @click="emit('select', row.id)"
               @contextmenu="onContext($event, row)"
             >
+              <!--
+                Active indicator bar on the left edge for instant scanability
+              -->
+              <span
+                v-if="row.id === props.activeId"
+                class="absolute left-1 top-2 bottom-2 w-0.5 rounded-full bg-accent"
+                aria-hidden="true"
+              />
               <!--
                 One dot per thread (`docs/12` §2.2), driven by the sidecar: hollow for no
                 process, pulsing while a turn streams, amber when the agent is waiting on an
@@ -384,7 +392,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
               <span
                 v-else
                 class="min-w-0 flex-1 truncate text-[12.5px]"
-                :class="row.unread ? 'font-medium text-fg' : 'text-dim group-hover/row:text-fg/90'"
+                :class="row.unread ? 'font-medium text-fg' : 'group-hover/row:text-fg/90'"
               >
                 {{ row.title }}
               </span>
@@ -406,7 +414,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
               </span>
               <span
                 v-if="row.unread"
-                class="size-1.5 shrink-0 rounded-full bg-accent-bright"
+                class="size-1.5 shrink-0 rounded-full bg-accent-bright shadow-[0_0_4px_var(--color-accent)]"
                 title="finished while you were elsewhere"
               />
               <Icon

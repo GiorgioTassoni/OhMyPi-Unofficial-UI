@@ -248,6 +248,18 @@ pre,
   background-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
 }
 
+/* Keyboard focus navigation indicator styled from active theme's accent */
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
+  outline-offset: 1px;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+[data-input]:focus-visible {
+  outline: none;
+}
+
 /* Quiet overlay-like scrollbars: enough contrast to find, without turning into a bright rail
    when the pointer reaches them. Do not also set the standard `scrollbar-color`/`width` here:
    Chromium gives those precedence and replaces this thumb with its outlined native control. */

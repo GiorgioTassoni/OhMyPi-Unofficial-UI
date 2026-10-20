@@ -45,6 +45,7 @@ pub mod idle;
 pub mod models;
 pub mod notify;
 pub mod panel;
+pub mod palette;
 pub mod policy;
 pub mod providers;
 pub mod pty;

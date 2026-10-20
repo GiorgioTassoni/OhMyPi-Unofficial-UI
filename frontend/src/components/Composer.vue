@@ -661,11 +661,11 @@ defineExpose({ setDraft });
       only once there is something to send.
     -->
     <div
-      class="flex items-end gap-2 rounded-[12px] border border-line-strong/80 bg-raised/90 px-3 py-2 transition-all focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/30 shadow-sm"
+      class="flex items-end gap-2 rounded-[12px] border border-line-strong/70 bg-raised/95 backdrop-blur-md px-3 py-2.5 transition-all focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/35 shadow-md shadow-black/20"
     >
       <!-- `+` accepts images and UTF-8 files; a drop carries an OS path instead. -->
       <button
-        class="mb-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-[6px] text-faint transition-colors hover:bg-surface hover:text-fg"
+        class="mb-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-[6px] text-faint transition-all hover:bg-surface hover:text-fg active:scale-95"
         title="attach an image or UTF-8 text file; drop other files to send their path"
         aria-label="attach"
         @click="picker?.click()"
@@ -700,7 +700,7 @@ defineExpose({ setDraft });
       <button
         v-if="hasInput"
         :disabled="!canSend"
-        class="mb-0.5 grid h-6 min-w-6 shrink-0 place-items-center rounded-[6px] bg-accent px-2 py-0.5 text-[12px] font-semibold text-canvas transition-opacity hover:opacity-90 disabled:opacity-40"
+        class="mb-0.5 grid h-6 min-w-6 shrink-0 place-items-center rounded-[6px] bg-accent px-2.5 py-0.5 text-[12px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100 shadow-sm"
         :title="isWorking ? 'steer' : 'send (Enter)'"
         @click="send(isWorking ? 'steer' : 'prompt')"
       >
@@ -709,7 +709,7 @@ defineExpose({ setDraft });
       <button
         v-if="isWorking"
         :disabled="stopping"
-        class="mb-0.5 shrink-0 rounded-[6px] border border-line px-2 py-0.5 text-[11.5px] text-dim transition-colors hover:border-line-strong hover:text-fg disabled:opacity-50"
+        class="mb-0.5 shrink-0 rounded-[6px] border border-line px-2.5 py-0.5 text-[11.5px] text-dim transition-all hover:border-err/60 hover:text-err hover:bg-err/10 active:scale-95 disabled:opacity-50"
         @click="stop"
       >
         {{ stopping ? "stopping…" : "stop" }}

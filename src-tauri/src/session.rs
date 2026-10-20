@@ -505,23 +505,12 @@ impl LiveSession {
         message: String,
         images: &[ImageContent],
     ) -> Result<(), String> {
+        if let Ok(mut transcript) = self.transcript.lock() {
+            if crate::palette::handle_desktop_command(&mut transcript, &message) {
+                return Ok(());
+            }
+        }
         let trimmed = message.trim();
-        if trimmed == "/help" || trimmed == "/?" {
-            if let Ok(mut transcript) = self.transcript.lock() {
-                transcript.apply_command_output_with_command(HELP_TEXT, Some("/help"));
-            }
-            return Ok(());
-        }
-        if trimmed == "/clear" || trimmed == "/cls" {
-            if let Ok(mut transcript) = self.transcript.lock() {
-                transcript.clear();
-                transcript.apply_command_output_with_command(
-                    "Conversation transcript cleared. (Use New Thread to start an entirely fresh session)",
-                    Some("/clear"),
-                );
-            }
-            return Ok(());
-        }
         if trimmed.starts_with('/') {
             if let Ok(mut slot) = self.last_slash_command.lock() {
                 *slot = Some(trimmed.to_string());
@@ -826,7 +815,7 @@ impl LiveSession {
             ));
         }
 
-        let list = with_desktop_builtins(palette::commands_from(&response));
+        let list = crate::palette::with_desktop_builtins(palette::commands_from(&response));
         if let Ok(mut cached) = self.commands.lock() {
             *cached = list.clone();
         }
@@ -1260,55 +1249,6 @@ pub async fn hydrate(client: &OmpClient, transcript: &Mutex<Transcript>) -> Resu
     Ok(())
 }
 
-const HELP_TEXT: &str = r#"Available Commands:
-  /tools              List available tools and capabilities
-  /context            Show context window usage and breakdown
-  /model              Display the current model selection
-  /compact [focus]    Compact conversation context (options: soft, remote, snapcompact)
-  /fast [on|off]      Toggle or inspect fast response mode
-  /usage              Display token usage and costs
-  /stats              Display session and performance statistics
-  /browser            Configure or inspect browser automation (headless|visible)
-  /plugins            List, enable, or disable plugins
-  /advisor            Inspect or configure advisor model settings
-  /todo               Manage session tasks and todo items
-  /mcp                Manage MCP servers and tools
-  /ssh                Configure and manage SSH connections
-  /memory             View and manage persistent memory models
-  /rename [title]     Rename session (generates auto-title if blank)
-  /clear              Clear conversation transcript
-  /help               Show this help message
-
-Keyboard Shortcuts:
-  Enter               Run selected command / send message
-  Tab                 Complete command or subcommand into composer
-  ↑ / ↓               Navigate command palette
-  Esc                 Close command palette / clear composer"#;
-
-fn with_desktop_builtins(mut list: Vec<AdvertisedCommand>) -> Vec<AdvertisedCommand> {
-    if !list.iter().any(|c| c.name == "help") {
-        list.push(AdvertisedCommand {
-            name: "help".to_string(),
-            source: "builtin".to_string(),
-            aliases: vec!["?".to_string()],
-            description: Some("Show available commands, options, and shortcuts".to_string()),
-            hint: None,
-            subcommands: Vec::new(),
-        });
-    }
-    if !list.iter().any(|c| c.name == "clear") {
-        list.push(AdvertisedCommand {
-            name: "clear".to_string(),
-            source: "builtin".to_string(),
-            aliases: vec!["cls".to_string()],
-            description: Some("Clear conversation transcript".to_string()),
-            hint: None,
-            subcommands: Vec::new(),
-        });
-    }
-    list
-}
-
 /// The palette's rows, flattened for the frontend (`dto::CommandSnapshot`).
 fn command_snapshots(commands: &[AdvertisedCommand]) -> Vec<CommandSnapshot> {
     commands
@@ -1395,23 +1335,12 @@ pub async fn prompt(
     message: String,
     images: &[ImageContent],
 ) -> Result<(), String> {
+    if let Ok(mut transcript) = live.transcript.lock() {
+        if crate::palette::handle_desktop_command(&mut transcript, &message) {
+            return Ok(());
+        }
+    }
     let trimmed = message.trim();
-    if trimmed == "/help" || trimmed == "/?" {
-        if let Ok(mut transcript) = live.transcript.lock() {
-            transcript.apply_command_output_with_command(HELP_TEXT, Some("/help"));
-        }
-        return Ok(());
-    }
-    if trimmed == "/clear" || trimmed == "/cls" {
-        if let Ok(mut transcript) = live.transcript.lock() {
-            transcript.clear();
-            transcript.apply_command_output_with_command(
-                "Conversation transcript cleared. (Use New Thread to start an entirely fresh session)",
-                Some("/clear"),
-            );
-        }
-        return Ok(());
-    }
     if trimmed.starts_with('/') {
         if let Ok(mut slot) = live.last_slash_command.lock() {
             *slot = Some(trimmed.to_string());
@@ -2217,7 +2146,7 @@ pub fn spawn_pump(
                                 }
                             }
                             protocol::FrameClass::AvailableCommandsUpdate => {
-                                let list = with_desktop_builtins(palette::commands_from(&frame));
+                                let list = crate::palette::with_desktop_builtins(palette::commands_from(&frame));
                                 // An update with an empty list is dropped rather than
                                 // stored: it would empty a palette that works.
                                 if !list.is_empty() {

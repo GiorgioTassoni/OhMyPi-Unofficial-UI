@@ -79,7 +79,7 @@ function hasSubcommands(item: PaletteItem): boolean {
     recessed into the surface, with rows and headings doing all the dividing.
   -->
   <div
-    class="mb-2 max-h-72 overflow-auto rounded-[8px] bg-canvas/60 p-1"
+    class="mb-2 max-h-72 overflow-auto rounded-[8px] border border-line/50 bg-canvas/80 p-1.5 shadow-lg shadow-black/30"
     role="dialog"
     aria-label="commands"
   >
@@ -92,8 +92,8 @@ function hasSubcommands(item: PaletteItem): boolean {
       <button
         v-for="row in group.items"
         :key="itemKey(row.item)"
-        class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-2 text-left"
-        :class="row.index === selected ? 'bg-selected' : 'hover:bg-raised'"
+        class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left transition-colors"
+        :class="row.index === selected ? 'bg-selected text-fg font-medium' : 'text-dim hover:bg-raised/70 hover:text-fg'"
         @click="emit('pick', row.index)"
         @mousemove="emit('hover', row.index)"
       >
@@ -117,12 +117,12 @@ function hasSubcommands(item: PaletteItem): boolean {
         <span v-else class="flex-1" />
 
         <!-- An app row is reachable without the palette, and saying how is the honest hint. -->
-        <span
+        <kbd
           v-if="row.item.kind === 'app' && row.item.app.key !== null"
-          class="shrink-0 font-mono text-[10.5px] text-faint"
+          class="shrink-0 font-mono text-[10.5px] text-faint rounded bg-raised px-1.5 py-0.5 border border-line/50"
         >
           {{ row.item.app.key }}
-        </span>
+        </kbd>
 
         <Icon
           v-if="hasSubcommands(row.item)"
