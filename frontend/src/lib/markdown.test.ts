@@ -53,6 +53,24 @@ describe("renderMarkdown", () => {
     expect(html).toContain("<strong>bold</strong>");
   });
 
+  test("safely isolates YAML frontmatter without turning it into a setext heading", () => {
+    const skillDoc = `---
+name: impeccable
+description: "Design and polish"
+metadata:
+  version: 4.7.0
+---
+
+## Setup
+Run context`;
+    const html = renderMarkdown(skillDoc);
+    expect(html).not.toContain("<h2>name: impeccable");
+    expect(html).toContain("<details");
+    expect(html).toContain("Metadata");
+    expect(html).toContain("<h2>Setup</h2>");
+    expect(html).toContain("<p>Run context</p>");
+  });
+
   test("keeps safe collapsible details without trusting its attributes", () => {
     const host = parse(
       renderMarkdown(

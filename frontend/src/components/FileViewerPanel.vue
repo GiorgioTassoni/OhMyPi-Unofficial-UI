@@ -22,6 +22,7 @@ import {
   parseFilePath,
 } from "../lib/fileViewMeta";
 import { highlightCode } from "../lib/highlighter";
+import { parseFrontmatter } from "../lib/frontmatter";
 import Icon from "./ui/Icon.vue";
 import MarkdownBody from "./MarkdownBody.vue";
 
@@ -59,12 +60,14 @@ const extension = computed(() => meta.value.extension);
 
 const isImage = computed(() => isImageExtension(extension.value));
 const isSvg = computed(() => isSvgExtension(extension.value));
-const isMarkdown = computed(() => isMarkdownExtension(extension.value));
+const frontmatter = computed(() => parseFrontmatter(content.value));
+const isSkill = computed(() => cleanPath.value.startsWith("skill:") || cleanPath.value.startsWith("skill://") || cleanPath.value.endsWith("SKILL.md") || (frontmatter.value.hasFrontmatter && !!frontmatter.value.attributes.name));
+const isMarkdown = computed(() => isMarkdownExtension(extension.value) || frontmatter.value.hasFrontmatter || isSkill.value);
 
 /** Segmented view toggle for markdown & SVG documents: formatted Preview vs raw line-numbered source. */
 const mode = ref<"preview" | "raw">(isMarkdown.value || isSvg.value ? "preview" : "raw");
 
-watch(extension, () => {
+watch([extension, isMarkdown], () => {
   if (isMarkdown.value || isSvg.value) {
     mode.value = "preview";
   } else {
@@ -224,9 +227,13 @@ onUnmounted(() => {
   if (copyTimer) clearTimeout(copyTimer);
 });
 
-const languageLabel = computed(() => formatLanguageLabel(extension.value));
+const languageLabel = computed(() => {
+  if (isSkill.value) return "SKILL";
+  if (isMarkdown.value) return "MARKDOWN";
+  return formatLanguageLabel(extension.value);
+});
 
-const formattedLines = computed(() => highlightCode(content.value, extension.value));
+const formattedLines = computed(() => highlightCode(content.value, isMarkdown.value ? "md" : extension.value));
 </script>
 
 <template>
@@ -358,7 +365,7 @@ const formattedLines = computed(() => highlightCode(content.value, extension.val
       <div class="flex items-center gap-2 truncate">
         <span class="flex items-center gap-1 text-accent/90 font-medium">
           <span class="h-1.5 w-1.5 rounded-full bg-accent" />
-          {{ isImage && (!isSvg || mode === 'preview') ? 'Image preview' : 'Read-only view' }}
+          {{ isImage && (!isSvg || mode === 'preview') ? 'Image preview' : (isMarkdown && mode === 'preview' ? (isSkill ? 'Skill preview' : 'Markdown preview') : 'Read-only view') }}
         </span>
         <span>·</span>
         <span class="truncate font-mono text-faint/80">{{ props.file.path }}</span>
@@ -421,7 +428,39 @@ const formattedLines = computed(() => highlightCode(content.value, extension.val
         v-else-if="isMarkdown && mode === 'preview'"
         class="h-full w-full overflow-auto p-5 select-text leading-relaxed"
       >
-        <MarkdownBody :text="content" @failed="emit('failed', $event)" />
+        <!-- Skill / Frontmatter Metadata Banner -->
+        <div
+          v-if="frontmatter.hasFrontmatter"
+          class="mb-6 rounded-[8px] border border-line/70 bg-raised/40 p-4 shadow-2xs"
+        >
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2">
+              <Icon name="wand" class="h-4 w-4 text-accent" />
+              <span class="font-mono text-[13px] font-semibold text-fg">
+                {{ frontmatter.attributes.name ? `Skill: ${frontmatter.attributes.name}` : 'Document Metadata' }}
+              </span>
+            </div>
+            <span
+              v-if="frontmatter.attributes.version"
+              class="rounded-full bg-accent/15 px-2 py-0.5 font-mono text-[10.5px] font-medium text-accent"
+            >
+              v{{ frontmatter.attributes.version }}
+            </span>
+          </div>
+
+          <p v-if="frontmatter.attributes.description" class="text-[12.5px] leading-relaxed text-dim mb-3">
+            {{ frontmatter.attributes.description }}
+          </p>
+
+          <details class="text-[11.5px] text-faint group/fm">
+            <summary class="cursor-pointer select-none font-mono text-[11px] text-faint hover:text-dim transition-colors">
+              Raw frontmatter (YAML)
+            </summary>
+            <pre class="mt-2 rounded-[6px] border border-line/40 bg-canvas/60 p-2.5 font-mono text-[11px] text-dim overflow-x-auto whitespace-pre">{{ frontmatter.rawFrontmatter }}</pre>
+          </details>
+        </div>
+
+        <MarkdownBody :text="frontmatter.body" @failed="emit('failed', $event)" />
       </div>
 
       <!-- Code & Raw Text Lockstep Line-Numbered View -->

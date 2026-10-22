@@ -13,6 +13,8 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, triggerRef, watch } from "vue";
 import {
   availableCommands,
+  getArchivedHistoryInfo,
+  loadEarlierTurns,
   type SearchHit,
   onActivity,
   onAgents,
@@ -99,7 +101,12 @@ const emit = defineEmits<{
 }>();
 
 const status = ref<SessionStatus | null>(null);
+const archivedRows = shallowRef<RowSnapshot[]>([]);
+const activeRows = shallowRef<RowSnapshot[]>([]);
 const rows = shallowRef<RowSnapshot[]>([]);
+const remainingArchivedTurns = ref(0);
+const totalArchivedTurns = ref(0);
+const loadingEarlier = ref(false);
 const projection = shallowRef<TranscriptProjection>({ turns: [], summaries: new Map() });
 const subagentChanges = shallowRef<SubagentFileChange[]>([]);
 const disclosureMemory = createDisclosureMemory();
@@ -107,6 +114,54 @@ const dialogs = ref<UiRequestSnapshot[]>([]);
 const activity = ref<ActivitySnapshot[]>([]);
 const commands = ref<CommandEntry[]>([]);
 const measuredHeights = shallowRef<Map<number, number>>(new Map());
+
+async function refreshArchivedInfo(): Promise<void> {
+  if (!props.thread) return;
+  try {
+    const info = await getArchivedHistoryInfo(props.thread);
+    remainingArchivedTurns.value = info.remainingArchivedTurns;
+    totalArchivedTurns.value = info.archivedTurns;
+  } catch {
+    remainingArchivedTurns.value = 0;
+  }
+}
+
+async function loadEarlier(): Promise<void> {
+  if (loadingEarlier.value || remainingArchivedTurns.value === 0) return;
+  loadingEarlier.value = true;
+  try {
+    const el = conversationRef.value;
+    const oldScrollHeight = el ? el.scrollHeight : 0;
+    const oldScrollTop = el ? el.scrollTop : 0;
+
+    const res = await loadEarlierTurns(props.thread, 5);
+    if (res.rows.length > 0) {
+      archivedRows.value = [...res.rows, ...archivedRows.value];
+      const combined = [...archivedRows.value, ...activeRows.value];
+      rows.value = combined;
+      projection.value = initialProjection(combined, streaming.value);
+
+      const shifted = new Map<number, number>();
+      for (const [start, height] of measuredHeights.value) {
+        shifted.set(start + res.rows.length, height);
+      }
+      measuredHeights.value = shifted;
+
+      await nextTick();
+      if (el) {
+        const newScrollHeight = el.scrollHeight;
+        const delta = newScrollHeight - oldScrollHeight;
+        el.scrollTop = oldScrollTop + delta;
+        viewportTop.value = el.scrollTop;
+      }
+    }
+    remainingArchivedTurns.value = res.remainingArchivedTurns;
+  } catch (cause) {
+    emit("failed", describe(cause));
+  } finally {
+    loadingEarlier.value = false;
+  }
+}
 
 /** The tail is capped: it exists to show liveness, not to keep history. */
 const ACTIVITY_TAIL = 60;
@@ -182,6 +237,7 @@ onMounted(async () => {
           if (status.value?.control) {
             status.value.control.isCompacting = false;
           }
+          void refreshArchivedInfo();
         }
         void refreshStatus();
       }
@@ -213,7 +269,10 @@ onMounted(async () => {
       if (isNoLiveThread(cause)) return [];
       throw cause;
     });
+    activeRows.value = initialRows;
+    archivedRows.value = [];
     replaceTranscript(initialRows);
+    void refreshArchivedInfo();
     // A resumed conversation is rendered above the composer; open at its latest
     // message, after Vue has put the restored rows into the scroll container.
     await nextTick();
@@ -244,17 +303,22 @@ onUnmounted(() => {
  * the gap cannot be filled from here.
  */
 async function applyPatch(patch: RowPatch): Promise<void> {
-  const outcome = applyRowPatch(rows.value, patch);
+  const outcome = applyRowPatch(activeRows.value, patch);
   if (!outcome.stale) {
+    activeRows.value = outcome.rows;
+    const combined = archivedRows.value.length === 0 ? activeRows.value : [...archivedRows.value, ...activeRows.value];
+    rows.value = combined;
     const follow = isAtBottom();
-    patchTranscript(outcome.rows, patch.from);
+    patchTranscript(combined, archivedRows.value.length + patch.from);
     if (follow) followAfterRender();
     return;
   }
 
-  const recovered = await readTranscript(props.thread).catch(() => rows.value);
+  const recovered = await readTranscript(props.thread).catch(() => activeRows.value);
+  activeRows.value = recovered;
+  const combined = archivedRows.value.length === 0 ? activeRows.value : [...archivedRows.value, ...activeRows.value];
   const follow = isAtBottom();
-  replaceTranscript(recovered);
+  replaceTranscript(combined);
   if (follow) followAfterRender();
 }
 
@@ -295,8 +359,12 @@ async function refreshStatus(): Promise<void> {
 async function onChanged(): Promise<void> {
   try {
     status.value = await threadStatus(props.thread);
-    replaceTranscript(await readTranscript(props.thread));
+    const refreshed = await readTranscript(props.thread);
+    activeRows.value = refreshed;
+    const combined = archivedRows.value.length === 0 ? activeRows.value : [...archivedRows.value, ...activeRows.value];
+    replaceTranscript(combined);
     activity.value = [];
+    void refreshArchivedInfo();
   } catch (cause) {
     if (!isNoLiveThread(cause)) {
       emit("failed", describe(cause));
@@ -393,7 +461,10 @@ async function reload(): Promise<void> {
       throw cause;
     });
     if (refreshed !== null) {
-      replaceTranscript(refreshed);
+      activeRows.value = refreshed;
+      const combined = archivedRows.value.length === 0 ? activeRows.value : [...archivedRows.value, ...activeRows.value];
+      replaceTranscript(combined);
+      void refreshArchivedInfo();
     }
   } catch (cause) {
     if (!isNoLiveThread(cause)) {
@@ -441,7 +512,7 @@ const greeting = computed(() => {
 });
 
 const nothingSaidYet = computed(
-  () => rows.value.length === 0 && status.value?.control.messageCount === 0 && !streaming.value,
+  () => rows.value.length === 0 && remainingArchivedTurns.value === 0 && status.value?.control.messageCount === 0 && !streaming.value,
 );
 
 /**
@@ -649,6 +720,8 @@ defineExpose({
   jumpTo,
   revealRow,
   setDraft,
+  loadEarlier,
+  remainingArchivedTurns,
 });
 </script>
 
@@ -686,6 +759,31 @@ defineExpose({
       </div>
 
       <div v-else class="mx-auto w-full max-w-[46rem] py-4">
+        <!-- Archived history banner -->
+        <div
+          v-if="remainingArchivedTurns > 0"
+          class="mb-4 flex items-center justify-between rounded-[8px] border border-line bg-raised/40 px-3.5 py-2 text-[13px] text-dim transition-colors hover:bg-raised/70"
+          data-archived-banner
+        >
+          <div class="flex items-center gap-2">
+            <Icon name="clock" class="h-4 w-4 text-faint" />
+            <span>
+              <strong class="font-medium text-fg">{{ remainingArchivedTurns }}</strong>
+              {{ remainingArchivedTurns === 1 ? "turno precedente archiviato" : "turni precedenti archiviati" }}
+            </span>
+          </div>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-[6px] bg-accent/15 px-2.5 py-1 text-[12px] font-medium text-accent hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50 transition-colors cursor-pointer"
+            :disabled="loadingEarlier"
+            @click="loadEarlier"
+          >
+            <Icon v-if="loadingEarlier" name="refresh" class="h-3.5 w-3.5 animate-spin" />
+            <Icon v-else name="arrow-up" class="h-3.5 w-3.5" />
+            <span>{{ loadingEarlier ? "Caricamento…" : `Carica turni precedenti (${Math.min(5, remainingArchivedTurns)})` }}</span>
+          </button>
+        </div>
+
         <div aria-hidden="true" :style="{ height: `${visible.before}px` }" />
         <MeasuredTurn v-for="turn in visibleTurnEntries" :key="turn.start" :start="turn.start" @measured="onTurnMeasured">
         <article class="flex min-w-0 flex-col gap-2 border-line/50" :class="turn.start === turns[0]?.start ? '' : 'border-t pt-4'">

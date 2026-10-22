@@ -365,6 +365,27 @@ export async function transcript(thread: string): Promise<RowSnapshot[]> {
   return invoke<RowSnapshot[]>("transcript", { thread });
 }
 
+export interface ArchivedHistoryInfo {
+  totalTurns: number;
+  archivedTurns: number;
+  remainingArchivedTurns: number;
+}
+
+export interface LoadEarlierTurnsResult {
+  rows: RowSnapshot[];
+  remainingArchivedTurns: number;
+}
+
+/** Statistics on archived turns for a thread. */
+export async function getArchivedHistoryInfo(thread: string): Promise<ArchivedHistoryInfo> {
+  return invoke<ArchivedHistoryInfo>("get_archived_history_info", { thread });
+}
+
+/** Load a batch of earlier archived turns on demand. */
+export async function loadEarlierTurns(thread: string, batchSize: number): Promise<LoadEarlierTurnsResult> {
+  return invoke<LoadEarlierTurnsResult>("load_earlier_turns", { thread, batchSize });
+}
+
 /** Mirrors `dto::ImageIn`: an image the composer is sending (`docs/12` §5.1). */
 export interface ImageIn {
   /** Base64 bytes, without a `data:` prefix. */

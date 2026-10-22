@@ -37,6 +37,21 @@ describe("fileViewMeta", () => {
     expect(meta.extension).toBe("md");
   });
 
+  test("parseFilePath recognizes skill URIs as markdown documents", () => {
+    const meta = parseFilePath("skill://impeccable");
+    expect(meta.cleanPath).toBe("skill://impeccable");
+    expect(meta.basename).toBe("impeccable");
+    expect(meta.directory).toBe("skill://");
+    expect(meta.extension).toBe("md");
+
+    const metaWithRange = parseFilePath("skill://impeccable:10-25");
+    expect(metaWithRange.cleanPath).toBe("skill://impeccable");
+    expect(metaWithRange.lineRange).toBe("10-25");
+    expect(metaWithRange.basename).toBe("impeccable");
+    expect(metaWithRange.directory).toBe("skill://");
+    expect(metaWithRange.extension).toBe("md");
+  });
+
   test("cleanExtension normalizes suffixes and leading dots", () => {
     expect(cleanExtension("dart:239-245")).toBe("dart");
     expect(cleanExtension("file.ts#L5")).toBe("ts");

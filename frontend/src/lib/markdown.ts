@@ -122,6 +122,8 @@ function escape(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+
 /**
  * Render one message's markdown to sanitized HTML.
  *
@@ -129,6 +131,17 @@ function escape(text: string): string {
  * against whatever a live model happened to say (`markdown.test.ts`).
  */
 export function renderMarkdown(text: string): string {
-  const html = marked.parse(text, { async: false });
-  return DOMPurify.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR: ALLOWED_ATTR });
+  let markdownText = text;
+  let frontmatterHtml = "";
+
+  const match = text.match(FRONTMATTER_RE);
+  if (match) {
+    const rawYaml = match[1].trim();
+    markdownText = text.slice(match[0].length);
+    frontmatterHtml = `<details class="md-frontmatter"><summary>Metadata</summary><pre><code>${escape(rawYaml)}</code></pre></details>\n\n`;
+  }
+
+  const html = marked.parse(markdownText, { async: false });
+  const combined = frontmatterHtml ? frontmatterHtml + html : html;
+  return DOMPurify.sanitize(combined, { ALLOWED_TAGS, ALLOWED_ATTR: ALLOWED_ATTR });
 }

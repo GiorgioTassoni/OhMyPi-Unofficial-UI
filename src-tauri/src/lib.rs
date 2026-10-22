@@ -34,6 +34,7 @@
 //! (`tests/m0.rs`); `main.rs` only starts the app.
 
 pub mod agents;
+pub mod archived_history;
 pub mod bridge;
 pub mod clipboard;
 pub mod dialogs;
@@ -216,6 +217,8 @@ pub fn run() {
             bridge::parked_agents,
             bridge::agent_messages,
             bridge::subagent_file_changes,
+            bridge::get_archived_history_info,
+            bridge::load_earlier_turns,
             bridge::broker_processes,
             bridge::stop_broker_process,
             bridge::terminals,

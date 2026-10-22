@@ -25,6 +25,7 @@ use omp_transport::{ClientOptions, SidecarSpec};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::agents;
+use crate::archived_history::{self, ArchivedHistoryInfo, LoadEarlierTurnsResult};
 use crate::dto::{
     ActivitySnapshot, AgentSnapshot, AgentTranscript, ArtifactSnapshot, BranchTarget, BrokerScope,
     CommandSnapshot, ImageIn, IndexStatus, LaunchContext, ModelCatalogue, ParkedAgent,
@@ -372,6 +373,48 @@ pub async fn transcript(
     thread: String,
 ) -> Result<Vec<RowSnapshot>, String> {
     thread_of(&state, &thread)?.rows()
+}
+
+/// Statistics on archived turns for a thread.
+#[tauri::command]
+pub async fn get_archived_history_info(
+    state: State<'_, AppState>,
+    thread: String,
+) -> Result<ArchivedHistoryInfo, String> {
+    let session_file = thread_session_file(&state, &thread).await?;
+    let path = PathBuf::from(session_file);
+    let loaded = if let Some(live) = state.threads.get(&thread) {
+        *live.loaded_archived_turns.lock().unwrap()
+    } else {
+        0
+    };
+    scan(move || archived_history::get_history_info(&path, loaded)).await
+}
+
+/// Load a batch of earlier archived turns on demand.
+#[tauri::command]
+pub async fn load_earlier_turns(
+    state: State<'_, AppState>,
+    thread: String,
+    batch_size: usize,
+) -> Result<LoadEarlierTurnsResult, String> {
+    let session_file = thread_session_file(&state, &thread).await?;
+    let path = PathBuf::from(session_file);
+    let live = state.threads.get(&thread);
+    let loaded = if let Some(ref live) = live {
+        *live.loaded_archived_turns.lock().unwrap()
+    } else {
+        0
+    };
+    let outcome = scan(move || archived_history::load_batch(&path, loaded, batch_size)).await?;
+    if let Some(ref live) = live {
+        let mut guard = live.loaded_archived_turns.lock().unwrap();
+        *guard = outcome.new_loaded;
+    }
+    Ok(LoadEarlierTurnsResult {
+        rows: outcome.rows,
+        remaining_archived_turns: outcome.remaining_archived_turns,
+    })
 }
 
 /// Send a prompt.

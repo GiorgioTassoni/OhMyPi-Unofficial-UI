@@ -50,6 +50,20 @@ export function parseFilePath(rawPath: string): FilePathMeta {
   const lineRange = rawRange ? rawRange.replace(/L/g, "") : null;
   const cleanPath = lineMatch ? rawPath.slice(0, lineMatch.index) : rawPath;
 
+  // Handle skill URIs (e.g. "skill://impeccable", "skills://impeccable", "skill:impeccable")
+  if (/^skills?:/i.test(cleanPath)) {
+    const schemeMatch = cleanPath.match(/^skills?:(?:\/\/)?/i);
+    const prefix = schemeMatch ? schemeMatch[0] : "skill://";
+    const skillName = cleanPath.slice(prefix.length).replace(/\/.*$/, "");
+    return {
+      cleanPath,
+      lineRange,
+      basename: skillName || cleanPath,
+      directory: prefix.includes("//") ? "skill://" : "skill:",
+      extension: "md",
+    };
+  }
+
   const parts = cleanPath.split(/[/\\]/).filter(Boolean);
   const basename = parts.pop() || cleanPath;
 

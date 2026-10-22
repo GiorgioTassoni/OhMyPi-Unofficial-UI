@@ -221,6 +221,8 @@ pub struct LiveSession {
     title_generation_in_flight: Arc<AtomicBool>,
     /// Last invoked slash command, correlated with command_output.
     pub last_slash_command: Arc<Mutex<Option<String>>>,
+    /// Number of archived turns loaded into the conversation view on demand.
+    pub loaded_archived_turns: Mutex<usize>,
     pub pump: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -1219,6 +1221,7 @@ pub async fn open(
         agents_error: roster_error,
         title_generation_in_flight,
         last_slash_command,
+        loaded_archived_turns: Mutex::new(0),
         pump: Mutex::new(Some(pump)),
     }))
 }
