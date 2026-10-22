@@ -73,6 +73,7 @@
   --color-accent: #a397e9;
   --color-accent-bright: #ccc4fc;
   --color-accent-deep: #6f5fc4;
+  --color-accent-contrast: var(--color-canvas);
 
   --color-ok: #7fd7a5;
   --color-warn: #f5c86b;
@@ -208,6 +209,77 @@
 
 .streaming-dot {
   box-shadow: 0 0 6px color-mix(in srgb, var(--color-accent) 50%, transparent);
+}
+
+/* Prism syntax highlighting tokens mapped to app semantic theme variables */
+.token.comment,
+.token.prolog,
+.token.doctype,
+.token.cdata {
+  color: color-mix(in srgb, var(--color-faint) 80%, transparent);
+  font-style: italic;
+}
+
+.token.punctuation {
+  color: var(--color-dim);
+}
+
+.token.property,
+.token.tag,
+.token.constant,
+.token.symbol,
+.token.deleted {
+  color: var(--color-dim);
+}
+
+.token.boolean,
+.token.number {
+  color: var(--color-warn);
+}
+
+.token.selector,
+.token.attr-name,
+.token.string,
+.token.char,
+.token.builtin,
+.token.inserted {
+  color: var(--color-ok);
+}
+
+.token.operator,
+.token.entity,
+.token.url {
+  color: var(--color-dim);
+}
+
+.token.atrule,
+.token.attr-value,
+.token.keyword {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.token.function {
+  color: var(--color-fg);
+  font-weight: 500;
+}
+
+.token.class-name,
+.token.type {
+  color: var(--color-accent-bright);
+  font-weight: 500;
+}
+
+.token.regex,
+.token.important,
+.token.variable {
+  color: var(--color-warn);
+}
+
+.token.metadata {
+  color: var(--color-warn);
+  font-style: italic;
+  font-weight: 500;
 }
 
 html,

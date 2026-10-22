@@ -74,15 +74,22 @@ pub fn parse_skill_markdown(raw: &str) -> (String, String, String) {
     }
 
     let after_first = &trimmed[3..];
-    let end_idx = after_first.find("\n---").or_else(|| after_first.find("\r\n---"));
+    let end_idx = after_first
+        .find("\n---")
+        .or_else(|| after_first.find("\r\n---"));
     let Some(idx) = end_idx else {
         return (String::new(), String::new(), raw.to_string());
     };
 
     let yaml_block = &after_first[..idx];
-    let body_start = idx + if after_first[idx..].starts_with("\r\n---") { 5 } else { 4 };
+    let body_start = idx
+        + if after_first[idx..].starts_with("\r\n---") {
+            5
+        } else {
+            4
+        };
     let remainder = &after_first[body_start..];
-    let body = remainder.trim_start_matches(|c| c == '\r' || c == '\n').to_string();
+    let body = remainder.trim_start_matches(['\r', '\n']).to_string();
 
     let meta: SkillFrontmatter = serde_yaml::from_str(yaml_block).unwrap_or_default();
     (
@@ -97,7 +104,10 @@ pub fn user_skills_dir() -> Result<PathBuf, String> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "could not determine user home directory".to_string())?;
-    Ok(PathBuf::from(home).join(".omp").join("agent").join("skills"))
+    Ok(PathBuf::from(home)
+        .join(".omp")
+        .join("agent")
+        .join("skills"))
 }
 
 /// Resolve Claude user skills directory: `~/.claude/skills`.
@@ -116,8 +126,12 @@ pub fn resolve_target_skill_dir(
 ) -> Result<PathBuf, String> {
     let sanitized = sanitize_skill_name(skill_name)?;
     if scope == "project" {
-        let ws = workspace.ok_or_else(|| "project scope requires an active workspace".to_string())?;
-        Ok(PathBuf::from(ws).join(".omp").join("skills").join(sanitized))
+        let ws =
+            workspace.ok_or_else(|| "project scope requires an active workspace".to_string())?;
+        Ok(PathBuf::from(ws)
+            .join(".omp")
+            .join("skills")
+            .join(sanitized))
     } else {
         Ok(user_skills_dir()?.join(sanitized))
     }
@@ -128,8 +142,14 @@ pub fn sanitize_skill_name(name: &str) -> Result<String, String> {
     if trimmed.is_empty() {
         return Err("skill name cannot be empty".to_string());
     }
-    if !trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err("skill name may only contain alphanumeric characters, hyphens, and underscores".to_string());
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(
+            "skill name may only contain alphanumeric characters, hyphens, and underscores"
+                .to_string(),
+        );
     }
     Ok(trimmed.to_lowercase())
 }
@@ -158,10 +178,15 @@ pub fn scan_skills_in_dir(base_dir: &Path, scope: &str) -> Vec<SkillInfo> {
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default();
             let (name, description, _) = parse_skill_markdown(&content);
-            let final_name = if name.trim().is_empty() { dir_name } else { name };
+            let final_name = if name.trim().is_empty() {
+                dir_name
+            } else {
+                name
+            };
 
             let has_scripts = path.join("scripts").is_dir();
-            let has_references = path.join("reference").is_dir() || path.join("references").is_dir();
+            let has_references =
+                path.join("reference").is_dir() || path.join("references").is_dir();
 
             skills.push(SkillInfo {
                 name: final_name,
@@ -212,7 +237,10 @@ pub fn normalize_github_source(source: &str) -> Result<(String, String), String>
         // e.g. "pbakaus/impeccable"
         let parts: Vec<&str> = trimmed.split('/').collect();
         let name = parts.get(1).copied().unwrap_or("repository");
-        Ok((format!("https://github.com/{trimmed}.git"), name.to_string()))
+        Ok((
+            format!("https://github.com/{trimmed}.git"),
+            name.to_string(),
+        ))
     } else {
         Ok((trimmed.to_string(), "repository".to_string()))
     }
@@ -228,7 +256,9 @@ pub fn find_skills_in_tree(root: &Path) -> Vec<DetectedSkill> {
         if let Ok(content) = fs::read_to_string(&root_skill) {
             let (name, desc, body) = parse_skill_markdown(&content);
             let skill_name = if name.is_empty() {
-                root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "skill".to_string())
+                root.file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "skill".to_string())
             } else {
                 name
             };
@@ -271,7 +301,11 @@ pub fn find_skills_in_tree(root: &Path) -> Vec<DetectedSkill> {
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or_default();
                     let (name, desc, body) = parse_skill_markdown(&content);
-                    let final_name = if name.is_empty() { dir_name.clone() } else { name };
+                    let final_name = if name.is_empty() {
+                        dir_name.clone()
+                    } else {
+                        name
+                    };
 
                     let rel = path
                         .strip_prefix(root)
@@ -283,7 +317,8 @@ pub fn find_skills_in_tree(root: &Path) -> Vec<DetectedSkill> {
                         description: desc,
                         relative_path: rel,
                         has_scripts: path.join("scripts").is_dir(),
-                        has_references: path.join("reference").is_dir() || path.join("references").is_dir(),
+                        has_references: path.join("reference").is_dir()
+                            || path.join("references").is_dir(),
                         content_preview: body.chars().take(300).collect(),
                     });
                 }
@@ -310,8 +345,14 @@ pub async fn list_skills(workspace: Option<String>) -> Result<Vec<SkillInfo>, St
     // 2. Project skills
     if let Some(ws) = &workspace {
         let ws_path = Path::new(ws);
-        all.extend(scan_skills_in_dir(&ws_path.join(".omp").join("skills"), "project"));
-        all.extend(scan_skills_in_dir(&ws_path.join(".agents").join("skills"), "project"));
+        all.extend(scan_skills_in_dir(
+            &ws_path.join(".omp").join("skills"),
+            "project",
+        ));
+        all.extend(scan_skills_in_dir(
+            &ws_path.join(".agents").join("skills"),
+            "project",
+        ));
     }
 
     // 3. Claude user skills
@@ -421,7 +462,8 @@ pub async fn import_remote_skill(input: ImportSkillInput) -> Result<SkillInfo, S
             return Err("specified skill was not found in repository".to_string());
         };
 
-        let target_dir = resolve_target_skill_dir(&target_scope, &skill.name, target_workspace.as_deref())?;
+        let target_dir =
+            resolve_target_skill_dir(&target_scope, &skill.name, target_workspace.as_deref())?;
         let source_dir = if skill.relative_path == "." {
             temp_path.to_path_buf()
         } else {
@@ -432,9 +474,8 @@ pub async fn import_remote_skill(input: ImportSkillInput) -> Result<SkillInfo, S
             let _ = fs::remove_dir_all(&target_dir);
         }
 
-        copy_dir_all(&source_dir, &target_dir).map_err(|e| {
-            format!("failed to copy skill files to destination: {e}")
-        })?;
+        copy_dir_all(&source_dir, &target_dir)
+            .map_err(|e| format!("failed to copy skill files to destination: {e}"))?;
 
         Ok(SkillInfo {
             name: skill.name,
@@ -450,7 +491,8 @@ pub async fn import_remote_skill(input: ImportSkillInput) -> Result<SkillInfo, S
 #[tauri::command]
 pub async fn open_skills_folder(scope: String, workspace: Option<String>) -> Result<(), String> {
     let dir = if scope == "project" {
-        let ws = workspace.ok_or_else(|| "project scope requires an active workspace".to_string())?;
+        let ws =
+            workspace.ok_or_else(|| "project scope requires an active workspace".to_string())?;
         PathBuf::from(ws).join(".omp").join("skills")
     } else {
         user_skills_dir()?
@@ -494,7 +536,8 @@ Check everything carefully.
         assert_eq!(url1, "https://github.com/pbakaus/impeccable.git");
         assert_eq!(name1, "impeccable");
 
-        let (url2, name2) = normalize_github_source("https://github.com/pbakaus/impeccable").unwrap();
+        let (url2, name2) =
+            normalize_github_source("https://github.com/pbakaus/impeccable").unwrap();
         assert_eq!(url2, "https://github.com/pbakaus/impeccable.git");
         assert_eq!(name2, "impeccable");
 

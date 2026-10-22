@@ -407,7 +407,8 @@ async function send(operation: Sendable): Promise<void> {
  * `/security scan` is a message, so completing a row is the same edit either way.
  */
 async function insert(text: string): Promise<void> {
-  const next = replaceToken(draft.value, caret.value, text);
+  const tokenStart = palette.value?.tokenStart ?? 0;
+  const next = replaceToken(draft.value, caret.value, text, tokenStart);
   draft.value = next.text;
   caret.value = next.caret;
 
@@ -451,7 +452,7 @@ function grow(): void {
   const element = box.value;
   if (element === null) return;
   element.style.height = "auto";
-  element.style.height = `${element.scrollHeight}px`;
+  element.style.height = `${Math.max(28, element.scrollHeight)}px`;
 }
 
 /** The caret a box event reports, or the end of the text when it reports none. */
@@ -510,7 +511,8 @@ async function accept(): Promise<void> {
     return;
   }
 
-  const text = props.streaming ? null : dispatchOf(item);
+  const isMidPrompt = (palette.value?.tokenStart ?? 0) > 0;
+  const text = props.streaming || isMidPrompt ? null : dispatchOf(item);
   if (text === null) {
     await insert(insertionOf(item));
     return;
@@ -661,12 +663,11 @@ defineExpose({ setDraft });
       only once there is something to send.
     -->
     <div
-      class="flex items-end gap-2 rounded-[12px] border border-line-strong/70 bg-raised/95 backdrop-blur-md px-3 py-2.5 transition-all focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/35 shadow-md shadow-black/20"
+      class="flex items-end gap-2 rounded-[12px] border border-line-strong/70 bg-raised/95 backdrop-blur-md px-3 py-2 transition-all focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/35 shadow-md shadow-black/20"
     >
       <!-- `+` accepts images and UTF-8 files; a drop carries an OS path instead. -->
       <button
-        class="mb-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-[6px] text-faint transition-all hover:bg-surface hover:text-fg active:scale-95"
-        title="attach an image or UTF-8 text file; drop other files to send their path"
+        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-faint transition-all hover:bg-surface hover:text-fg active:scale-95"
         aria-label="attach"
         @click="picker?.click()"
       >
@@ -680,7 +681,7 @@ defineExpose({ setDraft });
         @change="onPicked"
       />
 
-      <span v-if="readingFiles" class="mb-1 shrink-0 text-[11px] text-faint">Reading files…</span>
+      <span v-if="readingFiles" class="flex h-7 shrink-0 items-center text-[11px] text-faint">Reading files…</span>
 
       <textarea
         ref="box"
@@ -688,7 +689,7 @@ defineExpose({ setDraft });
         rows="1"
         spellcheck="false"
         placeholder="Type / for commands"
-        class="max-h-40 flex-1 resize-none overflow-y-auto bg-transparent py-0.5 text-[13px] leading-snug text-fg outline-none placeholder:text-faint [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        class="max-h-40 min-h-[28px] flex-1 resize-none overflow-y-auto bg-transparent py-1 text-[13px] leading-5 text-fg outline-none placeholder:text-faint [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         @input="onInput"
         @keydown="onKeydown"
         @keyup="caret = caretOf($event)"
@@ -700,19 +701,18 @@ defineExpose({ setDraft });
       <button
         v-if="hasInput"
         :disabled="!canSend"
-        class="mb-0.5 grid h-6 min-w-6 shrink-0 place-items-center rounded-[6px] bg-accent px-2.5 py-0.5 text-[12px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100 shadow-sm"
-        :title="isWorking ? 'steer' : 'send (Enter)'"
+        class="flex h-7 min-w-7 shrink-0 items-center justify-center rounded-[6px] bg-accent px-2.5 text-[12px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100 shadow-sm"
         @click="send(isWorking ? 'steer' : 'prompt')"
       >
-        <span>{{ isWorking ? "steer" : "↵" }}</span>
+        <span class="leading-none select-none">{{ isWorking ? "steer" : "↵" }}</span>
       </button>
       <button
         v-if="isWorking"
         :disabled="stopping"
-        class="mb-0.5 shrink-0 rounded-[6px] border border-line px-2.5 py-0.5 text-[11.5px] text-dim transition-all hover:border-err/60 hover:text-err hover:bg-err/10 active:scale-95 disabled:opacity-50"
+        class="flex h-7 shrink-0 items-center justify-center rounded-[6px] border border-line px-2.5 text-[11.5px] text-dim transition-all hover:border-err/60 hover:text-err hover:bg-err/10 active:scale-95 disabled:opacity-50"
         @click="stop"
       >
-        {{ stopping ? "stopping…" : "stop" }}
+        <span class="leading-none">{{ stopping ? "stopping…" : "stop" }}</span>
       </button>
     </div>
 

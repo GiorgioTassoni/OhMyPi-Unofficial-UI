@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { activityDiff, activityDiffCounts } from "../lib/activityDiff";
 import { commandProgram } from "../lib/approval";
-import { toolView, touchedFiles } from "../lib/toolView";
+import { wholeFileRead, toolView, touchedFiles } from "../lib/toolView";
 import type { DisclosureMemory } from "../lib/disclosureMemory";
 import type { GroupKind, IndexedRow } from "../lib/turnActivity";
 import DiffView from "./DiffView.vue";
@@ -15,6 +15,11 @@ const props = defineProps<{
   flashed: boolean;
   memory: DisclosureMemory;
 }>();
+
+const emit = defineEmits<{
+  (e: "openFile", file: { path: string; content?: string; artifactId?: string | null }): void;
+}>();
+
 const tool = computed(() => props.entry.row.tool!);
 const view = computed(() => toolView(tool.value));
 const commandPrefix = computed(() => commandProgram(view.value.summary ?? "") ?? tool.value.toolName);
@@ -38,18 +43,43 @@ const title = computed(() => {
 });
 const failed = computed(() => tool.value.isError || /^Tool call denied by user(?::|$)/i.test((tool.value.output ?? "").trim()));
 const icon = computed(() => props.kind === "read" ? "file" : props.kind === "command" ? "terminal" : props.kind === "edit" ? "pencil" : "wrench");
+
+const wholeRead = computed(() => (failed.value ? { isWhole: false, path: null } : wholeFileRead(tool.value)));
+const isWholeFile = computed(() => wholeRead.value.isWhole);
+const filePath = computed(() => wholeRead.value.path || view.value.summary || "");
+
+function onRowClick(): void {
+  if (!isWholeFile.value) return;
+  emit("openFile", {
+    path: filePath.value,
+    content: tool.value.output,
+    artifactId: view.value.artifact,
+  });
+}
 </script>
 
 <template>
   <div
     v-if="kind === 'read'"
-    class="flex min-w-0 items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] text-dim"
+    class="flex min-w-0 items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] select-none transition-colors"
+    :class="[
+      flashed ? 'bg-accent/10 ring-1 ring-accent' : '',
+      isWholeFile
+        ? 'cursor-pointer text-dim hover:bg-raised/75 hover:text-fg'
+        : 'text-dim'
+    ]"
     :data-row-index="entry.index"
-    :class="flashed ? 'bg-accent/10 ring-1 ring-accent' : ''"
-    :title="view.summary ?? undefined"
+    :role="isWholeFile ? 'button' : undefined"
+    :tabindex="isWholeFile ? 0 : undefined"
+    @click="onRowClick"
+    @keydown.enter="onRowClick"
   >
     <Icon name="file" class="h-3.5 w-3.5 shrink-0 text-faint" />
     <span class="min-w-0 truncate font-mono">{{ title }}</span>
+    <span v-if="isWholeFile" class="ml-auto flex items-center gap-1 text-faint">
+      <span class="rounded bg-raised/80 px-1.5 py-0.5 font-mono text-[10px] text-faint">view</span>
+      <Icon name="chevron-right" class="h-3 w-3 shrink-0 text-faint" />
+    </span>
     <Icon v-if="failed" name="close" class="ml-auto h-3.5 w-3.5 shrink-0 text-err" aria-label="Failed or denied" />
   </div>
   <details
@@ -75,7 +105,7 @@ const icon = computed(() => props.kind === "read" ? "file" : props.kind === "com
         <div v-if="edits?.files.length === 0" class="px-3 py-2 text-faint">No file diff was reported for this call.</div>
         <div v-for="file in edits?.files" :key="file.path" class="min-w-0 border-t border-line/40 first:border-0">
           <div class="flex min-w-0 items-center gap-2 px-3 py-1.5 font-mono text-[11px]">
-            <span class="min-w-0 flex-1 truncate" :title="file.path">{{ file.path }}</span>
+            <span class="min-w-0 flex-1 truncate">{{ file.path }}</span>
             <span v-if="file.added !== null" class="shrink-0"><span class="text-ok">+{{ file.added }}</span> <span class="text-err">-{{ file.removed }}</span></span>
           </div>
           <DiffView v-if="file.pieces.length" :pieces="file.pieces" compact />

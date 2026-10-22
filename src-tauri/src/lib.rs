@@ -44,8 +44,8 @@ pub mod flows;
 pub mod idle;
 pub mod models;
 pub mod notify;
-pub mod panel;
 pub mod palette;
+pub mod panel;
 pub mod policy;
 pub mod providers;
 pub mod pty;
@@ -192,6 +192,8 @@ pub fn run() {
             bridge::set_todos,
             bridge::workspace_tree,
             bridge::read_artifact,
+            bridge::read_file_content,
+            bridge::read_file_base64,
             bridge::available_commands,
             bridge::refresh_models,
             bridge::set_model,

@@ -530,7 +530,10 @@ pub(crate) fn ensure_model_overrides_in(agent_dir: &Path) -> Result<(), String> 
         );
     }
 
-    let providers_map = match root_map.get_mut(&providers_key).and_then(|v| v.as_mapping_mut()) {
+    let providers_map = match root_map
+        .get_mut(&providers_key)
+        .and_then(|v| v.as_mapping_mut())
+    {
         Some(m) => m,
         None => return Ok(()),
     };
@@ -543,7 +546,10 @@ pub(crate) fn ensure_model_overrides_in(agent_dir: &Path) -> Result<(), String> 
         );
     }
 
-    let cmd_code_map = match providers_map.get_mut(&cmd_code_key).and_then(|v| v.as_mapping_mut()) {
+    let cmd_code_map = match providers_map
+        .get_mut(&cmd_code_key)
+        .and_then(|v| v.as_mapping_mut())
+    {
         Some(m) => m,
         None => return Ok(()),
     };
@@ -556,7 +562,10 @@ pub(crate) fn ensure_model_overrides_in(agent_dir: &Path) -> Result<(), String> 
         );
     }
 
-    let overrides_map = match cmd_code_map.get_mut(&overrides_key).and_then(|v| v.as_mapping_mut()) {
+    let overrides_map = match cmd_code_map
+        .get_mut(&overrides_key)
+        .and_then(|v| v.as_mapping_mut())
+    {
         Some(m) => m,
         None => return Ok(()),
     };
@@ -665,16 +674,20 @@ mod tests {
 
     #[test]
     fn ensure_model_overrides_adds_commandcode_overrides() {
-        let temp_dir = std::env::temp_dir().join(format!("omp-test-overrides-{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("omp-test-overrides-{}", std::process::id()));
         let _ = fs::create_dir_all(&temp_dir);
 
-        ensure_model_overrides_in(&temp_dir).expect("ensures overrides without models.yml existing");
+        ensure_model_overrides_in(&temp_dir)
+            .expect("ensures overrides without models.yml existing");
 
         let yml_path = models_yml_path(&temp_dir);
         let contents = fs::read_to_string(&yml_path).expect("file created");
         let parsed: serde_yaml::Value = serde_yaml::from_str(&contents).expect("valid yaml");
 
-        assert!(parsed["providers"]["commandcode"]["modelOverrides"]["claude-haiku-5-5"].is_mapping());
+        assert!(
+            parsed["providers"]["commandcode"]["modelOverrides"]["claude-haiku-5-5"].is_mapping()
+        );
         assert_eq!(
             parsed["providers"]["commandcode"]["modelOverrides"]["claude-haiku-5-5"]["reasoning"],
             serde_yaml::Value::Bool(true)

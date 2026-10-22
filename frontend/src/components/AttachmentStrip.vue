@@ -54,7 +54,6 @@ const emit = defineEmits<{
 
         <span class="flex flex-col leading-tight">
           <span
-            :title="attachment.kind === 'path' ? attachment.path : attachment.name"
             class="max-w-[14rem] truncate font-mono text-[11.5px] text-fg"
           >
             {{ attachment.name }}
@@ -71,7 +70,7 @@ const emit = defineEmits<{
         </span>
 
         <button
-          :title="`remove ${attachment.name}`"
+          aria-label="remove attachment"
           class="rounded-[6px] p-1 text-faint hover:bg-surface hover:text-err"
           @click="emit('remove', attachment.id)"
         >

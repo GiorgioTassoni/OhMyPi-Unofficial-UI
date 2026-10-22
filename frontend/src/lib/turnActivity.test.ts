@@ -11,16 +11,20 @@ function call(toolName: string, args: string, details = "", extra: Partial<ToolS
 }
 
 describe("conversation turn activity", () => {
-  test("compaction receipts stay visible outside collapsed tool activity", () => {
+  test("compaction receipts stay visible as inline notices in chronological order", () => {
     const receipt = row({ role: "notice:info", text: "Context compacted", customType: "manual_compaction_end" });
     const turns = conversationTurns([
       row({ role: "user", text: "check" }),
       call("read", '{"path":"one.ts"}'),
-      said("done"),
       receipt,
+      call("bash", '{"command":"echo 1"}'),
+      said("done"),
     ], false);
     expect(turns[0].notices?.map((entry) => entry.row)).toEqual([receipt]);
-    expect(turns[0].items.some((item) => item.kind === "row" && item.entry.row === receipt)).toBe(false);
+    expect(turns[0].items.some((item) => item.kind === "notice" && item.entry.row === receipt)).toBe(true);
+    // Notice is in the middle of items, between the read and the bash call
+    const noticeIndex = turns[0].items.findIndex((item) => item.kind === "notice");
+    expect(noticeIndex).toBe(1);
     expect(turns[0].answer?.row.text).toBe("done");
   });
 
@@ -153,5 +157,27 @@ describe("conversation turn activity", () => {
     expect(turns[0].user?.row.text).toBe("do something");
     expect(turns[0].items.some((item) => item.kind === "row")).toBe(false);
     expect(turns[0].answer?.row.text).toBe("done");
+  });
+
+  test("splits turns when a skill-prompt invocation arrives and sets it as the turn user", () => {
+    const turns = conversationTurns([
+      row({ role: "user", text: "continue" }),
+      said("Working on it..."),
+      row({
+        role: "custom",
+        customType: "skill-prompt",
+        text: '[IMPORTANT: User invoked the "impeccable" skill; follow its instructions. Full skill below.]\n\nReview UI\n---\n[Skill directory: /skills/impeccable]\nUser: check settings',
+      }),
+      said("Inspecting settings UI..."),
+    ], false);
+
+    expect(turns.length).toBe(2);
+    expect(turns[0].user?.row.text).toBe("continue");
+    expect(turns[0].answer?.row.text).toBe("Working on it...");
+
+    expect(turns[1].user?.row.customType).toBe("skill-prompt");
+    expect(turns[1].user?.row.text).toContain('User invoked the "impeccable" skill');
+    expect(turns[1].answer?.row.text).toBe("Inspecting settings UI...");
+    expect(turns[1].items.some((item) => item.kind === "row" && item.entry.row.customType === "skill-prompt")).toBe(false);
   });
 });

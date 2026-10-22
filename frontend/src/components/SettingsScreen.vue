@@ -307,8 +307,8 @@ function describe(cause: unknown): string {
 
         <template v-else-if="info && screen !== null">
           <div>
-            <h1 class="text-[20px] text-fg">Settings info</h1>
-            <p class="mt-1 text-[12.5px] leading-relaxed text-dim">
+            <h1 class="text-[24px] font-semibold tracking-tight text-fg">Settings info</h1>
+            <p class="mt-1.5 text-[13px] leading-relaxed text-dim">
               Configuration sources and compatibility details for this OMP settings catalog.
             </p>
             <div class="mt-6">
@@ -352,8 +352,8 @@ function describe(cause: unknown): string {
               here draws the file — that surface owns the two panes, the diff and the backup.
             -->
             <template v-else>
-              <h1 class="text-[20px] text-fg">{{ section.title }}</h1>
-              <p v-if="section.blurb !== ''" class="mt-1 text-[12.5px] leading-relaxed text-dim">
+              <h1 class="text-[24px] font-semibold tracking-tight text-fg">{{ section.title }}</h1>
+              <p v-if="section.blurb !== ''" class="mt-1.5 text-[13px] leading-relaxed text-dim">
                 {{ section.blurb }}
               </p>
               <div class="mt-6">

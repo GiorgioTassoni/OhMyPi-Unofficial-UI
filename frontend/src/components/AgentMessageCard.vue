@@ -26,7 +26,7 @@ function onToggle(event: Event): void {
           <span v-if="message.recipient" class="break-words text-dim">→ {{ message.recipient }}</span>
           <span class="text-faint">· {{ message.label }}</span>
         </div>
-        <p class="mt-0.5 truncate text-[11.5px] text-dim" :title="message.summary">{{ message.summary }}</p>
+        <p class="mt-0.5 truncate text-[11.5px] text-dim">{{ message.summary }}</p>
       </div>
       <Icon name="chevron-down" class="mt-0.5 h-3 w-3 shrink-0 text-faint transition-transform group-open/agent:rotate-180" />
     </summary>

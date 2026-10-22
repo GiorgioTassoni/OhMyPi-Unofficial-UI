@@ -43,7 +43,6 @@ function decorateCodeBlocks(): void {
     const copyBtn = document.createElement("button");
     copyBtn.type = "button";
     copyBtn.className = "code-copy-btn";
-    copyBtn.title = "Copy code";
     copyBtn.setAttribute("aria-label", "Copy code");
     copyBtn.innerHTML = COPY_ICON;
     header.appendChild(copyBtn);

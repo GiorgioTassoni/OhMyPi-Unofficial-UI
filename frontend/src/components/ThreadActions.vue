@@ -295,7 +295,7 @@ function describe(cause: unknown): string {
     @close="confirming = false"
   >
     <div class="rounded-[8px] border border-line/70 bg-raised/50 px-3 py-2.5">
-      <p class="truncate text-[12.5px] font-medium text-fg" :title="subject?.label">
+      <p class="truncate text-[12.5px] font-medium text-fg">
         {{ subject?.label }}
       </p>
       <p v-if="subject?.context.live" class="mt-1 text-[11.5px] text-warn">

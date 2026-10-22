@@ -42,7 +42,6 @@ function toggleFile(path: string): void {
         v-if="!props.sidebar"
         type="button"
         class="shrink-0 rounded-[6px] px-2 py-1 text-[11.5px] text-dim transition-colors hover:bg-raised hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        title="Review this turn's changes in the Files panel"
         @click="emit('review', props.summary)"
       >
         Review
@@ -54,7 +53,6 @@ function toggleFile(path: string): void {
         <button
           type="button"
           class="flex w-full items-center gap-3 px-3 py-1.5 text-left transition-colors hover:bg-raised/70 focus-visible:bg-raised/70 focus-visible:outline-none"
-          :title="`Show every reported change to ${file.path}`"
           :aria-expanded="openFiles.includes(file.path)"
           @click="toggleFile(file.path)"
         >
@@ -63,7 +61,6 @@ function toggleFile(path: string): void {
             <span
               v-if="file.agentName && file.agentName !== 'task'"
               class="shrink-0 rounded bg-raised px-1 py-0.5 text-[10px] text-accent font-sans"
-              :title="`Changed by subagent ${file.agentName}`"
             >
               {{ file.agentName }}
             </span>

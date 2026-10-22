@@ -62,7 +62,6 @@ const BUTTON =
       <button
         v-if="props.sidebarCollapsed"
         :class="BUTTON"
-        title="show sidebar"
         aria-label="show sidebar"
         data-action="toggle-sidebar"
         type="button"
@@ -73,7 +72,6 @@ const BUTTON =
       <span
         v-if="props.title"
         class="truncate text-[13px] font-medium text-fg"
-        :title="props.title"
       >
         {{ props.title }}
       </span>
@@ -81,7 +79,6 @@ const BUTTON =
         v-if="props.project"
         class="truncate text-[12px]"
         :class="props.title ? 'text-faint' : 'text-[13px] font-medium text-fg/90'"
-        :title="props.project"
         data-project
       >
         {{ projectName }}
@@ -93,7 +90,6 @@ const BUTTON =
       <button
         v-if="!props.panel && !props.diagnostics"
         :class="BUTTON"
-        title="the thread panel: its plan and the files it changed"
         aria-label="thread panel"
         data-action="panel"
         type="button"

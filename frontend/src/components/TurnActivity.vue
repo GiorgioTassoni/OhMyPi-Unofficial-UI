@@ -7,7 +7,10 @@ import ConversationRow from "./ConversationRow.vue";
 import Icon from "./ui/Icon.vue";
 
 const props = defineProps<{ turn: ConversationTurn; flashed: number | null; memory: DisclosureMemory }>();
-const emit = defineEmits<{ failed: [message: string] }>();
+const emit = defineEmits<{
+  failed: [message: string];
+  openFile: [file: { path: string; content?: string; artifactId?: string | null }];
+}>();
 const label = computed(() => workLabel(props.turn));
 const hasTools = computed(() => props.turn.items.some((item) => item.kind === "group" || item.kind === "agent-completion"));
 const showActivity = computed(() => hasTools.value || props.turn.working);
@@ -65,6 +68,7 @@ function icon(kind: GroupKind): "search" | "terminal" | "pencil" | "wrench" {
               :kind="item.group.kind"
               :flashed="flashed === entry.index"
               :memory="memory"
+              @open-file="emit('openFile', $event)"
             />
           </div>
         </details>
@@ -75,6 +79,7 @@ function icon(kind: GroupKind): "search" | "terminal" | "pencil" | "wrench" {
           :flashed="flashed === item.index"
           :memory="memory"
           standalone
+          @open-file="emit('openFile', $event)"
         />
         <div
           v-else-if="item.kind === 'agent-completion'"
@@ -84,6 +89,26 @@ function icon(kind: GroupKind): "search" | "terminal" | "pencil" | "wrench" {
         >
           <Icon name="bot" class="h-3.5 w-3.5 shrink-0" :class="item.status === 'completed' ? 'text-ok' : 'text-err'" />
           <span class="truncate">{{ item.status === 'completed' ? 'Completed' : item.status === 'failed' ? 'Failed' : 'Stopped' }} job <span class="font-medium text-fg">{{ item.name }}</span></span>
+        </div>
+        <div
+          v-else-if="item.kind === 'notice'"
+          :data-row-index="item.entry.index"
+          class="my-2 flex items-center gap-2.5 py-1 text-[11.5px] select-none"
+          role="status"
+        >
+          <div class="h-px flex-1 bg-line/50" />
+          <div
+            class="flex items-center gap-1.5 font-medium"
+            :class="item.entry.row.role === 'notice:error' ? 'text-err' : item.entry.row.role === 'notice:warning' ? 'text-warn' : 'text-dim'"
+          >
+            <Icon
+              :name="item.entry.row.role === 'notice:error' ? 'close' : 'sparkle'"
+              class="h-3.5 w-3.5 shrink-0"
+              :class="item.entry.row.role === 'notice:error' ? 'text-err' : item.entry.row.role === 'notice:warning' ? 'text-warn' : 'text-accent'"
+            />
+            <span>{{ item.entry.row.text }}</span>
+          </div>
+          <div class="h-px flex-1 bg-line/50" />
         </div>
         <div
           v-else
@@ -103,7 +128,26 @@ function icon(kind: GroupKind): "search" | "terminal" | "pencil" | "wrench" {
       :data-row-index="item.index"
       :class="flashed === item.index ? 'rounded bg-accent/10 ring-1 ring-accent' : ''"
     >
-      <ConversationRow v-if="item.kind === 'row'" :row="item.entry.row" :hide-copy="true" @failed="emit('failed', $event)" />
+      <div
+        v-if="item.kind === 'notice'"
+        class="my-2 flex items-center gap-2.5 py-1 text-[11.5px] select-none"
+        role="status"
+      >
+        <div class="h-px flex-1 bg-line/50" />
+        <div
+          class="flex items-center gap-1.5 font-medium"
+          :class="item.entry.row.role === 'notice:error' ? 'text-err' : item.entry.row.role === 'notice:warning' ? 'text-warn' : 'text-dim'"
+        >
+          <Icon
+            :name="item.entry.row.role === 'notice:error' ? 'close' : 'sparkle'"
+            class="h-3.5 w-3.5 shrink-0"
+            :class="item.entry.row.role === 'notice:error' ? 'text-err' : item.entry.row.role === 'notice:warning' ? 'text-warn' : 'text-accent'"
+          />
+          <span>{{ item.entry.row.text }}</span>
+        </div>
+        <div class="h-px flex-1 bg-line/50" />
+      </div>
+      <ConversationRow v-else-if="item.kind === 'row'" :row="item.entry.row" :hide-copy="true" @failed="emit('failed', $event)" />
     </div>
   </div>
 </template>

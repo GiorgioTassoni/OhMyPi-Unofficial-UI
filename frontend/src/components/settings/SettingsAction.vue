@@ -12,7 +12,7 @@
  * An action this build has never heard of says so, in place of a button. A control that did
  * nothing when pressed would be indistinguishable from one that worked.
  */
-import { inject, ref } from "vue";
+import { computed, inject, ref } from "vue";
 
 import type { SettingsActionRow } from "../../bridge";
 import Icon from "../ui/Icon.vue";
@@ -43,6 +43,13 @@ const VERBS: Partial<Record<string, string>> = {
 const open = ref(false);
 const failure = ref<string | null>(null);
 
+/** Extract the mode from context, or fallback to parsing the row's description (`mode`). */
+const currentMode = computed(() => {
+  if (context.mode.value) return context.mode.value;
+  const match = props.row.description.match(/`([^`]+)`/);
+  return match ? match[1] : "yolo";
+});
+
 function describe(cause: unknown): string {
   return typeof cause === "string" ? cause : cause instanceof Error ? cause.message : String(cause);
 }
@@ -54,20 +61,19 @@ function describe(cause: unknown): string {
       v-if="props.row.action === 'open-mode-menu'"
       :open="open"
       label="approval mode"
+      side="below"
       :width="320"
       @close="open = false"
     >
       <template #trigger>
         <button
           type="button"
-          :disabled="context.thread.value === null"
           class="flex items-center gap-2 rounded-[6px] border px-2.5 py-1 text-[11.5px]"
           :class="
             props.row.tone === 'danger'
               ? 'border-err/50 text-err hover:bg-err/10'
               : 'border-line-strong text-fg hover:bg-raised'
           "
-          :title="context.thread.value === null ? 'open a thread first — the mode is per session' : ''"
           :data-action="props.row.action"
           @click="open = !open"
         >
@@ -79,7 +85,7 @@ function describe(cause: unknown): string {
       <ModePopover
         :thread="context.thread.value ?? ''"
         :open="open"
-        :mode="context.mode.value"
+        :mode="currentMode"
         @close="open = false"
         @changed="emit('changed')"
         @failed="failure = describe($event)"

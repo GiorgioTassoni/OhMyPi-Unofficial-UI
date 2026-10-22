@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { playNotificationSound, type SoundKind } from "../../lib/notificationSound";
+import Icon from "../ui/Icon.vue";
 import Toggle from "../ui/Toggle.vue";
 
 const props = defineProps<{ enabled: boolean }>();
@@ -28,10 +29,24 @@ async function preview(kind: SoundKind): Promise<void> {
         <p class="mt-0.5 text-[12px] leading-relaxed text-faint">
           Play a soft chime when a turn finishes or the agent needs your answer.
         </p>
-        <div class="mt-2 flex items-center gap-3 text-[11px] text-faint">
-          <span>App preference · applies immediately</span>
-          <button type="button" class="text-dim hover:text-fg" @click="preview('finished')">Preview finished</button>
-          <button type="button" class="text-dim hover:text-fg" @click="preview('needs-you')">Preview question</button>
+        <div class="mt-2.5 flex flex-wrap items-center gap-2 text-[11px] text-faint">
+          <span class="mr-1">App preference · applies immediately</span>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 rounded-[5px] border border-line/60 bg-surface/50 px-2 py-0.5 text-dim transition-all hover:border-line-strong hover:bg-raised hover:text-fg active:scale-95 shadow-xs"
+            @click="preview('finished')"
+          >
+            <Icon name="play" class="h-2.5 w-2.5 text-accent" />
+            Preview finished
+          </button>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 rounded-[5px] border border-line/60 bg-surface/50 px-2 py-0.5 text-dim transition-all hover:border-line-strong hover:bg-raised hover:text-fg active:scale-95 shadow-xs"
+            @click="preview('needs-you')"
+          >
+            <Icon name="play" class="h-2.5 w-2.5 text-accent" />
+            Preview question
+          </button>
         </div>
         <p v-if="previewError" class="mt-1.5 text-[11px] text-err" role="alert">{{ previewError }}</p>
       </div>

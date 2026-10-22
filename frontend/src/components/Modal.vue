@@ -45,7 +45,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown, true));
           <button
             class="ml-auto rounded-[6px] p-1 text-faint transition-colors hover:bg-raised hover:text-fg"
             type="button"
-            title="close"
+            aria-label="close"
             @click="emit('close')"
           >
             <Icon name="close" class="h-3.5 w-3.5" />

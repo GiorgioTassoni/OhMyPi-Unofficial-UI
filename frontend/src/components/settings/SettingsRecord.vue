@@ -113,7 +113,6 @@ function commitAddition(): void {
       <span
         v-if="roles"
         class="truncate px-1 font-mono text-[12.5px] text-dim"
-        :title="entry.key"
         data-record-key="fixed"
       >
         {{ entry.key }}
@@ -150,7 +149,6 @@ function commitAddition(): void {
           >
             <span
               class="min-w-0 flex-1 truncate font-mono text-fg"
-              :title="textOf(entry.value)"
             >
               {{ textOf(entry.value) === "" ? "pick a model" : textOf(entry.value) }}
             </span>
@@ -183,7 +181,7 @@ function commitAddition(): void {
         type="button"
         :disabled="props.disabled"
         class="shrink-0 rounded-[6px] p-1.5 text-faint transition-colors hover:bg-raised hover:text-err disabled:opacity-40"
-        :title="`remove ${entry.key}`"
+        :aria-label="`remove ${entry.key}`"
         data-action="record-remove"
         @click="remove(entry.key)"
       >
@@ -238,7 +236,6 @@ function commitAddition(): void {
       type="button"
       :disabled="props.disabled"
       class="flex items-center gap-1.5 self-start rounded-[6px] border border-line/40 bg-surface/40 px-2 py-1 text-[11.5px] text-faint transition-colors hover:border-line-strong hover:bg-raised hover:text-fg disabled:opacity-40"
-      :title="`add an entry to ${props.label}`"
       data-action="record-new"
       @click="(adding = true), (draftKey = ''), (draftValue = '')"
     >

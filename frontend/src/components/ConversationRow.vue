@@ -19,6 +19,7 @@ import { systemNotice } from "../lib/systemNotice";
 import { agentMessage } from "../lib/agentMessage";
 import AgentMessageCard from "./AgentMessageCard.vue";
 import { isSystemReminder as checkSystemReminder } from "../lib/turnActivity";
+import { parseSkillPrompt } from "../lib/skillPrompt";
 
 const props = withDefaults(
   defineProps<{
@@ -84,25 +85,21 @@ function source(attachment: AttachmentSnapshot): string {
 
 const showSkillDetails = ref(false);
 
-function isSkillInvocation(row: RowSnapshot): boolean {
-  return (
-    row.customType === "skill-prompt" ||
-    (row.role === "custom" && row.text.includes('User invoked the "'))
-  );
+async function copySkillArgs(args: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(args);
+    copied.value = true;
+    if (copiedTimer !== null) clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => {
+      copied.value = false;
+      copiedTimer = null;
+    }, 1_500);
+  } catch (cause) {
+    emit("failed", `Could not copy message: ${String(cause)}`);
+  }
 }
 
-function skillInvocationName(text: string): string {
-  const match = text.match(/User invoked the "([^"]+)" skill/i);
-  if (match) return match[1];
-  const tokenMatch = text.match(/\/skill:([a-zA-Z0-9_-]+)/);
-  if (tokenMatch) return tokenMatch[1];
-  return "skill";
-}
-
-function skillInvocationArgs(text: string): string | null {
-  const match = text.match(/\nUser:\s*([^\n]+)/);
-  return match ? match[1].trim() : null;
-}
+const skillPrompt = computed(() => parseSkillPrompt(props.row));
 </script>
 
 <template>
@@ -147,7 +144,7 @@ function skillInvocationArgs(text: string): string | null {
       >
         <summary class="flex min-w-0 cursor-pointer list-none items-center gap-2 px-3 py-2 text-[12px] text-fg select-none hover:bg-surface/60 [&::-webkit-details-marker]:hidden">
           <Icon name="file" class="h-3.5 w-3.5 shrink-0 text-accent" />
-          <span class="min-w-0 flex-1 truncate font-mono" :title="file.name">{{ file.name }}</span>
+          <span class="min-w-0 flex-1 truncate font-mono">{{ file.name }}</span>
           <span class="shrink-0 text-[10.5px] text-faint">{{ describeBytes(file.bytes) }}</span>
           <Icon name="chevron-down" class="h-3 w-3 shrink-0 text-faint transition-transform group-open/file:rotate-180" />
         </summary>
@@ -158,7 +155,6 @@ function skillInvocationArgs(text: string): string | null {
         type="button"
         class="pointer-events-none rounded-[5px] p-1 text-faint opacity-0 transition-[color,background-color,opacity] group-hover/message:pointer-events-auto group-hover/message:opacity-100 hover:bg-raised hover:text-fg focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         :aria-label="copied ? 'Message copied' : 'Copy message'"
-        :title="copied ? 'Copied' : 'Copy message'"
         @click="copyMessage"
       >
         <Icon :name="copied ? 'check' : 'copy'" class="h-3.5 w-3.5" />
@@ -201,7 +197,6 @@ function skillInvocationArgs(text: string): string | null {
         type="button"
         class="pointer-events-none self-start rounded-[5px] p-1 text-faint opacity-0 transition-[color,background-color,opacity] group-hover/message:pointer-events-auto group-hover/message:opacity-100 hover:bg-raised hover:text-fg focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         :aria-label="copied ? 'Message copied' : 'Copy message'"
-        :title="copied ? 'Copied' : 'Copy message'"
         @click="copyMessage"
       >
         <Icon :name="copied ? 'check' : 'copy'" class="h-3.5 w-3.5" />
@@ -220,26 +215,49 @@ function skillInvocationArgs(text: string): string | null {
 
   <!-- A skill prompt invocation (e.g. /skill:impeccable) -->
   <div
-    v-else-if="isSkillInvocation(row)"
-    class="my-2 w-full overflow-hidden rounded-[10px] border border-accent/40 bg-surface shadow-sm"
+    v-else-if="skillPrompt.isSkill"
+    class="my-2 flex flex-col items-end gap-2 w-full"
   >
-    <div class="flex items-center justify-between border-b border-line/40 bg-accent/10 px-3.5 py-2 text-[12px] select-none">
-      <div class="flex items-center gap-2 font-medium text-fg">
-        <Icon name="zap" class="h-4 w-4 text-accent" />
-        <span class="font-mono font-semibold text-accent">Skill: {{ skillInvocationName(row.text) }}</span>
-        <span v-if="skillInvocationArgs(row.text)" class="text-dim">· {{ skillInvocationArgs(row.text) }}</span>
-      </div>
-      <button
-        type="button"
-        class="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-faint transition-colors hover:bg-raised hover:text-fg"
-        @click="showSkillDetails = !showSkillDetails"
+    <!-- User's arguments / instructions rendered as user message bubble -->
+    <div
+      v-if="skillPrompt.args"
+      class="group/message flex max-w-[80%] min-w-0 flex-col items-end gap-1.5"
+    >
+      <p
+        class="whitespace-pre-wrap break-words rounded-[16px] bg-raised/95 border border-line/60 border-t-line-strong/40 px-4 py-2.5 text-[13px] leading-relaxed text-fg shadow-sm select-text"
       >
-        <span>{{ showSkillDetails ? 'Hide prompt' : 'Show prompt' }}</span>
-        <Icon :name="showSkillDetails ? 'chevron-up' : 'chevron-down'" class="h-3 w-3" />
+        {{ skillPrompt.args }}
+      </p>
+      <button
+        v-if="!hideCopy"
+        type="button"
+        class="pointer-events-none rounded-[5px] p-1 text-faint opacity-0 transition-[color,background-color,opacity] group-hover/message:pointer-events-auto group-hover/message:opacity-100 hover:bg-raised hover:text-fg focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        :aria-label="copied ? 'Message copied' : 'Copy message'"
+        @click="copySkillArgs(skillPrompt.args!)"
+      >
+        <Icon :name="copied ? 'check' : 'copy'" class="h-3.5 w-3.5" />
       </button>
     </div>
-    <div v-if="showSkillDetails" class="max-h-80 overflow-auto border-t border-line/30 p-3 text-[12px] leading-relaxed text-dim select-text">
-      <MarkdownBody :text="row.text" @failed="emit('failed', $event)" />
+
+    <!-- Skill badge banner -->
+    <div class="w-full overflow-hidden rounded-[10px] border border-accent/40 bg-surface shadow-sm">
+      <div class="flex items-center justify-between border-b border-line/40 bg-accent/10 px-3.5 py-2 text-[12px] select-none">
+        <div class="flex items-center gap-2 font-medium text-fg">
+          <Icon name="zap" class="h-4 w-4 text-accent" />
+          <span class="font-mono font-semibold text-accent">Skill: {{ skillPrompt.name }}</span>
+        </div>
+        <button
+          type="button"
+          class="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-faint transition-colors hover:bg-raised hover:text-fg"
+          @click="showSkillDetails = !showSkillDetails"
+        >
+          <span>{{ showSkillDetails ? 'Hide prompt' : 'Show prompt' }}</span>
+          <Icon :name="showSkillDetails ? 'chevron-up' : 'chevron-down'" class="h-3 w-3" />
+        </button>
+      </div>
+      <div v-if="showSkillDetails" class="max-h-80 overflow-auto border-t border-line/30 p-3 text-[12px] leading-relaxed text-dim select-text">
+        <MarkdownBody :text="row.text" @failed="emit('failed', $event)" />
+      </div>
     </div>
   </div>
 
@@ -256,7 +274,7 @@ function skillInvocationArgs(text: string): string | null {
       <button
         type="button"
         class="rounded p-1 text-faint transition-colors hover:bg-surface hover:text-fg"
-        :title="copied ? 'Copied' : 'Copy output'"
+        :aria-label="copied ? 'Output copied' : 'Copy output'"
         @click="copyMessage"
       >
         <Icon :name="copied ? 'check' : 'copy'" class="h-3 w-3" />

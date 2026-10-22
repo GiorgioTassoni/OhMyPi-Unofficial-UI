@@ -144,19 +144,19 @@ async function onCreateCustom(): Promise<void> {
       </div>
 
       <!-- Tab selector -->
-      <div class="flex rounded-[8px] bg-canvas/70 p-1">
+      <div class="flex gap-1 rounded-[7px] border border-line/60 bg-canvas/70 p-1">
         <button
           type="button"
-          class="flex-1 rounded-[6px] py-1.5 text-[12.5px] font-medium transition-colors"
-          :class="tab === 'import' ? 'bg-surface text-fg shadow-sm' : 'text-faint hover:text-dim'"
+          class="flex-1 rounded-[5px] py-1.5 text-[12px] font-medium transition-all text-center"
+          :class="tab === 'import' ? 'bg-raised text-fg shadow-xs font-semibold' : 'text-dim hover:text-fg'"
           @click="tab = 'import'"
         >
           Import from GitHub / URL
         </button>
         <button
           type="button"
-          class="flex-1 rounded-[6px] py-1.5 text-[12.5px] font-medium transition-colors"
-          :class="tab === 'custom' ? 'bg-surface text-fg shadow-sm' : 'text-faint hover:text-dim'"
+          class="flex-1 rounded-[5px] py-1.5 text-[12px] font-medium transition-all text-center"
+          :class="tab === 'custom' ? 'bg-raised text-fg shadow-xs font-semibold' : 'text-dim hover:text-fg'"
           @click="tab = 'custom'"
         >
           Create Custom Skill
@@ -180,7 +180,7 @@ async function onCreateCustom(): Promise<void> {
             />
             <button
               type="button"
-              class="flex items-center gap-1.5 rounded-[7px] bg-accent px-3 py-1.5 text-[12.5px] font-medium text-accent-contrast transition-opacity hover:opacity-90 disabled:opacity-50"
+              class="flex items-center gap-1.5 rounded-[7px] bg-accent px-3 py-1.5 text-[12.5px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-50 disabled:hover:brightness-100 shadow-xs"
               :disabled="!sourceUrl.trim() || inspecting || busy"
               @click="onInspect"
             >
@@ -286,7 +286,7 @@ async function onCreateCustom(): Promise<void> {
           </button>
           <button
             type="button"
-            class="flex items-center gap-1.5 rounded-[7px] bg-accent px-4 py-1.5 text-[12.5px] font-medium text-accent-contrast transition-opacity hover:opacity-90 disabled:opacity-40"
+            class="flex items-center gap-1.5 rounded-[7px] bg-accent px-4 py-1.5 text-[12.5px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100 shadow-xs"
             :disabled="!inspectedResult || !selectedSkillName || busy"
             @click="onInstallImported"
           >
@@ -375,7 +375,7 @@ async function onCreateCustom(): Promise<void> {
           </button>
           <button
             type="button"
-            class="flex items-center gap-1.5 rounded-[7px] bg-accent px-4 py-1.5 text-[12.5px] font-medium text-accent-contrast transition-opacity hover:opacity-90 disabled:opacity-40"
+            class="flex items-center gap-1.5 rounded-[7px] bg-accent px-4 py-1.5 text-[12.5px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100 shadow-xs"
             :disabled="!canSubmitCustom"
             @click="onCreateCustom"
           >

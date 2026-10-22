@@ -63,15 +63,24 @@ function place(event?: Event): void {
   // Inside the viewport on both sides: a chip near the right edge would otherwise
   // open a panel that runs off it.
   const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - width - 8));
+
+  const spaceBelow = window.innerHeight - rect.bottom - 16;
+  const spaceAbove = rect.top - 16;
+
+  let actualSide = props.side ?? "above";
+  if (actualSide === "below" && spaceBelow < 120 && spaceAbove > spaceBelow) {
+    actualSide = "above";
+  } else if (actualSide === "above" && spaceAbove < 120 && spaceBelow > spaceAbove) {
+    actualSide = "below";
+  }
+
   placement.value = {
     left: `${left}px`,
-    top: props.side === "below" ? `${rect.bottom + 8}px` : "auto",
-    bottom: props.side === "below" ? "auto" : `${window.innerHeight - rect.top + 8}px`,
+    top: actualSide === "below" ? `${rect.bottom + 6}px` : "auto",
+    bottom: actualSide === "below" ? "auto" : `${window.innerHeight - rect.top + 6}px`,
     width: `${width}px`,
     // The panel scrolls within the space on its chosen side of the trigger.
-    maxHeight: `${props.side === "below"
-      ? Math.max(0, window.innerHeight - rect.bottom - 16)
-      : Math.max(160, rect.top - 16)}px`,
+    maxHeight: `${Math.max(140, actualSide === "below" ? spaceBelow : spaceAbove)}px`,
   };
 }
 

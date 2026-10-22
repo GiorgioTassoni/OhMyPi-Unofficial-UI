@@ -56,7 +56,7 @@ const matches = computed(() => typed.value.trim() === props.keyName);
         autocomplete="off"
         :placeholder="props.keyName"
         :aria-label="`type ${props.keyName} to confirm`"
-        class="rounded-[6px] bg-raised px-3 py-2 font-mono text-[12.5px] text-fg outline-none placeholder:text-faint focus:ring-1 focus:ring-accent"
+        class="rounded-[6px] border border-line/60 bg-raised px-3 py-2 font-mono text-[12.5px] text-fg outline-none placeholder:text-faint transition-colors focus:border-accent/80 focus:ring-1 focus:ring-accent/40 shadow-xs"
         data-input="settings-confirm"
         @keydown.enter.prevent="matches && emit('confirm', typed)"
       />
@@ -64,7 +64,7 @@ const matches = computed(() => typed.value.trim() === props.keyName);
       <div class="flex items-center justify-end gap-2">
         <button
           type="button"
-          class="rounded-[6px] px-2.5 py-1 text-[12px] text-dim hover:bg-raised hover:text-fg"
+          class="rounded-[6px] px-2.5 py-1 text-[12px] text-dim transition-all hover:bg-raised hover:text-fg active:scale-95"
           data-action="settings-confirm-cancel"
           @click="emit('cancel')"
         >
@@ -73,7 +73,7 @@ const matches = computed(() => typed.value.trim() === props.keyName);
         <button
           type="button"
           :disabled="!matches"
-          class="rounded-[6px] border border-err/60 px-2.5 py-1 text-[12px] text-err hover:bg-err/10 disabled:opacity-40"
+          class="rounded-[6px] border border-err/60 px-2.5 py-1 text-[12px] font-medium text-err transition-all hover:bg-err/15 active:scale-95 disabled:opacity-40 shadow-xs"
           data-action="settings-confirm-write"
           @click="emit('confirm', typed)"
         >

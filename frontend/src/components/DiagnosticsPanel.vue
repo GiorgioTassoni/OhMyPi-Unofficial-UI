@@ -59,7 +59,6 @@ const BUTTON =
         <button
           :class="[BUTTON, props.terminals ? 'bg-raised text-accent hover:text-accent' : '']"
           :disabled="props.workspace === null"
-          title="the terminal panel: your own shell in this workspace, not the agent's"
           aria-label="terminal"
           data-action="terminal"
           type="button"
@@ -69,7 +68,6 @@ const BUTTON =
         </button>
         <button
           :class="BUTTON"
-          title="the thread panel: its plan and the files it changed"
           aria-label="thread panel"
           data-action="panel"
           type="button"
@@ -79,7 +77,6 @@ const BUTTON =
         </button>
         <button
           :class="[BUTTON, 'bg-raised text-accent hover:text-accent']"
-          title="the M0 readouts: handshake, process, stream counters, event tail"
           aria-label="diagnostics"
           data-action="diagnostics"
           type="button"

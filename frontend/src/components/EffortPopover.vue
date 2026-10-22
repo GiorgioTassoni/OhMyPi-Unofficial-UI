@@ -279,7 +279,7 @@ function describe(cause: unknown): string {
               saving…
             </span>
           </div>
-          <span class="text-[10.5px] text-faint truncate leading-tight mt-0.5" :title="headerSubtitle">
+          <span class="text-[10.5px] text-faint truncate leading-tight mt-0.5">
             {{ headerSubtitle }}
           </span>
         </div>
@@ -295,7 +295,6 @@ function describe(cause: unknown): string {
               ? 'bg-accent/20 text-accent border border-accent/40 shadow-xs'
               : 'text-faint hover:text-fg hover:bg-raised/70 border border-line/30 disabled:opacity-30'
           ]"
-          :title="isAuto ? 'Auto active (adapts per turn). Click to switch to manual.' : 'Switch to Auto mode (adapts per turn)'"
           @click="toggleAuto"
         >
           <Icon name="rotate-ccw" class="h-3 w-3" />
@@ -305,7 +304,7 @@ function describe(cause: unknown): string {
         <button
           type="button"
           class="rounded-[6px] px-1.5 py-0.5 text-[10.5px] text-faint/80 hover:text-fg hover:bg-raised/70 transition-colors"
-          title="Close (Esc)"
+          aria-label="Close"
           @click="emit('close')"
         >
           esc

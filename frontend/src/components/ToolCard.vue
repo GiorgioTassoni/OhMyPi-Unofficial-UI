@@ -79,7 +79,7 @@ const diffStats = computed(() => {
         <div class="flex min-w-0 items-center gap-2">
           <Icon name="pencil" class="h-3.5 w-3.5 shrink-0 text-accent" />
           <span class="flex min-w-0 flex-col gap-0.5">
-            <span class="truncate text-[12.5px] font-medium text-fg" :title="mutationTitle">{{ mutationTitle }}</span>
+            <span class="truncate text-[12.5px] font-medium text-fg">{{ mutationTitle }}</span>
             <span v-if="diffStats" class="flex items-center gap-1 font-mono text-[10.5px] leading-none">
               <span v-if="diffStats.added > 0" class="rounded bg-ok/10 px-1 py-0.5 font-semibold text-ok">+{{ diffStats.added }}</span>
               <span v-if="diffStats.removed > 0" class="rounded bg-err/10 px-1 py-0.5 font-semibold text-err">-{{ diffStats.removed }}</span>
@@ -87,7 +87,7 @@ const diffStats = computed(() => {
           </span>
         </div>
         <div class="flex shrink-0 items-center gap-2">
-          <span v-if="failedOrDenied" class="text-err" role="img" :aria-label="denied ? 'Tool call denied' : 'Tool call failed'" :title="denied ? 'Tool call denied' : 'Tool call failed'">
+          <span v-if="failedOrDenied" class="text-err" role="img" :aria-label="denied ? 'Tool call denied' : 'Tool call failed'">
             <Icon name="close" class="h-3.5 w-3.5" />
           </span>
           <Icon
@@ -134,7 +134,7 @@ const diffStats = computed(() => {
           </code>
         </div>
         <div class="flex shrink-0 items-center gap-2">
-          <span v-if="failedOrDenied" class="text-err" role="img" :aria-label="denied ? 'Tool call denied' : 'Tool call failed'" :title="denied ? 'Tool call denied' : 'Tool call failed'">
+          <span v-if="failedOrDenied" class="text-err" role="img" :aria-label="denied ? 'Tool call denied' : 'Tool call failed'">
             <Icon name="close" class="h-3.5 w-3.5" />
           </span>
           <Icon
@@ -175,7 +175,7 @@ const diffStats = computed(() => {
           </code>
         </div>
         <div class="flex shrink-0 items-center gap-2">
-          <span v-if="failedOrDenied" class="text-err" role="img" :aria-label="denied ? 'Tool call denied' : 'Tool call failed'" :title="denied ? 'Tool call denied' : 'Tool call failed'">
+          <span v-if="failedOrDenied" class="text-err" role="img" :aria-label="denied ? 'Tool call denied' : 'Tool call failed'">
             <Icon name="close" class="h-3.5 w-3.5" />
           </span>
           <Icon

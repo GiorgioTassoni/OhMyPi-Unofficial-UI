@@ -19,7 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The `ready` handshake, as the debug pane shows it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadySnapshot {
     pub protocol_version: u64,
@@ -50,7 +50,7 @@ pub struct ContextSnapshot {
 }
 
 /// The control-plane state the chrome renders.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlSnapshot {
     pub session_id: String,
@@ -173,6 +173,20 @@ pub struct SessionStatus {
     /// Reported by the host rather than read back from the engine: there is no command
     /// that answers it, and the mode is the host's own launch decision (`docs/12` §7.2).
     pub approval_mode: Option<String>,
+}
+
+impl SessionStatus {
+    pub fn dormant(approval_mode: Option<String>) -> Self {
+        Self {
+            binary: String::new(),
+            workspace: String::new(),
+            sidecar_pid: None,
+            ready: ReadySnapshot::default(),
+            control: ControlSnapshot::default(),
+            counters: CounterSnapshot::default(),
+            approval_mode,
+        }
+    }
 }
 
 /// One streamed event, for the pane's live tail.

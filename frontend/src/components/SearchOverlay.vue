@@ -124,7 +124,6 @@ const groups = () => groupHits(hits.value, props.sessions);
           <li v-for="(hit, index) in group.hits" :key="`${hit.ordinal}-${index}`">
             <button
               class="flex w-full items-baseline gap-2 rounded-[6px] px-2 py-2 text-left hover:bg-raised"
-              :title="`message ${hit.ordinal}`"
               @click="emit('pick', group.thread, hit)"
             >
               <span v-if="kindLabel(hit.kind)" class="shrink-0 text-[10.5px] text-faint">

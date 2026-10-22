@@ -166,7 +166,6 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
       <div class="flex items-center gap-1.5">
         <button
           class="grid h-6 w-6 place-items-center rounded-[6px] text-dim transition-colors hover:bg-raised hover:text-fg"
-          title="collapse sidebar"
           aria-label="collapse sidebar"
           type="button"
           @click="emit('collapse')"
@@ -179,7 +178,6 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
       <button
         :disabled="props.busy || props.workspace === null"
         class="grid h-6 w-6 place-items-center rounded-[6px] text-dim transition-colors hover:bg-raised hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent"
-        :title="props.workspace ? `new thread in ${props.workspace}` : 'add a project first'"
         aria-label="new thread"
         type="button"
         @click="props.workspace && emit('open', props.workspace)"
@@ -196,7 +194,6 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
     <div class="flex flex-col gap-0.5 p-2">
       <button
         class="group flex items-center gap-2.5 rounded-[6px] px-2.5 py-2 text-left text-[13px] text-dim transition-colors hover:bg-raised hover:text-fg"
-        title="search titles, messages and tool activity across every thread"
         data-row="search"
         @click="emit('search')"
       >
@@ -210,7 +207,6 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
       <button
         :disabled="props.busy || props.workspace === null"
         class="group flex items-center gap-2.5 rounded-[6px] px-2.5 py-2 text-left text-[13px] text-dim hover:bg-raised hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent"
-        :title="props.workspace ?? 'add a project first'"
         data-row="new-thread"
         @click="props.workspace && emit('open', props.workspace)"
       >
@@ -220,7 +216,6 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
 
       <button
         class="group flex items-center gap-2.5 rounded-[6px] px-2.5 py-2 text-left text-[13px] text-dim hover:bg-raised hover:text-fg"
-        title="subagents running across every thread"
         data-row="agents"
         type="button"
         @click="emit('agents')"
@@ -250,7 +245,6 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
       </span>
       <button
         class="ml-auto grid h-6 w-6 place-items-center rounded-[6px] text-faint hover:bg-raised hover:text-fg"
-        title="open a project folder"
         aria-label="open a project folder"
         data-action="open-directory"
         type="button"
@@ -276,7 +270,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
         />
         <button
           class="grid h-5 w-5 shrink-0 place-items-center rounded text-faint hover:bg-surface hover:text-fg"
-          title="browse folders…"
+          aria-label="browse folders"
           type="button"
           @mousedown.prevent="chooseDirectory(typed)"
         >
@@ -302,7 +296,6 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
         >
           <button
             class="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-            :title="group.path"
             @click="toggle(group.path)"
           >
             <Icon
@@ -320,7 +313,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
           <button
             :disabled="props.busy || group.path === ''"
             class="grid h-5 w-5 shrink-0 place-items-center rounded-[5px] text-faint opacity-0 hover:bg-surface hover:text-fg group-hover:opacity-100 disabled:opacity-0"
-            title="new thread here"
+            aria-label="new thread here"
             @click.stop="emit('open', group.path)"
           >
             <Icon name="plus" class="h-3.5 w-3.5" />
@@ -328,7 +321,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
           <button
             :disabled="props.busy"
             class="grid h-5 w-5 shrink-0 place-items-center rounded-[5px] text-faint opacity-0 hover:bg-surface hover:text-err group-hover:opacity-100 disabled:opacity-0"
-            title="delete project and its sessions"
+            aria-label="delete project and its sessions"
             @click.stop="emit('deleteProject', group)"
           >
             <Icon name="trash" class="h-3.5 w-3.5" />
@@ -345,7 +338,6 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
                   : 'text-dim hover:bg-raised hover:text-fg'
               "
               :style="{ paddingLeft: `${row.depth === 0 ? 0.75 : 1.5}rem` }"
-              :title="`${row.title}${row.note ? ` · ${row.note}` : ''}${row.suspended ? ' · suspended' : ''}`"
               @click="emit('select', row.id)"
               @contextmenu="onContext($event, row)"
             >
@@ -415,17 +407,15 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
               <span
                 v-if="row.unread"
                 class="size-1.5 shrink-0 rounded-full bg-accent-bright shadow-[0_0_4px_var(--color-accent)]"
-                title="finished while you were elsewhere"
               />
               <Icon
                 v-if="row.pinned"
                 name="pin"
                 class="h-3 w-3 shrink-0 text-faint"
-                title="pinned"
               />
               <span
                 class="grid h-5 w-5 shrink-0 place-items-center rounded-[5px] text-faint opacity-0 hover:bg-surface hover:text-err group-hover/row:opacity-100"
-                title="delete conversation"
+                aria-label="delete conversation"
                 @click.stop="emit('delete', row.id)"
               >
                 <Icon name="trash" class="h-3 w-3" />
@@ -460,7 +450,6 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
       </div>
       <button
         class="grid h-7 w-7 shrink-0 place-items-center rounded-[6px] text-faint transition-colors hover:bg-raised hover:text-fg"
-        :title="`settings (${isMac ? '⌘,' : 'Ctrl+,'})`"
         aria-label="settings"
         data-action="settings"
         type="button"

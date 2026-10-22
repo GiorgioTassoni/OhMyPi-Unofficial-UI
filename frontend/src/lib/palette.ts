@@ -74,6 +74,8 @@ export interface PaletteView {
   of: string | null;
   /** What the user has typed after the `/`, lowercased. */
   query: string;
+  /** Where the active slash token started in the draft. */
+  tokenStart: number;
   groups: PaletteGroup[];
   /** The same rows, flattened in render order — the order the arrow keys walk. */
   items: PaletteItem[];
@@ -143,17 +145,43 @@ export const WINDOW_ACTIONS: AppAction[] = [
   },
 ];
 
+function findSlashToken(before: string): { start: number; query: string; rest: string[] } | null {
+  const lastSlash = before.lastIndexOf("/");
+  if (lastSlash === -1) {
+    return null;
+  }
+
+  // The '/' must be at the start of the draft or preceded by whitespace.
+  if (lastSlash > 0 && !/\s/.test(before[lastSlash - 1])) {
+    return null;
+  }
+
+  const afterSlash = before.slice(lastSlash + 1);
+
+  if (lastSlash === 0) {
+    const [first = "", ...rest] = afterSlash.split(/\s+/);
+    return { start: 0, query: first, rest };
+  }
+
+  // Mid-prompt: a single token without following whitespace.
+  if (/\s/.test(afterSlash)) {
+    return null;
+  }
+
+  return { start: lastSlash, query: afterSlash, rest: [] };
+}
+
 export function paletteFor(
   before: string,
   commands: readonly CommandEntry[],
   actions: readonly AppAction[] = [],
 ): PaletteView | null {
-  if (!before.startsWith("/")) {
+  const token = findSlashToken(before);
+  if (token === null) {
     return null;
   }
 
-  const typed = before.slice(1);
-  const [first = "", ...rest] = typed.split(/\s+/);
+  const { start: tokenStart, query: first, rest } = token;
 
   // `/name …` — the subcommand level. Only reached when the command exists and has
   // subcommands: `/compact keep it` is an argument, not a subcommand, and typing it must
@@ -182,6 +210,7 @@ export function paletteFor(
       level: "subcommands",
       of: command.name,
       query: partial,
+      tokenStart,
       groups: [{ source: command.name, items }],
       items,
     };
@@ -219,6 +248,7 @@ export function paletteFor(
     level: "commands",
     of: null,
     query: first.toLowerCase(),
+    tokenStart,
     groups,
     items: groups.flatMap((group) => group.items),
   };
@@ -329,7 +359,7 @@ export function insertionOf(item: PaletteItem): string {
  */
 export function requiresArguments(command: CommandEntry): boolean {
   if (command.source === "skill") {
-    return false;
+    return true;
   }
   if (command.hint !== null && command.hint !== undefined) {
     const hint = command.hint.trim();
@@ -367,16 +397,16 @@ export function dispatchOf(item: PaletteItem): string | null {
 /**
  * Replace the `/` token being typed with `text`.
  *
- * Called only while the palette is showing, which is only while the caret sits inside a
- * `/token` at the very start of the box — so the token being replaced is exactly
- * `[0, caret)` and everything after the caret is left alone. Returns the new draft and
- * where the caret lands (after the inserted text, ready for an argument).
+ * Replaces the range `[tokenStart, caret)` with `text`, keeping surrounding draft intact.
+ * Returns the new draft and where the caret lands (after the inserted text, ready for an argument).
  */
 export function replaceToken(
   draft: string,
   caret: number,
   text: string,
+  tokenStart = 0,
 ): { text: string; caret: number } {
+  const beforeToken = draft.slice(0, tokenStart);
   const after = draft.slice(caret);
   // The insertion ends with the space that invites an argument. If what it lands against
   // already begins with one — text after the caret, which happens when the caret is moved
@@ -385,7 +415,7 @@ export function replaceToken(
   const joined =
     text.endsWith(" ") && after.startsWith(" ") ? text + after.slice(1) : text + after;
 
-  return { text: joined, caret: text.length };
+  return { text: beforeToken + joined, caret: beforeToken.length + text.length };
 }
 
 /**

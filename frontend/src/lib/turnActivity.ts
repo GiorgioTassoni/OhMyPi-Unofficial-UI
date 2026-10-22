@@ -2,6 +2,9 @@ import type { RowSnapshot, ToolSnapshot } from "../bridge";
 import { turnContainingRow } from "./virtualTurns";
 import { parseObject, touchedFiles } from "./toolView";
 import { activityDiffCounts } from "./activityDiff";
+import { isSkillInvocation } from "./skillPrompt";
+
+export { isSkillInvocation };
 
 export interface IndexedRow { index: number; row: RowSnapshot }
 export type GroupKind = "read" | "command" | "edit" | "other";
@@ -13,7 +16,11 @@ export interface ToolGroup {
   removed: number | null;
 }
 export type AgentCompletion = { kind: "agent-completion"; entry: IndexedRow; index: number; name: string; status: "completed" | "failed" | "aborted" };
-export type ActivityItem = { kind: "group"; group: ToolGroup; index: number } | { kind: "row"; entry: IndexedRow; index: number } | AgentCompletion;
+export type ActivityItem =
+  | { kind: "group"; group: ToolGroup; index: number }
+  | { kind: "row"; entry: IndexedRow; index: number }
+  | { kind: "notice"; entry: IndexedRow; index: number }
+  | AgentCompletion;
 export interface ConversationTurn {
   start: number;
   end: number;
@@ -87,14 +94,19 @@ export function isSystemReminder(text?: string | null): boolean {
   return text.trim().startsWith("<system-reminder");
 }
 
+export function isUserTurnBoundary(row: RowSnapshot): boolean {
+  if (isSystemReminder(row.text)) return false;
+  return row.role === "user" || isSkillInvocation(row);
+}
+
 function turn(segment: IndexedRow[], working: boolean, jobNames: ReadonlyMap<string, string[]>): ConversationTurn {
-  const user = segment.find(({ row }) => row.role === "user" && !isSystemReminder(row.text)) ?? null;
+  const user = segment.find(({ row }) => isUserTurnBoundary(row)) ?? null;
   const lastTool = segment.reduce((last, entry) => entry.row.role === "tool" ? entry.index : last, -1);
   const answer = [...segment].reverse().find(({ row, index }) => row.role === "assistant" && row.customType === null && !!row.text && index > lastTool) ?? null;
   const compactionNotice = (entry: IndexedRow): boolean => entry.row.role.startsWith("notice:")
     && ["auto_compaction_start", "auto_compaction_end", "manual_compaction_start", "manual_compaction_end"].includes(entry.row.customType ?? "");
   const notices = segment.filter((entry) => compactionNotice(entry) && entry.row.customType?.endsWith("_end"));
-  const activity = segment.filter((entry) => entry !== user && entry !== answer && !compactionNotice(entry));
+  const activity = segment.filter((entry) => entry !== user && entry !== answer);
   const items: ActivityItem[] = [];
   let runKind: GroupKind = "other";
   let runRows: IndexedRow[] = [];
@@ -134,6 +146,12 @@ function turn(segment: IndexedRow[], working: boolean, jobNames: ReadonlyMap<str
         }
         continue;
       }
+      if (compactionNotice(entry)) {
+        if (entry.row.customType?.endsWith("_end")) {
+          items.push({ kind: "notice", entry, index: entry.index });
+        }
+        continue;
+      }
       items.push({ kind: "row", entry, index: entry.index });
     }
   }
@@ -157,7 +175,7 @@ function turnsFrom(rows: RowSnapshot[], streaming: boolean, start: number): Conv
   const segments: IndexedRow[][] = [];
   for (let index = start; index < rows.length; index++) {
     const entry = { index, row: rows[index] };
-    if ((rows[index].role === "user" && !isSystemReminder(rows[index].text)) || segments.length === 0) segments.push([]);
+    if (isUserTurnBoundary(rows[index]) || segments.length === 0) segments.push([]);
     segments[segments.length - 1].push(entry);
   }
   const jobNames = segments.some((segment) => segment.some(({ row }) => row.customType === "async-result" && row.jobs.some((job) => job.kind === "task")))

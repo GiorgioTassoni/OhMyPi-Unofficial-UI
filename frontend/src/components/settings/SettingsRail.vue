@@ -49,8 +49,8 @@ function hitKey(row: SettingsRow): string | null {
   <aside class="flex w-64 shrink-0 flex-col bg-rail">
     <div class="flex flex-col gap-0.5 p-2">
       <button
-        class="group flex items-center gap-2.5 rounded-[6px] px-2.5 py-2 text-left text-[13px] text-dim hover:bg-raised hover:text-fg"
-        title="back to the thread view (⌘,)"
+        class="group flex items-center gap-2.5 rounded-[6px] px-2.5 py-2 text-left text-[13px] text-dim transition-all hover:bg-raised hover:text-fg active:scale-98"
+        aria-label="back to the thread view"
         data-action="settings-back"
         @click="emit('back')"
       >
@@ -60,7 +60,7 @@ function hitKey(row: SettingsRow): string | null {
     </div>
 
     <div class="px-2 pb-1">
-      <div class="flex items-center gap-2 rounded-[6px] bg-raised px-2.5 py-1.5">
+      <div class="flex items-center gap-2 rounded-[6px] border border-line/60 bg-raised px-2.5 py-1.5 transition-colors focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/40 shadow-xs">
         <Icon name="search" class="h-3.5 w-3.5 shrink-0 text-faint" />
         <input
           :value="props.query"
@@ -76,7 +76,7 @@ function hitKey(row: SettingsRow): string | null {
           v-if="props.query !== ''"
           type="button"
           class="shrink-0 text-faint hover:text-fg"
-          title="clear the search"
+          aria-label="clear the search"
           data-action="settings-search-clear"
           @click="emit('query', '')"
         >
@@ -125,11 +125,16 @@ function hitKey(row: SettingsRow): string | null {
           <button
             v-for="section in group.sections"
             :key="section.id"
-            class="group flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px]"
-            :class="section.id === props.active ? 'bg-selected text-fg' : 'text-dim hover:bg-raised hover:text-fg'"
+            class="group relative flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] transition-colors"
+            :class="section.id === props.active ? 'bg-selected text-fg font-medium' : 'text-dim hover:bg-raised hover:text-fg'"
             :data-section="section.id"
             @click="emit('select', section.id)"
           >
+            <span
+              v-if="section.id === props.active"
+              class="absolute left-0.5 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent"
+              aria-hidden="true"
+            />
             <Icon
               :name="sectionIcon(section.icon)"
               class="h-4 w-4 shrink-0"

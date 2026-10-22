@@ -260,7 +260,7 @@ function describe(cause: unknown): string {
         <button
           type="button"
           :class="[CHIP, 'ml-auto']"
-          title="how much of the model's context this thread has used"
+          aria-label="Context usage"
           @click="toggle('context')"
         >
           <svg viewBox="0 0 20 20" class="h-4 w-4 shrink-0 transition-transform hover:scale-105" aria-hidden="true">

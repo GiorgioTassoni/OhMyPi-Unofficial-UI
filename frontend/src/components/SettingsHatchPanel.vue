@@ -475,7 +475,7 @@ onUnmounted(() => {
       <div :class="CARD">
         <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
           <Icon name="file" class="h-4 w-4 shrink-0 text-faint" />
-          <span class="selectable min-w-0 flex-1 truncate font-mono text-[12.5px] text-fg" :title="path">
+          <span class="selectable min-w-0 flex-1 truncate font-mono text-[12.5px] text-fg">
             {{ path }}
           </span>
 
@@ -488,11 +488,6 @@ onUnmounted(() => {
               :class="scope === pick ? 'bg-raised text-fg' : 'text-dim hover:text-fg'"
               :aria-pressed="scope === pick"
               :data-hatch-scope="pick"
-              :title="
-                pick === 'global'
-                  ? 'the file the engine writes for every project'
-                  : 'this thread\u2019s workspace file'
-              "
               @click="switchScope(pick)"
             >
               {{ pick === "global" ? "Global" : "Project" }}
@@ -503,7 +498,6 @@ onUnmounted(() => {
             type="button"
             :class="QUIET"
             data-hatch-action="reread"
-            title="read the file again, discarding what the editor holds"
             @click="reread"
           >
             <Icon name="refresh" class="mr-1 inline h-3.5 w-3.5 align-[-2px]" />
@@ -554,7 +548,6 @@ onUnmounted(() => {
               v-for="key in keys"
               :key="key"
               class="truncate font-mono text-[11.5px] leading-relaxed text-dim"
-              :title="key"
             >
               {{ key }}
             </li>
@@ -676,7 +669,7 @@ onUnmounted(() => {
               <span class="shrink-0 font-mono text-[10.5px] uppercase tracking-[0.09em] text-faint">
                 {{ change.action === "reset" ? "reset" : "set" }}
               </span>
-              <span class="min-w-0 flex-1 truncate font-mono text-[11.5px] text-dim" :title="changeText(change)">
+              <span class="min-w-0 flex-1 truncate font-mono text-[11.5px] text-dim">
                 {{ changeText(change) }}
               </span>
               <span class="shrink-0 font-mono text-[10.5px] uppercase tracking-[0.09em] text-faint">
@@ -779,7 +772,6 @@ onUnmounted(() => {
             <span
               class="min-w-0 flex-1 truncate"
               :class="result.ok ? 'text-dim' : 'text-err'"
-              :title="result.error ?? ''"
             >
               {{ result.ok ? "written by the engine" : (result.error ?? "the engine refused it") }}
             </span>
@@ -846,9 +838,8 @@ onUnmounted(() => {
             <Icon name="clock" class="h-3.5 w-3.5 shrink-0 text-faint" />
             <span
               class="shrink-0 text-[12px] text-dim"
-              :title="backup.at === null ? 'the host did not timestamp this copy' : new Date(backup.at * 1000).toISOString()"
             >{{ takenAt(backup.at) }}</span>
-            <span class="selectable min-w-0 flex-1 truncate font-mono text-[11.5px] text-faint" :title="backup.path">
+            <span class="selectable min-w-0 flex-1 truncate font-mono text-[11.5px] text-faint">
               {{ backup.path }}
             </span>
             <button
@@ -856,7 +847,6 @@ onUnmounted(() => {
               type="button"
               :class="QUIET"
               data-hatch-action="revert"
-              :title="`load this copy into the editor`"
               @click="revert(backup)"
             >
               revert

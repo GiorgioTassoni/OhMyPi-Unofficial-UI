@@ -81,7 +81,6 @@ function parent(target: string): string {
       <button
         v-if="props.node === null || props.node.isDir"
         class="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-        :title="path ?? ''"
         :aria-expanded="open"
         @click="toggle"
       >
@@ -95,7 +94,6 @@ function parent(target: string): string {
       <button
         v-else
         class="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-        :title="path ?? ''"
         @click="launch(props.node.path)"
       >
         <Icon name="file" class="h-3.5 w-3.5 shrink-0 text-faint" />
@@ -108,7 +106,7 @@ function parent(target: string): string {
       <button
         v-if="path !== null"
         class="grid h-5 w-5 shrink-0 place-items-center rounded-[5px] text-faint opacity-0 hover:bg-surface hover:text-fg group-hover:opacity-100"
-        title="reveal this folder"
+        aria-label="reveal this folder"
         @click="launch(props.node?.isDir ? path : parent(path))"
       >
         <Icon name="external" class="h-3.5 w-3.5" />

@@ -94,6 +94,8 @@ const emit = defineEmits<{
   review: [summary: TurnFileSummary];
   /** A spawned agent was selected from this conversation. */
   agent: [id: string];
+  /** Open a whole-read file in the right sidebar. */
+  openFile: [file: { path: string; content?: string; artifactId?: string | null }];
 }>();
 
 const status = ref<SessionStatus | null>(null);
@@ -695,7 +697,13 @@ defineExpose({
           >
             <ConversationRow :row="turn.user.row" @failed="emit('failed', $event)" />
           </div>
-          <TurnActivity :turn="turn" :flashed="flashed" :memory="disclosureMemory" @failed="emit('failed', $event)" />
+          <TurnActivity
+            :turn="turn"
+            :flashed="flashed"
+            :memory="disclosureMemory"
+            @failed="emit('failed', $event)"
+            @open-file="emit('openFile', $event)"
+          />
           <button
             v-for="agent in turn.spawnedAgents"
             :key="agent"
@@ -730,27 +738,6 @@ defineExpose({
             @jump="revealRow"
             @review="emit('review', $event)"
           />
-          <div
-            v-for="notice in turn.notices"
-            :key="notice.index"
-            :data-row-index="notice.index"
-            class="my-2 flex items-center gap-2.5 py-1 text-[11.5px] select-none"
-            role="status"
-          >
-            <div class="h-px flex-1 bg-line/50" />
-            <div
-              class="flex items-center gap-1.5 font-medium"
-              :class="notice.row.role === 'notice:error' ? 'text-err' : notice.row.role === 'notice:warning' ? 'text-warn' : 'text-dim'"
-            >
-              <Icon
-                :name="notice.row.role === 'notice:error' ? 'close' : 'sparkle'"
-                class="h-3.5 w-3.5 shrink-0"
-                :class="notice.row.role === 'notice:error' ? 'text-err' : notice.row.role === 'notice:warning' ? 'text-warn' : 'text-accent'"
-              />
-              <span>{{ notice.row.text }}</span>
-            </div>
-            <div class="h-px flex-1 bg-line/50" />
-          </div>
         </article>
         </MeasuredTurn>
         <div aria-hidden="true" :style="{ height: `${visible.after}px` }" />
@@ -766,22 +753,30 @@ defineExpose({
       </div>
     </div>
 
-    <!-- Floating scroll-to-bottom button when reading history -->
-    <div
-      v-if="isScrolledUp && rows.length > 0"
-      class="pointer-events-auto absolute bottom-24 left-1/2 -translate-x-1/2 z-20 transition-all"
-    >
-      <button
-        type="button"
-        class="grid h-8 w-8 place-items-center rounded-full border border-line-strong/70 bg-surface text-dim shadow-xl shadow-black/50 transition-all hover:bg-raised hover:text-fg hover:scale-105 active:scale-95"
-        title="Scroll to bottom"
-        @click="scrollToBottom"
+    <div class="relative mx-auto w-full max-w-[46rem] px-4 pb-4">
+      <!-- Floating scroll-to-bottom button when reading history -->
+      <Transition
+        enter-active-class="transition duration-150 ease-out"
+        enter-from-class="opacity-0 translate-y-1 scale-90"
+        enter-to-class="opacity-100 translate-y-0 scale-100"
+        leave-active-class="transition duration-100 ease-in"
+        leave-from-class="opacity-100 translate-y-0 scale-100"
+        leave-to-class="opacity-0 translate-y-1 scale-90"
       >
-        <Icon name="chevron-down" class="h-4 w-4" />
-      </button>
-    </div>
-
-    <div class="mx-auto w-full max-w-[46rem] px-4 pb-4">
+        <div
+          v-if="isScrolledUp && rows.length > 0"
+          class="pointer-events-none absolute -top-10 right-6 z-20"
+        >
+          <button
+            type="button"
+            class="pointer-events-auto flex h-7 w-7 items-center justify-center rounded-full border border-line-strong/60 bg-raised/90 text-dim backdrop-blur-md shadow-md shadow-black/20 transition-all hover:border-line-strong hover:bg-surface hover:text-fg hover:scale-105 active:scale-95"
+            aria-label="Scroll to bottom"
+            @click="scrollToBottom"
+          >
+            <Icon name="chevron-down" class="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </Transition>
       <p v-if="chips.compacting" class="mb-2 flex items-center gap-2 text-[12px] text-dim" role="status" aria-live="polite">
         <Icon name="refresh" class="h-3.5 w-3.5 animate-spin text-accent" />
         Compacting context…

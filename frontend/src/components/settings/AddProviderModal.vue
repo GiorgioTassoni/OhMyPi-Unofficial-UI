@@ -137,19 +137,19 @@ function handleOAuthLogin(): void {
   <Modal title="Add / Authenticate Provider" :busy="busy" @close="emit('close')">
     <div class="flex flex-col gap-4 text-[12.5px]">
       <!-- Tab Header -->
-      <div class="flex border-b border-line pb-1">
+      <div class="flex gap-1 rounded-[7px] border border-line/60 bg-canvas/70 p-1">
         <button
           type="button"
-          class="rounded-[6px] px-3 py-1.5 font-medium transition-colors"
-          :class="tab === 'catalog' ? 'bg-raised text-fg' : 'text-dim hover:text-fg'"
+          class="flex-1 rounded-[5px] px-3 py-1.5 font-medium transition-all text-center text-[12px]"
+          :class="tab === 'catalog' ? 'bg-raised text-fg shadow-xs font-semibold' : 'text-dim hover:text-fg'"
           @click="tab = 'catalog'; errorMessage = null"
         >
           Catalog Provider
         </button>
         <button
           type="button"
-          class="rounded-[6px] px-3 py-1.5 font-medium transition-colors"
-          :class="tab === 'custom' ? 'bg-raised text-fg' : 'text-dim hover:text-fg'"
+          class="flex-1 rounded-[5px] px-3 py-1.5 font-medium transition-all text-center text-[12px]"
+          :class="tab === 'custom' ? 'bg-raised text-fg shadow-xs font-semibold' : 'text-dim hover:text-fg'"
           @click="tab = 'custom'; errorMessage = null"
         >
           Custom Endpoint (models.yml)
@@ -218,7 +218,7 @@ function handleOAuthLogin(): void {
             </p>
             <button
               type="button"
-              class="flex items-center justify-center gap-2 rounded-[6px] bg-accent px-3 py-2 font-medium text-canvas hover:opacity-90 transition-opacity"
+              class="flex items-center justify-center gap-2 rounded-[6px] bg-accent px-3 py-2 font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 shadow-xs"
               @click="handleOAuthLogin"
             >
               <Icon name="external" class="h-3.5 w-3.5" />
@@ -231,7 +231,7 @@ function handleOAuthLogin(): void {
             <label class="text-[11px] font-medium uppercase tracking-wider text-faint">
               API Key
             </label>
-            <div class="flex items-center gap-2 rounded-[6px] bg-raised px-3 py-1.5 border border-line focus-within:border-accent">
+            <div class="flex items-center gap-2 rounded-[6px] bg-raised px-3 py-1.5 border border-line/60 transition-colors focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/40 shadow-xs">
               <input
                 v-model="apiKey"
                 :type="showKey ? 'text' : 'password'"
@@ -256,14 +256,14 @@ function handleOAuthLogin(): void {
             <div class="flex justify-end gap-2 pt-2">
               <button
                 type="button"
-                class="rounded-[6px] px-3 py-1.5 text-dim hover:bg-raised hover:text-fg"
+                class="rounded-[6px] px-3 py-1.5 text-dim transition-all hover:bg-raised hover:text-fg active:scale-95"
                 @click="emit('close')"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                class="rounded-[6px] bg-accent px-4 py-1.5 font-medium text-canvas hover:opacity-90 disabled:opacity-40"
+                class="rounded-[6px] bg-accent px-4 py-1.5 font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 shadow-xs"
                 :disabled="!apiKey.trim() || busy"
                 @click="saveCatalogKey"
               >
@@ -364,14 +364,14 @@ function handleOAuthLogin(): void {
         <div class="flex justify-end gap-2 pt-2">
           <button
             type="button"
-            class="rounded-[6px] px-3 py-1.5 text-dim hover:bg-raised hover:text-fg"
+            class="rounded-[6px] px-3 py-1.5 text-dim transition-all hover:bg-raised hover:text-fg active:scale-95"
             @click="emit('close')"
           >
             Cancel
           </button>
           <button
             type="button"
-            class="rounded-[6px] bg-accent px-4 py-1.5 font-medium text-canvas hover:opacity-90 disabled:opacity-40"
+            class="rounded-[6px] bg-accent px-4 py-1.5 font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 shadow-xs"
             :disabled="!customId.trim() || !customBaseUrl.trim() || !customModelId.trim() || busy"
             @click="saveCustom"
           >

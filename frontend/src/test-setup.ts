@@ -21,4 +21,7 @@ const dom = new JSDOM("<!doctype html><html><body></body></html>");
 Object.assign(globalThis, {
   window: dom.window as unknown as Window,
   document: dom.window.document,
+  Element: dom.window.Element,
+  HTMLElement: dom.window.HTMLElement,
+  Node: dom.window.Node,
 });

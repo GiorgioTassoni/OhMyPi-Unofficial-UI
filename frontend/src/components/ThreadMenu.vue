@@ -112,7 +112,6 @@ onUnmounted(() => {
                 : 'text-dim hover:bg-raised hover:text-fg'
           "
           :disabled="item.disabled"
-          :title="item.reason"
           @click="emit('pick', item.action)"
         >
           <Icon :name="GLYPHS[item.action]" class="h-3.5 w-3.5 shrink-0" />

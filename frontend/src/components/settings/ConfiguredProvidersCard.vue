@@ -53,8 +53,7 @@ function handleRemove(item: ProviderAccountDto): void {
       <div class="flex items-center gap-2">
         <button
           type="button"
-          class="flex items-center gap-1.5 rounded-[6px] border border-line px-2.5 py-1 text-[12px] text-dim hover:border-line-strong hover:text-fg transition-colors"
-          title="Open interactive login in terminal"
+          class="flex items-center gap-1.5 rounded-[6px] border border-line px-2.5 py-1 text-[12px] text-dim hover:border-line-strong hover:text-fg transition-all active:scale-95"
           @click="emit('openTerminalLogin')"
         >
           <Icon name="terminal" class="h-3.5 w-3.5 text-faint" />
@@ -63,7 +62,7 @@ function handleRemove(item: ProviderAccountDto): void {
 
         <button
           type="button"
-          class="flex items-center gap-1.5 rounded-[6px] bg-accent px-3 py-1 text-[12px] font-medium text-canvas hover:opacity-90 transition-opacity"
+          class="flex items-center gap-1.5 rounded-[6px] bg-accent px-3 py-1 text-[12px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 shadow-xs"
           @click="emit('add')"
         >
           <Icon name="plus" class="h-3.5 w-3.5" />
@@ -72,8 +71,8 @@ function handleRemove(item: ProviderAccountDto): void {
 
         <button
           type="button"
-          class="rounded-[6px] p-1.5 text-faint hover:bg-raised hover:text-fg transition-colors"
-          title="Refresh accounts"
+          class="rounded-[6px] p-1.5 text-faint hover:bg-raised hover:text-fg transition-all active:scale-95"
+          aria-label="Refresh accounts"
           @click="emit('refresh')"
         >
           <Icon name="refresh" class="h-3.5 w-3.5" :class="loading ? 'animate-spin' : ''" />
@@ -92,7 +91,7 @@ function handleRemove(item: ProviderAccountDto): void {
         <p class="text-[11.5px] text-faint mb-3">Add an API key, OAuth account, or custom model endpoint to get started.</p>
         <button
           type="button"
-          class="rounded-[6px] bg-raised border border-line px-3 py-1.5 text-[12px] text-fg hover:border-line-strong transition-colors"
+          class="rounded-[6px] bg-raised border border-line px-3.5 py-1.5 text-[12px] font-medium text-fg hover:border-line-strong hover:bg-raised/80 transition-all active:scale-95 shadow-xs"
           @click="emit('add')"
         >
           + Add Your First Provider
@@ -141,7 +140,7 @@ function handleRemove(item: ProviderAccountDto): void {
             <button
               type="button"
               class="rounded-[5px] p-1.5 text-faint hover:bg-err/15 hover:text-err transition-colors"
-              :title="item.isCustom ? 'Remove custom provider' : 'Remove credential'"
+              :aria-label="item.isCustom ? 'Remove custom provider' : 'Remove credential'"
               @click="handleRemove(item)"
             >
               <Icon name="close" class="h-3.5 w-3.5" />

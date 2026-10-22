@@ -81,13 +81,24 @@ const commands: CommandEntry[] = [
 ];
 
 describe("when the palette shows", () => {
-  test("only inside a slash token at the start of the box", () => {
-    expect(paletteFor("hello /model", commands)).toBeNull();
+  test("triggers on a slash token at the start of the box or preceded by whitespace", () => {
+    const mid = paletteFor("hello /mod", commands);
+    expect(names(mid)).toEqual(["model"]);
+    expect(mid?.tokenStart).toBe(6);
+
+    expect(paletteFor("http://example.com/mod", commands)).toBeNull();
+    expect(paletteFor("src/lib/mod", commands)).toBeNull();
     expect(paletteFor("model", commands)).toBeNull();
     expect(paletteFor("", commands)).toBeNull();
+
     // No command matches: the text is prose, and a blank panel over the box would be a
     // lie about what is available (`docs/12` §5.2).
     expect(paletteFor("/nosuchthing", commands)).toBeNull();
+    expect(paletteFor("hello /nosuchthing", commands)).toBeNull();
+
+    // After whitespace following token, palette closes
+    expect(paletteFor("hello /model ", commands)).toBeNull();
+
     // The commands have not arrived yet — nothing to offer, so nothing opens.
     expect(paletteFor("/", [])).toBeNull();
   });
@@ -250,6 +261,19 @@ describe("the keyboard", () => {
       text: "/model and more",
       caret: 7,
     });
+    expect(replaceToken("please check /mo and more", 16, "/model ", 13)).toEqual({
+      text: "please check /model and more",
+      caret: 20,
+    });
+  });
+
+  test("skill commands require arguments so they are inserted rather than dispatched empty", () => {
+    const skillCmd = command({ name: "skill:impeccable", source: "skill", description: "Design polish" });
+    const view = paletteFor("/impeccable", [skillCmd]);
+    expect(view?.items).toHaveLength(1);
+    const item = view!.items[0]!;
+    expect(dispatchOf(item)).toBeNull();
+    expect(insertionOf(item)).toBe("/skill:impeccable ");
   });
 });
 

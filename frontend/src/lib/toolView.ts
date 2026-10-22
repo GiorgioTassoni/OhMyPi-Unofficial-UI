@@ -247,6 +247,40 @@ function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+export interface WholeFileRead {
+  isWhole: boolean;
+  path: string | null;
+}
+
+/**
+ * Determine whether a tool call represents reading a whole file (without line or offset limits).
+ */
+export function wholeFileRead(tool: ToolSnapshot): WholeFileRead {
+  if (tool.toolName !== "read" || tool.isError || !tool.finished) {
+    return { isWhole: false, path: null };
+  }
+
+  const args = parseObject(tool.args);
+  if (!args) {
+    return { isWhole: false, path: null };
+  }
+
+  const hasOffset = args.offset !== undefined && args.offset !== null && Number(args.offset) > 0;
+  const hasLimit = args.limit !== undefined && args.limit !== null;
+  const hasStartLine = args.start_line !== undefined && args.start_line !== null;
+  const hasEndLine = args.end_line !== undefined && args.end_line !== null;
+  const hasLineRange = args.line_range !== undefined && args.line_range !== null;
+  const hasLines = args.lines !== undefined && args.lines !== null;
+
+  if (hasOffset || hasLimit || hasStartLine || hasEndLine || hasLineRange || hasLines) {
+    return { isWhole: false, path: null };
+  }
+
+  const rawPath = typeof args.path === "string" ? args.path : typeof args.file_path === "string" ? args.file_path : null;
+  const path = rawPath && rawPath.trim() ? rawPath.trim() : null;
+  return { isWhole: path !== null, path };
+}
+
 /** Arguments for the body: indented when they parse, verbatim when they do not. */
 function pretty(text: string): string {
   const parsed = parseObject(text);

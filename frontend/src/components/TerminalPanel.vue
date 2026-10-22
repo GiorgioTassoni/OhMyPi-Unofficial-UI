@@ -283,7 +283,6 @@ function describe(cause: unknown): string {
             ? 'bg-raised text-fg'
             : 'text-dim hover:text-fg'
         "
-        :title="tab.cwd"
         @click="emit('select', tab.id)"
       >
         <span
@@ -294,7 +293,7 @@ function describe(cause: unknown): string {
         <span v-if="!tab.running" class="text-[10.5px] text-faint">{{ tab.ended }}</span>
         <span
           class="ml-0.5 grid h-4 w-4 place-items-center rounded-[4px] text-faint hover:text-err"
-          title="close this terminal"
+          aria-label="close this terminal"
           @click.stop="emit('close', tab.id)"
         >
           <Icon name="close" class="h-3 w-3" />
@@ -304,7 +303,7 @@ function describe(cause: unknown): string {
       <button
         type="button"
         class="grid h-6 w-6 place-items-center rounded-[6px] text-faint hover:bg-raised hover:text-fg"
-        title="another terminal in this directory"
+        aria-label="another terminal in this directory"
         @click="emit('open')"
       >
         <Icon name="plus" class="h-3.5 w-3.5" />

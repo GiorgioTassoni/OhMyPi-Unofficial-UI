@@ -77,7 +77,7 @@ function add(text: string): void {
         type="button"
         :disabled="props.disabled"
         class="shrink-0 rounded-[6px] p-1.5 text-faint transition-colors hover:bg-raised hover:text-err disabled:opacity-40"
-        :title="`remove item ${item.index + 1}`"
+        :aria-label="`remove item ${item.index + 1}`"
         data-action="list-remove"
         @click="remove(item.index)"
       >

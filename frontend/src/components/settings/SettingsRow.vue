@@ -106,14 +106,13 @@ const compoundEditor = computed(
 
       <!-- What the write costs, and where the value is written. -->
       <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10.5px] text-faint">
-        <span class="rounded-full border border-line/40 bg-raised/70 px-2 py-0.5" :title="from?.note">{{ from?.chip }}</span>
-        <span class="rounded-full border border-line/40 bg-raised/70 px-2 py-0.5" :title="cost?.detail">{{ cost?.chip }}</span>
+        <span class="rounded-full border border-line/40 bg-raised/70 px-2 py-0.5">{{ from?.chip }}</span>
+        <span class="rounded-full border border-line/40 bg-raised/70 px-2 py-0.5">{{ cost?.chip }}</span>
         <span>{{ cost?.note }}</span>
         <button
           v-if="cost?.action === 'restart' && !props.row.gated"
           type="button"
           class="rounded-[6px] border border-line bg-surface/50 px-2 py-0.5 text-dim transition-colors hover:border-line-strong hover:bg-raised hover:text-fg"
-          title="restart every live session, so what is already written is in effect now"
           data-action="restart-sessions"
           @click="emit('restart')"
         >
@@ -122,7 +121,6 @@ const compoundEditor = computed(
         <span
           v-else-if="cost?.action === 'relaunch' && !props.row.gated"
           class="rounded-full border border-warn/40 bg-warn/10 px-2 py-0.5 text-[10.5px] text-warn"
-          title="this app has no relaunch command — quit and reopen it to apply this"
           data-action="relaunch"
         >
           relaunch needed
@@ -154,7 +152,6 @@ const compoundEditor = computed(
           v-if="props.needs !== null && props.needs !== undefined && props.row.gated.needs !== null"
           type="button"
           class="text-[10.5px] text-dim underline decoration-dotted hover:text-fg"
-          :title="`go to ${props.needs.title}`"
           data-action="gated-needs"
           @click="emit('navigate', props.needs.sectionId, props.row.gated.needs)"
         >

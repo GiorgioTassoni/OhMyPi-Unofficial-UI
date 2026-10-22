@@ -801,6 +801,16 @@ export async function readArtifact(thread: string, id: string): Promise<Artifact
   return invoke<ArtifactSnapshot>("read_artifact", { thread, id });
 }
 
+/** Read the full contents of a file on disk for the read-only file viewer. */
+export async function readFileContent(workspace: string | null, path: string): Promise<string> {
+  return invoke<string>("read_file_content", { workspace, path });
+}
+
+/** Read the full binary contents of a file on disk as base64 for image viewers. */
+export async function readFileBase64(workspace: string | null, path: string): Promise<string> {
+  return invoke<string>("read_file_base64", { workspace, path });
+}
+
 /** Subscribe to the streamed event tail. */
 export async function onActivity(
   handler: (event: ThreadEvent<ActivitySnapshot>) => void,

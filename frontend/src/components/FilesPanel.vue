@@ -272,20 +272,17 @@ async function copy(text: string): Promise<void> {
           <span
             class="grid size-4 shrink-0 place-items-center"
             :class="file.kind === 'written' ? 'text-ok' : 'text-accent'"
-            :title="file.kind === 'written' ? 'the file was written whole' : 'the file was edited'"
           >
             <Icon :name="file.kind === 'written' ? 'file' : 'pencil'" class="h-3.5 w-3.5" />
           </span>
           <button
             class="min-w-0 flex-1 truncate text-left font-mono text-[12px] text-fg"
-            :title="file.path"
             @click="file.row >= 0 && emit('jump', file.row)"
           >
             <span class="text-faint">{{ file.folder }}</span><span>{{ file.name }}</span>
             <span
               v-if="file.agentName && file.agentName !== 'task'"
               class="ml-1.5 shrink-0 rounded bg-raised px-1 py-0.5 text-[10px] text-accent font-sans"
-              :title="`Changed by subagent ${file.agentName}`"
             >
               {{ file.agentName }}
             </span>
@@ -335,7 +332,6 @@ async function copy(text: string): Promise<void> {
         <div class="mx-1.5 flex items-center gap-2 rounded-[6px] px-1.5 py-1.5 hover:bg-raised">
           <button
             class="min-w-0 flex-1 truncate text-left font-mono text-[12px] text-fg"
-            :title="`read artifact://${entry.id}`"
             @click="read(entry.id)"
           >
             artifact://{{ entry.id }}
@@ -357,7 +353,7 @@ async function copy(text: string): Promise<void> {
 
       <div v-if="artifact" class="mx-2 mb-2 overflow-hidden rounded-[10px] border border-line bg-surface">
         <div class="flex items-center gap-2 px-3 py-1.5">
-          <span class="min-w-0 flex-1 truncate font-mono text-[10.5px] text-faint" :title="artifact.path">
+          <span class="min-w-0 flex-1 truncate font-mono text-[10.5px] text-faint">
             {{ artifact.path }}
           </span>
           <span class="shrink-0 font-mono text-[10.5px] text-faint">{{ formatBytes(artifact.bytes) }}</span>

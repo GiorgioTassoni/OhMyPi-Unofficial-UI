@@ -370,7 +370,6 @@ function onDrop(key: string): void {
           <span
             v-if="section.favourite"
             class="shrink-0 cursor-grab text-faint hover:text-dim"
-            title="Drag to reorder"
             draggable="true"
             @dragstart="onDragStart($event, entry.key)"
             @dragend="endDrag"
@@ -397,12 +396,11 @@ function onDrop(key: string): void {
             <span
               v-if="entry.model.defaultEffort"
               class="text-[11px] text-faint"
-              :title="`${entry.model.name} suggests ${entry.model.defaultEffort}; the session's level is on the Effort chip`"
             >
               {{ entry.model.defaultEffort }}
             </span>
 
-            <span v-if="isCurrent(entry.model)" title="current model">
+            <span v-if="isCurrent(entry.model)" aria-label="current model">
               <Icon name="check" class="h-3.5 w-3.5 text-accent" />
             </span>
 
@@ -410,7 +408,7 @@ function onDrop(key: string): void {
                  otherwise select the model the press was aiming past. -->
             <button
               class="shrink-0 rounded-[6px] p-0.5"
-              :title="isFavourite(entry.key) ? 'Remove from favourites' : 'Add to favourites'"
+              :aria-label="isFavourite(entry.key) ? 'Remove from favourites' : 'Add to favourites'"
               :aria-pressed="isFavourite(entry.key)"
               @click.stop="emit('favourites', toggleFavourite(favourites, entry.key))"
             >

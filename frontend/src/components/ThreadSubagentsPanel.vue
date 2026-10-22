@@ -63,7 +63,6 @@ const activeCount = computed(() => props.subagents.filter((s) => s.running).leng
             :class="props.activeAgentId === agent.id
               ? 'border-accent/40 bg-raised/90 text-fg shadow-xs ring-1 ring-accent/30'
               : 'border-line/30 bg-surface/30 hover:border-line/60 hover:bg-raised/60 text-dim hover:text-fg'"
-            :title="`${agent.name} (${agent.status})`"
             @click="emit('openAgent', agent.thread, agent.id)"
           >
             <div class="flex items-center gap-2">

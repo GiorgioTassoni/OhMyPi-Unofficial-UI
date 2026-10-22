@@ -15,6 +15,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
+
 use omp_store::{SessionSummary, Store};
 use omp_transport::protocol::ui::UiResponse;
 use omp_transport::protocol::{commands, ImageContent};
@@ -302,7 +305,20 @@ pub async fn set_approval_mode(
 ) -> Result<SessionStatus, String> {
     // Validate before making the switch pending or writing config.
     policy::validate_mode(&mode)?;
-    let live = thread_of(&state, &thread)?;
+
+    let target_thread = if thread.trim().is_empty() {
+        state.threads.any().map(|s| s.thread.current())
+    } else {
+        Some(thread)
+    };
+
+    let Some(thread_id) = target_thread else {
+        // No session is currently running: record the choice so future sessions adopt it.
+        policy::record_mode(&mode).await?;
+        return Ok(SessionStatus::dormant(Some(mode)));
+    };
+
+    let live = thread_of(&state, &thread_id)?;
     let _switch = live.begin_mode_switch().await?;
     live.wait_for_turn_to_finish().await?;
 
@@ -317,7 +333,7 @@ pub async fn set_approval_mode(
     // mid-restart is refused rather than written to a pipe that is going away.
     state
         .threads
-        .remove_if_same(&thread, &live)
+        .remove_if_same(&thread_id, &live)
         .ok_or_else(|| "the session changed while its mode switch was pending".to_string())?;
     live.shutdown(SHUTDOWN_GRACE).await;
 
@@ -911,6 +927,39 @@ pub async fn read_artifact(
     let directory = panel::artifacts_dir(&session_file)?;
 
     scan(move || panel::artifact(&directory, &id)).await
+}
+
+fn resolve_file_path(workspace: Option<&str>, path: &str) -> PathBuf {
+    let p = Path::new(path);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else if let Some(ws) = workspace {
+        Path::new(ws).join(p)
+    } else {
+        p.to_path_buf()
+    }
+}
+
+/// Read the full contents of a file on disk for the read-only file viewer.
+#[tauri::command]
+pub async fn read_file_content(workspace: Option<String>, path: String) -> Result<String, String> {
+    let resolved = resolve_file_path(workspace.as_deref(), &path);
+
+    tokio::fs::read_to_string(&resolved)
+        .await
+        .map_err(|e| format!("failed to read {}: {e}", resolved.display()))
+}
+
+/// Read the full binary contents of a file on disk as base64 for image/binary viewers.
+#[tauri::command]
+pub async fn read_file_base64(workspace: Option<String>, path: String) -> Result<String, String> {
+    let resolved = resolve_file_path(workspace.as_deref(), &path);
+
+    let bytes = tokio::fs::read(&resolved)
+        .await
+        .map_err(|e| format!("failed to read {}: {e}", resolved.display()))?;
+
+    Ok(BASE64.encode(&bytes))
 }
 
 // ------------------------------------------------- the agents panel (`docs/12` §9)

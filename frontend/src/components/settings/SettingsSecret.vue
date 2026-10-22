@@ -68,7 +68,6 @@ const presence = computed(() => {
         type="button"
         :disabled="props.disabled"
         class="rounded-[6px] border border-line px-2 py-0.5 text-[11.5px] text-dim hover:border-line-strong hover:text-fg disabled:opacity-40"
-        :title="`write a new value for ${props.keyName}`"
         data-action="secret-replace"
         @click="start"
       >
@@ -79,7 +78,7 @@ const presence = computed(() => {
         type="button"
         :disabled="props.disabled"
         class="rounded-[6px] px-1.5 py-0.5 text-[11.5px] text-faint hover:bg-raised hover:text-err disabled:opacity-40"
-        :title="`clear ${props.keyName}, back to the engine's default`"
+        aria-label="clear"
         data-action="secret-clear"
         @click="emit('reset')"
       >
@@ -96,7 +95,7 @@ const presence = computed(() => {
         autocomplete="off"
         placeholder="new value"
         aria-label="new value"
-        class="w-[180px] rounded-[6px] bg-raised px-2.5 py-1.5 text-[12.5px] text-fg outline-none placeholder:text-faint focus:ring-1 focus:ring-accent"
+        class="w-[180px] rounded-[6px] border border-line/60 bg-raised px-2.5 py-1.5 text-[12.5px] text-fg outline-none placeholder:text-faint transition-colors focus:border-accent/80 focus:ring-1 focus:ring-accent/40 shadow-xs"
         data-input="secret"
         @keydown.enter.prevent="save"
         @keydown.esc="cancel"

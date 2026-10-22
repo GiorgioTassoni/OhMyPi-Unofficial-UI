@@ -278,7 +278,6 @@ function title(thread: string): string {
               :class="focus?.thread === thread && focus.id === entry.id ? 'bg-accent/10 ring-1 ring-accent/50' : 'hover:bg-raised/45'"
               :style="{ paddingLeft: `${0.5 + entry.depth * 0.75}rem` }"
               :disabled="!entry.agent"
-              :title="entry.agent ? `Open ${label(entry)} agent activity` : undefined"
               @click="entry.agent && emit('openAgent', thread, entry.id)"
             >
               <span
@@ -288,7 +287,7 @@ function title(thread: string): string {
               <span class="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span class="flex min-w-0 items-baseline gap-2">
                   <span class="shrink-0 text-[12.5px] text-fg">{{ label(entry) }}</span>
-                  <span v-if="entry.agent" class="min-w-0 truncate font-mono text-[10.5px] text-faint" :title="entry.id">{{ entry.id }}</span>
+                  <span v-if="entry.agent" class="min-w-0 truncate font-mono text-[10.5px] text-faint">{{ entry.id }}</span>
                   <span
                     v-if="entry.agent"
                     class="ml-auto shrink-0 text-[11.5px]"
@@ -303,7 +302,7 @@ function title(thread: string): string {
                 <span v-if="subtitle(entry)" class="block truncate text-[11.5px] text-dim">
                   {{ subtitle(entry) }}
                 </span>
-                <span class="min-w-0 truncate font-mono text-[10.5px] text-dim" :title="model(entry) ?? 'Model not reported'">
+                <span class="min-w-0 truncate font-mono text-[10.5px] text-dim">
                   Model: <span :class="model(entry) ? 'text-fg' : 'text-faint'">{{ model(entry) ?? 'not reported' }}</span>
                 </span>
                 <span v-if="stats(entry)" class="block font-mono text-[10.5px] text-faint">
@@ -388,7 +387,7 @@ function title(thread: string): string {
               <button
                 type="button"
                 class="shrink-0 rounded-[6px] px-2 py-1 text-[12px] text-dim hover:bg-raised hover:text-err"
-                :title="`omp ps stop ${daemon.name}`"
+                aria-label="stop daemon"
                 @click="stop(daemon.name)"
               >
                 stop

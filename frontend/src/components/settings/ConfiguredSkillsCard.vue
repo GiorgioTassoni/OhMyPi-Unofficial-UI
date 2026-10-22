@@ -59,8 +59,7 @@ defineExpose({
       <div class="flex items-center gap-2">
         <button
           type="button"
-          class="flex items-center gap-1.5 rounded-[6px] border border-line/60 bg-canvas px-2.5 py-1 text-[11.5px] font-medium text-dim transition-colors hover:bg-raised hover:text-fg"
-          title="Open global skills directory in file manager"
+          class="flex items-center gap-1.5 rounded-[6px] border border-line/60 bg-canvas px-2.5 py-1 text-[11.5px] font-medium text-dim transition-all hover:bg-raised hover:text-fg active:scale-95"
           @click="handleOpenFolder('user')"
         >
           <Icon name="folder" class="h-3.5 w-3.5" />
@@ -69,7 +68,7 @@ defineExpose({
 
         <button
           type="button"
-          class="flex items-center gap-1.5 rounded-[6px] bg-accent px-3 py-1 text-[12px] font-medium text-accent-contrast transition-opacity hover:opacity-90"
+          class="flex items-center gap-1.5 rounded-[6px] bg-accent px-3 py-1 text-[12px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 shadow-xs"
           @click="emit('openAddModal')"
         >
           <Icon name="plus" class="h-3.5 w-3.5" />
@@ -108,7 +107,7 @@ defineExpose({
                 skill.scope === 'user'
                   ? 'bg-accent/15 text-accent'
                   : skill.scope === 'project'
-                    ? 'bg-success/15 text-success'
+                    ? 'bg-ok/15 text-ok'
                     : 'bg-raised text-faint'
               "
             >
@@ -130,7 +129,7 @@ defineExpose({
           <p class="text-[11.5px] leading-relaxed text-dim line-clamp-2">
             {{ skill.description || "(No description)" }}
           </p>
-          <span class="truncate font-mono text-[10.5px] text-faint" :title="skill.path">
+          <span class="truncate font-mono text-[10.5px] text-faint">
             {{ skill.path }}
           </span>
         </div>

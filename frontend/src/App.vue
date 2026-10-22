@@ -74,6 +74,7 @@ import {
   playNotificationSound,
   readNotificationSoundEnabled,
   saveNotificationSoundEnabled,
+  setupAudioUnlock,
   soundForNotification,
 } from "./lib/notificationSound";
 import { selectAfterClose, selectFrom, tabsFrom, type TerminalTab } from "./lib/terminals";
@@ -85,6 +86,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import DiagnosticsPanel from "./components/DiagnosticsPanel.vue";
 import Modal from "./components/Modal.vue";
 import RightPanel from "./components/RightPanel.vue";
+import type { FileViewRequest } from "./components/FileViewerPanel.vue";
 import AgentsPanel from "./components/AgentsPanel.vue";
 import AgentReadOnlyView from "./components/AgentReadOnlyView.vue";
 import SearchOverlay from "./components/SearchOverlay.vue";
@@ -278,13 +280,44 @@ const panelOpen = ref(true);
 const turnReview = shallowRef<TurnReviewRequest | null>(null);
 let reviewSerial = 0;
 
-watch(activeId, () => { turnReview.value = null; });
+const activeFile = ref<{ thread: string; request: FileViewRequest } | null>(null);
+const savedRightPanelWidth = ref<number | null>(null);
+
+watch(activeId, () => {
+  turnReview.value = null;
+  activeFile.value = null;
+});
 
 function openTurnReview(thread: string, summary: TurnFileSummary): void {
   if (thread !== activeId.value) return;
   turnReview.value = { thread, id: ++reviewSerial, summary };
   diagnostics.value = false;
   panelOpen.value = true;
+}
+
+function onOpenFile(thread: string, request: FileViewRequest): void {
+  if (thread !== activeId.value) return;
+  diagnostics.value = false;
+  panelOpen.value = true;
+
+  // Save current width to restore on close
+  if (savedRightPanelWidth.value === null) {
+    savedRightPanelWidth.value = rightPanelWidth.value;
+  }
+
+  // Expand right panel to spacious preview width (up to 62% of window width)
+  const maxAllowed = Math.min(MAX_RIGHT_PANEL_WIDTH, Math.floor(window.innerWidth * 0.62));
+  rightPanelWidth.value = Math.max(DEFAULT_RIGHT_PANEL_WIDTH, maxAllowed);
+
+  activeFile.value = { thread, request };
+}
+
+function closeFileViewer(): void {
+  activeFile.value = null;
+  if (savedRightPanelWidth.value !== null) {
+    rightPanelWidth.value = savedRightPanelWidth.value;
+    savedRightPanelWidth.value = null;
+  }
 }
 
 /** Resizable sidebars & collapse thresholds */
@@ -296,7 +329,7 @@ const SIDEBAR_COLLAPSE_THRESHOLD = 140;
 const DEFAULT_RIGHT_PANEL_WIDTH = 320;
 // The tabs (including the todo count) and header actions need room to stay on one row.
 const MIN_RIGHT_PANEL_WIDTH = 280;
-const MAX_RIGHT_PANEL_WIDTH = 600;
+const MAX_RIGHT_PANEL_WIDTH = 1100;
 const RIGHT_PANEL_COLLAPSE_THRESHOLD = 220;
 
 /** A forgiving drag target around the quiet one-pixel divider the user sees. */
@@ -407,7 +440,7 @@ function startRightResize(event: PointerEvent): void {
       panelOpen.value = false;
     } else {
       panelOpen.value = true;
-      const maxAllowed = Math.min(MAX_RIGHT_PANEL_WIDTH, Math.floor(window.innerWidth * 0.45));
+      const maxAllowed = Math.min(MAX_RIGHT_PANEL_WIDTH, Math.floor(window.innerWidth * 0.65));
       rightPanelWidth.value = Math.max(MIN_RIGHT_PANEL_WIDTH, Math.min(currentWidth, maxAllowed));
     }
   };
@@ -790,7 +823,10 @@ const menuContext = computed<ThreadContext>(() => {
 /** A live thread that can carry another session's engine commands (`/pin`). */
 const dispatcher = computed(() => live.value[0]?.id ?? null);
 
+let cleanupAudio: (() => void) | null = null;
+
 onMounted(async () => {
+  cleanupAudio = setupAudioUnlock();
   window.addEventListener("keydown", onShortcut);
 
   unlisten = await Promise.all([
@@ -895,6 +931,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  cleanupAudio?.();
   for (const off of unlisten) off();
   for (const timer of actionNoticeTimers.values()) clearTimeout(timer);
   window.removeEventListener("keydown", onShortcut);
@@ -1361,7 +1398,6 @@ function describe(cause: unknown): string {
           v-show="!sidebarCollapsed"
           class="absolute top-0 -right-1"
           :class="[RESIZE_HANDLE_CLASS, isDraggingLeft ? 'after:opacity-100' : '']"
-          title="Drag to resize, double-click to reset"
           @pointerdown="startLeftResize"
           @dblclick="resetLeftWidth"
         />
@@ -1372,7 +1408,6 @@ function describe(cause: unknown): string {
         v-if="sidebarCollapsed"
         class="fixed top-0 left-0"
         :class="[RESIZE_HANDLE_CLASS, isDraggingLeft ? 'after:opacity-100' : '']"
-        title="Drag to open sidebar"
         @pointerdown="startLeftResize"
         @dblclick="resetLeftWidth"
       />
@@ -1408,7 +1443,7 @@ function describe(cause: unknown): string {
             {{ activeRow?.title || 'Conversation' }}
           </button>
           <div v-for="tab in agentTabs" :key="agentKey(tab.thread, tab.id)" class="flex shrink-0 items-center rounded-t-[6px]" :class="activeAgentKey === agentKey(tab.thread, tab.id) ? 'bg-raised text-fg' : 'text-dim hover:bg-raised/60'">
-            <button type="button" class="max-w-44 truncate py-1.5 pl-3 pr-1 text-[12px]" :title="tabAgentLabel(tab.thread, tab.id)" :aria-current="activeAgentKey === agentKey(tab.thread, tab.id) ? 'page' : undefined" @click="activeId = tab.thread; activeAgentKey = agentKey(tab.thread, tab.id)">
+            <button type="button" class="max-w-44 truncate py-1.5 pl-3 pr-1 text-[12px]" :aria-current="activeAgentKey === agentKey(tab.thread, tab.id) ? 'page' : undefined" @click="activeId = tab.thread; activeAgentKey = agentKey(tab.thread, tab.id)">
               {{ tabAgentLabel(tab.thread, tab.id) }}
             </button>
             <button type="button" class="px-2 py-1.5 text-faint hover:text-fg" :aria-label="`Close ${tabAgentLabel(tab.thread, tab.id)} tab`" @click="closeAgentTab(tab.thread, tab.id)">×</button>
@@ -1437,6 +1472,7 @@ function describe(cause: unknown): string {
               @app-action="onAppAction"
               @review="openTurnReview(id, $event)"
               @agent="openAgentTab(id, $event)"
+              @open-file="onOpenFile(id, $event)"
             />
           </template>
           <AgentReadOnlyView
@@ -1520,7 +1556,7 @@ function describe(cause: unknown): string {
           <div
             class="absolute top-0 -left-1"
             :class="[RESIZE_HANDLE_CLASS, isDraggingRight ? 'after:opacity-100' : '']"
-            title="Drag to resize, double-click to reset"
+            aria-label="Resize panel"
             @pointerdown="startRightResize"
             @dblclick="resetRightWidth"
           />
@@ -1556,11 +1592,13 @@ function describe(cause: unknown): string {
               :diagnostics="diagnostics"
               :subagents="currentChatSubagents"
               :active-agent-id="activeAgentTab?.id ?? null"
+              :file-request="activeFile?.thread === activeId ? activeFile.request : null"
               @jump="revealRow"
               @written="onPlanWritten"
               @failed="error = $event"
-              @close="panelOpen = false"
+              @close="panelOpen = false; closeFileViewer()"
               @close-review="turnReview = null"
+              @close-file-viewer="closeFileViewer"
               @toggle-terminals="terminalsOpen = !terminalsOpen"
               @toggle-diagnostics="diagnostics = !diagnostics"
               @open-agent="openAgentTab"
@@ -1685,7 +1723,6 @@ function describe(cause: unknown): string {
         <button
           v-if="entry.thread !== null"
           class="shrink-0 rounded-[5px] px-1 text-[11px] text-dim hover:bg-surface hover:text-fg"
-          title="show this thread"
           data-action="open-notice"
           @click="openNotice(entry.id)"
         >
@@ -1693,7 +1730,6 @@ function describe(cause: unknown): string {
         </button>
         <button
           class="shrink-0 rounded-[5px] px-1 text-[11px] text-faint hover:bg-surface hover:text-fg"
-          title="dismiss"
           data-action="dismiss-notice"
           @click="notices = dropNotice(notices, entry.id)"
         >

@@ -387,7 +387,12 @@ impl Transcript {
 
     /// Command output associated with the invoked slash command, if known.
     pub fn apply_command_output_with_command(&mut self, text: &str, command: Option<&str>) {
-        self.notice("info", text.to_string(), "command_output", command.map(ToString::to_string));
+        self.notice(
+            "info",
+            text.to_string(),
+            "command_output",
+            command.map(ToString::to_string),
+        );
     }
 
     /// Maintenance initiated by the host, whose command has no lifecycle events.

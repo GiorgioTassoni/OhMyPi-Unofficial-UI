@@ -47,7 +47,6 @@ const unknown = computed(() => {
       </div>
       <span
         class="shrink-0 rounded border border-line/40 bg-raised/80 px-2 py-0.5 font-mono text-[10px] text-faint"
-        title="the engine release this build's settings catalog was generated against"
       >
         catalog {{ props.catalogVersion }}
       </span>
@@ -61,7 +60,7 @@ const unknown = computed(() => {
         :class="line.bad ? 'text-warn border border-warn/30' : 'text-dim'"
         :data-source="line.role"
       >
-        <span class="truncate break-all select-all text-fg/80" :title="line.path">{{ line.path }}</span>
+        <span class="truncate break-all select-all text-fg/80">{{ line.path }}</span>
         <span class="shrink-0 rounded border border-line/40 bg-raised px-1.5 py-0.5 text-[10px] uppercase font-medium text-faint">
           {{ line.role }}
         </span>

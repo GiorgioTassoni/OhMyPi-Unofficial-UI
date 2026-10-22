@@ -193,7 +193,7 @@ async function flip(phase: TodoPhaseSnapshot, content: string): Promise<void> {
                 class="mt-px grid size-4 shrink-0 place-items-center disabled:opacity-50"
                 :class="mark(task.status).tone"
                 :data-todo-mark="task.status"
-                :title="`${todoLabel(task.status)} — mark ${task.status === 'completed' ? 'not done' : 'done'}`"
+                :aria-label="`${todoLabel(task.status)} — mark ${task.status === 'completed' ? 'not done' : 'done'}`"
                 :disabled="busy || !props.live"
                 @click="flip(phase, task.content)"
               >
@@ -212,7 +212,6 @@ async function flip(phase: TodoPhaseSnapshot, content: string): Promise<void> {
               <button
                 class="min-w-0 flex-1 text-left text-[12.5px] leading-relaxed"
                 :class="tone(task.status)"
-                title="show me where this was written"
                 @click="jump(task.content)"
               >
                 {{ task.content }}
