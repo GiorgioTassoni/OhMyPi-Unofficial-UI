@@ -133,6 +133,35 @@ async function flip(phase: TodoPhaseSnapshot, content: string): Promise<void> {
     busy.value = false;
   }
 }
+
+const hasCompletedTasks = computed(() =>
+  phases.value.some((phase) => phase.tasks.some((task) => task.status === "completed" || task.status === "abandoned"))
+);
+
+async function clearCompleted(): Promise<void> {
+  const thread = props.thread;
+  if (thread === null) return;
+
+  busy.value = true;
+  failure.value = null;
+  try {
+    const next = phases.value
+      .map((entry) => ({
+        name: entry.name,
+        tasks: entry.tasks.filter((task) => task.status !== "completed" && task.status !== "abandoned"),
+      }))
+      .filter((entry) => entry.tasks.length > 0);
+
+    await setTodos(thread, next);
+    failure.value = null;
+    emit("written");
+  } catch (cause) {
+    failure.value = cause instanceof Error ? cause.message : String(cause);
+    emit("failed", failure.value);
+  } finally {
+    busy.value = false;
+  }
+}
 </script>
 
 <template>
@@ -157,6 +186,17 @@ async function flip(phase: TodoPhaseSnapshot, content: string): Promise<void> {
       <p class="mt-1 max-w-[220px] text-[12px] leading-relaxed text-faint">
         The agent writes tasks here as it plans work with its <span class="rounded bg-raised/80 px-1 py-0.5 font-mono text-[11px] text-muted">todo</span> tool.
       </p>
+    </div>
+
+    <div v-if="phases.length > 0 && hasCompletedTasks" class="flex justify-end px-3.5 pt-2">
+      <button
+        type="button"
+        class="text-[11px] font-medium text-dim hover:text-accent hover:underline select-none disabled:opacity-50"
+        :disabled="busy || !props.live"
+        @click="clearCompleted"
+      >
+        Clear completed
+      </button>
     </div>
 
     <ul v-if="phases.length > 0" class="flex flex-col">

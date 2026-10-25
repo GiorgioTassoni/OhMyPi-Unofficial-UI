@@ -77,6 +77,8 @@ export interface SidebarInput {
   unread: string[];
   /** Projects the engine's registry marks hidden (`projects.json`). */
   hidden: string[];
+  /** Custom user project ordering, preserved regardless of last modified timestamps. */
+  projectOrder?: string[];
   /** Epoch milliseconds, injected rather than read: a synthesised row needs a time and a
    * pure function cannot ask the clock. */
   now: number;
@@ -212,10 +214,86 @@ export function sidebarModel(input: SidebarInput): ProjectGroup[] {
   }
 
   const hidden = new Set(input.hidden);
-  return [...groups.entries()]
+  const unhidden = [...groups.entries()]
     .filter(([path]) => !hidden.has(path))
-    .map(([path, threads]) => ({ path, name: projectName(path), threads: nest(threads) }))
-    .sort((a, b) => newest(b.threads) - newest(a.threads) || a.name.localeCompare(b.name));
+    .map(([path, threads]) => ({ path, name: projectName(path), threads: nest(threads) }));
+
+  if (input.projectOrder && input.projectOrder.length > 0) {
+    const orderMap = new Map(input.projectOrder.map((path, idx) => [path, idx]));
+    return unhidden.sort((a, b) => {
+      const idxA = orderMap.get(a.path);
+      const idxB = orderMap.get(b.path);
+      if (idxA !== undefined && idxB !== undefined) return idxA - idxB;
+      if (idxA !== undefined) return -1;
+      if (idxB !== undefined) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  return unhidden.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Pure reordering helper for drag-and-drop lists.
+ * Given a list and source/target positions, returns a new list with the element relocated.
+ */
+export function reorderItems<T>(
+  list: readonly T[],
+  fromIndex: number,
+  toIndex: number,
+  position: "above" | "below",
+): T[] {
+  if (
+    fromIndex < 0 ||
+    fromIndex >= list.length ||
+    toIndex < 0 ||
+    toIndex >= list.length ||
+    fromIndex === toIndex
+  ) {
+    return [...list];
+  }
+
+  const result = [...list];
+  const [moved] = result.splice(fromIndex, 1);
+  let insertAt = toIndex;
+  if (fromIndex < toIndex) {
+    insertAt = position === "below" ? toIndex : toIndex - 1;
+  } else {
+    insertAt = position === "below" ? toIndex + 1 : toIndex;
+  }
+  insertAt = Math.max(0, Math.min(insertAt, result.length));
+  result.splice(insertAt, 0, moved);
+  return result;
+}
+
+export const PROJECT_ORDER_STORAGE_KEY = "omp:projects-order";
+
+export function loadProjectOrder(
+  storage: Storage | undefined = typeof localStorage !== "undefined" ? localStorage : undefined,
+): string[] {
+  if (!storage) return [];
+  try {
+    const raw = storage.getItem(PROJECT_ORDER_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveProjectOrder(
+  paths: readonly string[],
+  storage: Storage | undefined = typeof localStorage !== "undefined" ? localStorage : undefined,
+): void {
+  if (!storage) return;
+  try {
+    storage.setItem(PROJECT_ORDER_STORAGE_KEY, JSON.stringify(paths));
+  } catch {
+    // Ignore storage quota
+  }
 }
 
 /** Newest first, pinned first; a fork sits directly under the thread it came from. */
@@ -263,10 +341,6 @@ function nest(rows: ThreadRow[]): ThreadRow[] {
 function compare(a: ThreadRow, b: ThreadRow): number {
   if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
   return b.modifiedAt - a.modifiedAt || a.id.localeCompare(b.id);
-}
-
-function newest(rows: ThreadRow[]): number {
-  return rows.reduce((latest, row) => Math.max(latest, row.modifiedAt), 0);
 }
 
 /**

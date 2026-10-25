@@ -150,4 +150,24 @@ Run context`;
 
     expect(parse(html).querySelector("img")).toBeNull();
   });
+
+  test("renders inline math like $O(n)$ with KaTeX", () => {
+    const html = renderMarkdown("costo $O(n)$ per ogni tasto");
+    expect(html).toContain('class="katex"');
+    expect(html).toContain("O");
+    expect(html).toContain("n");
+    expect(html).not.toContain("$O(n)$");
+  });
+
+  test("renders block math with KaTeX", () => {
+    const html = renderMarkdown("$$\\sum_{i=1}^n i$$");
+    expect(html).toContain('class="katex-display"');
+  });
+
+  test("strips inline styles from arbitrary elements while preserving math styles", () => {
+    const html = renderMarkdown('<p style="position:fixed;top:0;left:0;color:red;">malicious text</p>');
+    expect(html).not.toContain("position:fixed");
+    expect(html).not.toContain("color:red");
+    expect(html).toContain("<p>malicious text</p>");
+  });
 });

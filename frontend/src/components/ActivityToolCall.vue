@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { activityDiff, activityDiffCounts } from "../lib/activityDiff";
 import { commandProgram } from "../lib/approval";
-import { wholeFileRead, toolView, touchedFiles } from "../lib/toolView";
+import { parseObject, wholeFileRead, toolView, touchedFiles } from "../lib/toolView";
 import type { DisclosureMemory } from "../lib/disclosureMemory";
 import type { GroupKind, IndexedRow } from "../lib/turnActivity";
 import DiffView from "./DiffView.vue";
@@ -32,29 +32,56 @@ const edits = computed(() => props.kind === "edit" && expanded.value ? activityD
 const counts = computed(() => props.kind === "edit" ? activityDiffCounts(tool.value) : null);
 const files = computed(() => props.kind === "edit" ? touchedFiles(tool.value) : []);
 const basename = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || path;
+
+const isWrite = computed(() => tool.value.toolName === "write" || files.value[0]?.kind === "written");
+
 const title = computed(() => {
   if (props.kind === "edit") {
-    if (files.value.length === 1) return `Edited ${basename(files.value[0].path)}`;
-    return `Edited ${files.value.length || 1} files`;
+    const verb = isWrite.value ? "Created" : "Edited";
+    if (files.value.length === 1) return `${verb} ${basename(files.value[0].path)}`;
+    return `${verb} ${files.value.length || 1} files`;
   }
   if (props.kind === "read") return `${props.standalone ? "Read " : ""}${basename(view.value.summary || "file")}`;
   if (props.kind === "command") return tool.value.finished ? "Ran command" : "Running";
   return tool.value.toolName;
 });
 const failed = computed(() => tool.value.isError || /^Tool call denied by user(?::|$)/i.test((tool.value.output ?? "").trim()));
-const icon = computed(() => props.kind === "read" ? "file" : props.kind === "command" ? "terminal" : props.kind === "edit" ? "pencil" : "wrench");
+const icon = computed(() => {
+  if (props.kind === "read") return "file";
+  if (props.kind === "command") return "terminal";
+  if (props.kind === "edit") return isWrite.value ? "file" : "pencil";
+  return "wrench";
+});
 
 const wholeRead = computed(() => (failed.value ? { isWhole: false, path: null } : wholeFileRead(tool.value)));
-const isWholeFile = computed(() => wholeRead.value.isWhole);
-const filePath = computed(() => wholeRead.value.path || view.value.summary || "");
+const isWholeFile = computed(() => wholeRead.value.isWhole || (isWrite.value && !failed.value && files.value.length === 1));
+const filePath = computed(() => wholeRead.value.path || files.value[0]?.path || view.value.summary || "");
+
+const fileContent = computed(() => {
+  if (tool.value.toolName === "write") {
+    const args = parseObject(tool.value.args);
+    if (typeof args?.content === "string") return args.content;
+  }
+  return tool.value.output;
+});
+
+function openFileInSidebar(targetPath?: string): void {
+  const p = targetPath || filePath.value;
+  if (!p) return;
+  const payload: { path: string; content?: string; artifactId?: string | null } = {
+    path: p,
+    artifactId: view.value.artifact,
+  };
+  const c = (targetPath && targetPath !== filePath.value) ? undefined : fileContent.value;
+  if (c !== undefined) {
+    payload.content = c;
+  }
+  emit("openFile", payload);
+}
 
 function onRowClick(): void {
   if (!isWholeFile.value) return;
-  emit("openFile", {
-    path: filePath.value,
-    content: tool.value.output,
-    artifactId: view.value.artifact,
-  });
+  openFileInSidebar();
 }
 </script>
 
@@ -90,13 +117,31 @@ function onRowClick(): void {
     :class="flashed ? 'rounded bg-accent/10 ring-1 ring-accent' : ''"
     @toggle="toggled"
   >
-    <summary class="flex min-w-0 cursor-pointer list-none items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] text-dim select-none hover:bg-raised/65 hover:text-fg [&::-webkit-details-marker]:hidden">
+    <summary
+      class="flex min-w-0 cursor-pointer list-none items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] text-dim select-none hover:bg-raised/65 hover:text-fg [&::-webkit-details-marker]:hidden"
+    >
       <Icon :name="icon" class="h-3.5 w-3.5 shrink-0 text-faint" />
       <span :class="standalone ? 'font-medium text-fg' : 'font-mono'" class="min-w-0 truncate">{{ title }}</span>
       <code v-if="kind === 'command'" class="shrink-0 rounded-[5px] bg-raised px-1.5 py-0.5 font-mono text-[11px] text-fg">{{ commandPrefix }}</code>
-      <span v-if="counts" class="ml-auto shrink-0 font-mono text-[11px]"><span class="text-ok">+{{ counts.added }}</span> <span class="text-err">-{{ counts.removed }}</span></span>
+      <span v-if="counts" class="ml-auto shrink-0 font-mono text-[11px]">
+        <span v-if="counts.added > 0" class="text-ok">+{{ counts.added }}</span>
+        <span v-if="counts.added > 0 && counts.removed > 0"> </span>
+        <span v-if="counts.removed > 0" class="text-err">-{{ counts.removed }}</span>
+      </span>
       <span v-else class="ml-auto" />
-      <Icon v-if="failed" name="close" class="h-3.5 w-3.5 shrink-0 text-err" aria-label="Failed or denied" />
+      <span
+        v-if="isWholeFile && !failed"
+        role="button"
+        tabindex="0"
+        title="Open in sidebar"
+        class="flex items-center gap-1 rounded bg-raised/80 px-1.5 py-0.5 font-mono text-[10px] text-faint hover:bg-raised hover:text-fg transition-colors"
+        @click.stop="openFileInSidebar()"
+        @keydown.enter.stop="openFileInSidebar()"
+      >
+        <span>view</span>
+        <Icon name="chevron-right" class="h-3 w-3 shrink-0 text-faint" />
+      </span>
+      <Icon v-if="failed" name="close" class="ml-auto h-3.5 w-3.5 shrink-0 text-err" aria-label="Failed or denied" />
       <Icon name="chevron-down" class="h-3 w-3 shrink-0 text-faint transition-transform group-open/call:rotate-180" />
     </summary>
 
@@ -105,8 +150,25 @@ function onRowClick(): void {
         <div v-if="edits?.files.length === 0" class="px-3 py-2 text-faint">No file diff was reported for this call.</div>
         <div v-for="file in edits?.files" :key="file.path" class="min-w-0 border-t border-line/40 first:border-0">
           <div class="flex min-w-0 items-center gap-2 px-3 py-1.5 font-mono text-[11px]">
-            <span class="min-w-0 flex-1 truncate">{{ file.path }}</span>
-            <span v-if="file.added !== null" class="shrink-0"><span class="text-ok">+{{ file.added }}</span> <span class="text-err">-{{ file.removed }}</span></span>
+            <span
+              class="min-w-0 flex-1 truncate cursor-pointer hover:underline hover:text-fg"
+              title="Open in sidebar"
+              @click="openFileInSidebar(file.path)"
+            >{{ file.path }}</span>
+            <span v-if="file.added !== null" class="shrink-0">
+              <span v-if="file.added > 0" class="text-ok">+{{ file.added }}</span>
+              <span v-if="file.added > 0 && file.removed !== null && file.removed > 0"> </span>
+              <span v-if="file.removed !== null && file.removed > 0" class="text-err">-{{ file.removed }}</span>
+            </span>
+            <button
+              type="button"
+              class="flex items-center gap-1 rounded bg-raised/80 px-1.5 py-0.5 font-mono text-[10px] text-faint hover:bg-raised hover:text-fg transition-colors"
+              title="Open in sidebar"
+              @click="openFileInSidebar(file.path)"
+            >
+              <span>view</span>
+              <Icon name="chevron-right" class="h-3 w-3 shrink-0" />
+            </button>
           </div>
           <DiffView v-if="file.pieces.length" :pieces="file.pieces" compact />
           <p v-else class="px-3 pb-2 text-[11px] text-faint">{{ tool.toolName === 'write' ? 'Whole-file write; no diff was supplied.' : 'No per-file diff was supplied.' }}</p>

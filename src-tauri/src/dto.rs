@@ -329,6 +329,9 @@ pub struct RowSnapshot {
     /// The slash command that triggered this command output, if applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// True when this user message was injected as a mid-run steer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub steering: Option<bool>,
 }
 
 /// One job a delivery message reports on.

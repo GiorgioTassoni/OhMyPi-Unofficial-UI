@@ -34,7 +34,8 @@ use omp_session::TodoPhase;
 use serde_json::{json, Value};
 
 use crate::dto::{
-    ArtifactSnapshot, TodoPhaseInput, TodoPhaseSnapshot, TodoTaskSnapshot, WorkspaceEntry,
+    ArtifactSnapshot, TodoPhaseInput, TodoPhaseSnapshot, TodoTaskSnapshot,
+    WorkspaceEntry,
 };
 
 /// The most entries one level of the tree answers with.
@@ -79,22 +80,11 @@ pub fn phases(phases: &[TodoPhase]) -> Vec<TodoPhaseSnapshot> {
         .collect()
 }
 
-/// The plan to send, or the reason an empty one is refused.
+/// The plan to send to the engine.
 ///
-/// The refusal is the one place this module second-guesses a caller, and it is deliberate:
-/// `set_todos` is a *replace*, the engine persists nothing, and the plan that is replaced
-/// cannot be recovered from the wire (the durable copy is the `todo` tool calls in the
-/// transcript). An accidental empty send therefore destroys a real plan until the thread is
-/// resumed, so the panel's own affordance has to mean it — one empty phase is how it says
-/// so.
+/// `set_todos` replaces the whole plan on the wire. When clearing all phases,
+/// sending an empty array resets the plan.
 pub fn outgoing(phases: &[TodoPhaseInput]) -> Result<Value, String> {
-    if phases.is_empty() {
-        return Err(
-            "refusing to replace the plan with nothing: send one empty phase to clear it"
-                .to_string(),
-        );
-    }
-
     Ok(Value::Array(
         phases
             .iter()
@@ -119,7 +109,7 @@ pub fn outgoing(phases: &[TodoPhaseInput]) -> Result<Value, String> {
                             }
                             wire
                         })
-                        .collect::<Vec<Value>>(),
+                        .collect::<Vec<_>>()
                 })
             })
             .collect(),
@@ -575,8 +565,8 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_plan_is_refused_and_a_plan_is_sent_without_an_absent_blocker() {
-        assert!(outgoing(&[]).is_err());
+    fn an_empty_plan_is_sent_and_a_plan_is_sent_without_an_absent_blocker() {
+        assert_eq!(outgoing(&[]).expect("empty plan is allowed"), json!([]));
 
         let sent = outgoing(&[TodoPhaseInput {
             name: "Implementation".to_string(),

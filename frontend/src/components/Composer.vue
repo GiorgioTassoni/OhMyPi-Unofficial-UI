@@ -13,9 +13,7 @@
  * The keyboard map is `lib/composer.ts` — pure, and asserted — so this file only
  * arranges what it decides.
  */
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
-import type { UnlistenFn } from "@tauri-apps/api/event";
+import { computed, nextTick, ref, watch } from "vue";
 import {
   followUp,
   prompt as sendPrompt,
@@ -43,8 +41,9 @@ import {
 } from "../lib/attachments";
 import { readImage } from "../lib/image-encode";
 import { pasteImages } from "../lib/image-paste";
-import { clipboardImage } from "../bridge";
+import { clipboardImage, readFileBase64 } from "../bridge";
 import { readTextAttachment } from "../lib/text-attachment";
+import { createPastedTextAttachment, shouldAttachAsPastedText } from "../lib/pastedText";
 import { type ChipRow } from "../lib/chips";
 import AttachmentStrip from "./AttachmentStrip.vue";
 import Icon from "./ui/Icon.vue";
@@ -92,11 +91,14 @@ const emit = defineEmits<{
   (event: "favourites", keys: string[]): void;
   /** A palette row for something the *window* owns, which the shell opens (`docs/12` §12). */
   (event: "app-action", id: string): void;
+  /** A steer was submitted, providing optimistic feedback while awaiting engine interrupt. */
+  (event: "steering", payload: { text: string }): void;
 }>();
 
 const draft = ref("");
 /** One send at a time: two Enters must not become two prompts. */
 const sending = ref(false);
+const steeringPending = ref(false);
 const stopping = ref(false);
 const readingFiles = ref(false);
 const attachments = ref<Attachment[]>([]);
@@ -108,11 +110,8 @@ const refusal = ref<string | null>(null);
 
 /** The box itself, for the caret the palette is derived from. */
 const box = ref<HTMLTextAreaElement | null>(null);
-/** The composer card: the `+`, the row, the strip. Also the drop target. */
-const card = ref<HTMLElement | null>(null);
 const picker = ref<HTMLInputElement | null>(null);
 /** A drag is over the composer, so it reads as a target. */
-const hovering = ref(false);
 
 /**
  * Where the caret is, as of the last thing the box reported.
@@ -215,48 +214,11 @@ async function attachText(file: File): Promise<void> {
   }
 }
 
-/**
- * Take the paths a drop delivered.
- *
- * Paths, not bytes: the OS told the window where the files are, which is exactly the
- * second route — the agent reads them, and the engine's own pipeline applies. The same
- * file dropped twice is one attachment.
- */
-function attachPaths(paths: readonly string[]): void {
+async function attachFiles(files: File[]): Promise<void> {
   if (props.disabled) {
     refusal.value = "no session is open, so there is nothing to attach to";
     return;
   }
-
-  // One `seen` set for both halves of the question — what is already attached *and*
-  // what this drop has already offered. Measured: filtering against the held list alone
-  // attached `screen 1.png` twice when the same drop named it twice.
-  const seen = new Set(
-    attachments.value.flatMap((attachment) =>
-      attachment.kind === "path" ? [attachment.path] : [],
-    ),
-  );
-  const added = paths
-    .filter((path) => (seen.has(path) ? false : seen.add(path) !== undefined))
-    .map((path) => ({
-      id: crypto.randomUUID(),
-      kind: "path" as const,
-      name: nameFromPath(path),
-      path,
-    }));
-
-  if (added.length > 0) {
-    attachments.value = [...attachments.value, ...added];
-    refusal.value = null;
-  }
-}
-
-async function onPicked(event: Event): Promise<void> {
-  const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files ?? []);
-  // Cleared before the reads, so choosing the same file twice still fires a change.
-  input.value = "";
-
   readingFiles.value = true;
   try {
     for (const file of files) {
@@ -273,6 +235,88 @@ async function onPicked(event: Event): Promise<void> {
   }
 }
 
+function attachPastedText(text: string): void {
+  if (props.disabled) {
+    refusal.value = "no session is open, so there is nothing to attach to";
+    return;
+  }
+  try {
+    const attachment = createPastedTextAttachment(text, attachments.value);
+    const next = [...attachments.value, attachment];
+    const tooLarge = frameRefusal(props.frameLimit, draft.value, next);
+    if (tooLarge !== null) {
+      refusal.value = `Pasted text cannot be attached: ${tooLarge}`;
+      return;
+    }
+    attachments.value = next;
+    refusal.value = null;
+  } catch (cause) {
+    refusal.value = cause instanceof Error ? cause.message : String(cause);
+  }
+}
+
+/**
+ * Take the paths a drop delivered.
+ *
+ * If a dropped path is an image, we attempt to read it directly as a base64 image
+ * attachment so multimodal models can inspect it. Otherwise, it is held as a path
+ * attachment that the agent reads with its tools.
+ */
+async function attachPaths(paths: readonly string[]): Promise<void> {
+  if (props.disabled) {
+    refusal.value = "no session is open, so there is nothing to attach to";
+    return;
+  }
+
+  const seen = new Set(
+    attachments.value.flatMap((attachment) =>
+      attachment.kind === "path" ? [attachment.path] : [],
+    ),
+  );
+
+  const pathsToProcess = paths.filter((path) => (seen.has(path) ? false : seen.add(path) !== undefined));
+  if (pathsToProcess.length === 0) return;
+
+  readingFiles.value = true;
+  try {
+    for (const path of pathsToProcess) {
+      const isRaster = /\.(png|jpe?g|gif|webp)$/i.test(path);
+      if (isRaster) {
+        try {
+          const b64 = await readFileBase64(null, path);
+          const ext = path.split(".").pop()?.toLowerCase();
+          const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : ext === "gif" ? "image/gif" : "image/jpeg";
+          const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+          const blob = new Blob([bytes], { type: mime });
+          await attachImage(blob, nameFromPath(path));
+          continue;
+        } catch {
+          // If reading base64 fails, fall back to path attachment below
+        }
+      }
+
+      const item: Attachment = {
+        id: crypto.randomUUID(),
+        kind: "path",
+        name: nameFromPath(path),
+        path,
+      };
+      attachments.value = [...attachments.value, item];
+      refusal.value = null;
+    }
+  } finally {
+    readingFiles.value = false;
+  }
+}
+
+async function onPicked(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files ?? []);
+  // Cleared before the reads, so choosing the same file twice still fires a change.
+  input.value = "";
+  await attachFiles(files);
+}
+
 async function onPaste(event: ClipboardEvent): Promise<void> {
   if (props.disabled) {
     return;
@@ -280,6 +324,21 @@ async function onPaste(event: ClipboardEvent): Promise<void> {
 
   readingFiles.value = true;
   try {
+    const clipboardItems = Array.from(event.clipboardData?.items ?? []);
+    const hasImage = clipboardItems.some((item) => item.kind === "file" && item.type.startsWith("image/"));
+    if (hasImage) {
+      await pasteImages(event, clipboardImage, (image) => attachImage(image, "pasted image"));
+      return;
+    }
+
+    const pastedText = event.clipboardData?.getData("text/plain");
+    if (pastedText && shouldAttachAsPastedText(pastedText)) {
+      event.preventDefault();
+      attachPastedText(pastedText);
+      return;
+    }
+
+    // Otherwise fallback to native image paste (e.g. Linux empty WebKit event)
     await pasteImages(event, clipboardImage, (image) => attachImage(image, "pasted image"));
   } catch (cause) {
     refusal.value = cause instanceof Error ? cause.message : String(cause);
@@ -287,56 +346,6 @@ async function onPaste(event: ClipboardEvent): Promise<void> {
     readingFiles.value = false;
   }
 }
-
-/**
- * Whether a drag position is over the composer.
- *
- * The event reports *physical* pixels while a rect is in CSS pixels, so the scale
- * factor converts between them. A drag anywhere else is left alone rather than
- * attached: this is the one surface in the window that means "attach", and the same
- * event will serve the terminal and the file tree when they arrive.
- */
-function isOver(position: { x: number; y: number }): boolean {
-  const element = card.value;
-  if (element === null) {
-    return false;
-  }
-
-  const rect = element.getBoundingClientRect();
-  const scale = window.devicePixelRatio || 1;
-  const x = position.x / scale;
-  const y = position.y / scale;
-
-  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-}
-
-let stopListening: UnlistenFn | null = null;
-
-onMounted(async () => {
-  stopListening = await getCurrentWebview().onDragDropEvent((event) => {
-    const payload = event.payload;
-
-    switch (payload.type) {
-      case "enter":
-      case "over":
-        hovering.value = isOver(payload.position);
-        break;
-      case "drop":
-        hovering.value = false;
-        if (isOver(payload.position)) {
-          attachPaths(payload.paths);
-        }
-        break;
-      case "leave":
-        hovering.value = false;
-        break;
-    }
-  });
-});
-
-onUnmounted(() => {
-  stopListening?.();
-});
 
 function remove(id: string): void {
   attachments.value = attachments.value.filter((attachment) => attachment.id !== id);
@@ -362,11 +371,15 @@ async function send(operation: Sendable): Promise<void> {
   const heldAttachments = attachments.value;
 
   sending.value = true;
-  // Cleared before the await, so the box is ready for the next thought and pressing
-  // Enter twice cannot send the same message twice.
-  draft.value = "";
-  attachments.value = [];
   refusal.value = null;
+
+  if (operation === "steer") {
+    steeringPending.value = true;
+    emit("steering", { text });
+  } else {
+    draft.value = "";
+    attachments.value = [];
+  }
 
   try {
     switch (operation) {
@@ -375,6 +388,8 @@ async function send(operation: Sendable): Promise<void> {
         break;
       case "steer":
         await steer(props.thread, text, images);
+        draft.value = "";
+        attachments.value = [];
         break;
       case "follow-up":
         await followUp(props.thread, text, images);
@@ -385,6 +400,9 @@ async function send(operation: Sendable): Promise<void> {
         break;
     }
   } catch (cause) {
+    if (operation === "steer") {
+      emit("steering", { text: "" });
+    }
     // Give back what was sent rather than lose it — but only if nothing was typed or
     // attached in the meantime, so an error cannot overwrite newer work. The draft
     // comes back as it was typed, not as it was sent: the paths live on the chips.
@@ -397,6 +415,7 @@ async function send(operation: Sendable): Promise<void> {
     emit("failed", String(cause));
   } finally {
     sending.value = false;
+    steeringPending.value = false;
   }
 }
 
@@ -629,7 +648,7 @@ function setDraft(text: string): void {
   caret.value = text.length;
 }
 
-defineExpose({ setDraft });
+defineExpose({ setDraft, attachPaths, attachFiles, attachPastedText });
 </script>
 
 <template>
@@ -639,9 +658,7 @@ defineExpose({ setDraft });
     around the box. (Until this pass it drew both, with tokens that no longer exist.)
   -->
   <div
-    ref="card"
     class="rounded-[12px] p-1 transition-shadow"
-    :class="hovering ? 'ring-1 ring-accent/60' : ''"
   >
     <AttachmentStrip
       :attachments="attachments"
@@ -699,12 +716,17 @@ defineExpose({ setDraft });
       />
 
       <button
-        v-if="hasInput"
-        :disabled="!canSend"
-        class="flex h-7 min-w-7 shrink-0 items-center justify-center rounded-[6px] bg-accent px-2.5 text-[12px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100 shadow-sm"
+        v-if="hasInput || steeringPending"
+        :disabled="!canSend || steeringPending"
+        class="flex h-7 min-w-7 shrink-0 items-center justify-center rounded-[6px] px-2.5 text-[12px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100 shadow-sm"
+        :class="steeringPending ? 'bg-amber-500' : 'bg-accent'"
         @click="send(isWorking ? 'steer' : 'prompt')"
       >
-        <span class="leading-none select-none">{{ isWorking ? "steer" : "↵" }}</span>
+        <span v-if="steeringPending" class="inline-flex items-center gap-1.5">
+          <Icon name="refresh" class="h-3 w-3 animate-spin text-canvas" />
+          <span>steer…</span>
+        </span>
+        <span v-else class="leading-none select-none">{{ isWorking ? "steer" : "↵" }}</span>
       </button>
       <button
         v-if="isWorking"
@@ -752,8 +774,12 @@ defineExpose({ setDraft });
         </button>
       </template>
 
-      <span v-if="queued > 0" class="text-dim">{{ queued }} queued</span>
-      <span v-if="streaming" class="text-ok">streaming</span>
+      <span v-if="steeringPending" class="inline-flex items-center gap-1.5 text-amber-500 font-medium animate-pulse">
+        <Icon name="steer" class="h-3 w-3" />
+        interrupting turn…
+      </span>
+      <span v-else-if="queued > 0" class="text-dim">{{ queued }} queued</span>
+      <span v-else-if="streaming" class="text-ok">streaming</span>
       <span v-else-if="props.hasActiveAgents" class="text-ok">agents working</span>
       <span v-if="isWorking" class="ml-auto text-faint">
         enter steers · ⌥enter queues · esc stops

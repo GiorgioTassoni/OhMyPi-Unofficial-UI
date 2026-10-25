@@ -28,6 +28,7 @@ use omp_transport::protocol::ui::{self, UiResponse};
 use omp_transport::protocol::{self, commands, ImageContent};
 use omp_transport::{ClientOptions, OmpClient, SessionEvent, SidecarSpec};
 use tauri::{AppHandle, Emitter};
+
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
@@ -1499,20 +1500,28 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
                 custom_type: message.custom_type.clone(),
                 jobs: jobs(message),
                 command: None,
+                steering: None,
             }
         }
-        omp_session::Row::Message(message) => RowSnapshot {
-            role: message.role().to_string(),
-            timestamp: message.timestamp,
-            text: message.text(),
-            thinking: None,
-            streaming: false,
-            tool: None,
-            attachments: attachments(message),
-            custom_type: message.custom_type.clone(),
-            jobs: jobs(message),
-            command: None,
-        },
+        omp_session::Row::Message(message) => {
+            let steering = match &message.kind {
+                omp_session::MessageKind::User { steering, .. } if *steering => Some(true),
+                _ => None,
+            };
+            RowSnapshot {
+                role: message.role().to_string(),
+                timestamp: message.timestamp,
+                text: message.text(),
+                thinking: None,
+                streaming: false,
+                tool: None,
+                attachments: attachments(message),
+                custom_type: message.custom_type.clone(),
+                jobs: jobs(message),
+                command: None,
+                steering,
+            }
+        }
         omp_session::Row::Assistant { message, streaming } => RowSnapshot {
             role: "assistant".to_string(),
             timestamp: message.timestamp,
@@ -1524,6 +1533,7 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
             custom_type: message.custom_type.clone(),
             jobs: jobs(message),
             command: None,
+            steering: None,
         },
         omp_session::Row::Tool(card) => RowSnapshot {
             role: "tool".to_string(),
@@ -1557,6 +1567,7 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
             custom_type: None,
             jobs: Vec::new(),
             command: None,
+            steering: None,
         },
         omp_session::Row::Notice {
             level,
@@ -1575,6 +1586,7 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
             custom_type: Some(kind.clone()),
             jobs: Vec::new(),
             command: source.clone(),
+            steering: None,
         },
     }
 }

@@ -199,32 +199,109 @@ function markCopied(): void {
   }, 1800);
 }
 
-async function openInEditor(): Promise<void> {
+const fullPath = computed(() => {
   const targetPath = cleanPath.value;
-  const fullPath = props.workspace && !targetPath.startsWith("/")
+  return props.workspace && !targetPath.startsWith("/")
     ? `${props.workspace}/${targetPath}`
     : targetPath;
+});
+
+const isRealFileSystemPath = computed(() => {
+  const p = fullPath.value;
+  return !p.startsWith("artifact:") && !p.startsWith("skill:") && !p.startsWith("virtual:");
+});
+
+const parentDirectory = computed(() => {
+  const p = fullPath.value.replace(/\/+$/, "");
+  const cut = p.lastIndexOf("/");
+  return cut <= 0 ? "/" : p.slice(0, cut);
+});
+
+const menuOpen = ref(false);
+const menuRef = ref<HTMLElement | null>(null);
+const menuButtonRef = ref<HTMLElement | null>(null);
+
+const copiedFullPath = ref(false);
+let fullPathCopyTimer: ReturnType<typeof setTimeout> | null = null;
+const copiedRelPath = ref(false);
+let relPathCopyTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function openInDefaultApp(): Promise<void> {
+  menuOpen.value = false;
   try {
-    await openPath(fullPath);
+    await openPath(fullPath.value);
   } catch (err) {
-    emit("failed", `Could not open file in editor: ${String(err)}`);
+    emit("failed", `Could not open file: ${String(err)}`);
   }
+}
+
+async function revealInFileManager(): Promise<void> {
+  menuOpen.value = false;
+  try {
+    await openPath(parentDirectory.value);
+  } catch (err) {
+    emit("failed", `Could not reveal in file manager: ${String(err)}`);
+  }
+}
+
+async function copyFullPath(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(fullPath.value);
+    copiedFullPath.value = true;
+    if (fullPathCopyTimer) clearTimeout(fullPathCopyTimer);
+    fullPathCopyTimer = setTimeout(() => {
+      copiedFullPath.value = false;
+    }, 1800);
+  } catch (err) {
+    emit("failed", `Could not copy path: ${String(err)}`);
+  }
+}
+
+async function copyRelativePath(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(cleanPath.value);
+    copiedRelPath.value = true;
+    if (relPathCopyTimer) clearTimeout(relPathCopyTimer);
+    relPathCopyTimer = setTimeout(() => {
+      copiedRelPath.value = false;
+    }, 1800);
+  } catch (err) {
+    emit("failed", `Could not copy path: ${String(err)}`);
+  }
+}
+
+function onPointerDown(e: PointerEvent): void {
+  if (!menuOpen.value) return;
+  const target = e.target as Node | null;
+  if (!target) return;
+  if (menuRef.value?.contains(target) || menuButtonRef.value?.contains(target)) {
+    return;
+  }
+  menuOpen.value = false;
 }
 
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === "Escape") {
     e.preventDefault();
+    if (menuOpen.value) {
+      menuOpen.value = false;
+      return;
+    }
     emit("close");
   }
 }
 
 onMounted(() => {
   window.addEventListener("keydown", onKeydown);
+  document.addEventListener("pointerdown", onPointerDown, true);
 });
 
 onUnmounted(() => {
   window.removeEventListener("keydown", onKeydown);
+  document.removeEventListener("pointerdown", onPointerDown, true);
   if (copyTimer) clearTimeout(copyTimer);
+  if (fullPathCopyTimer) clearTimeout(fullPathCopyTimer);
+  if (relPathCopyTimer) clearTimeout(relPathCopyTimer);
 });
 
 const languageLabel = computed(() => {
@@ -338,15 +415,83 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
           <span :class="copied ? 'text-ok font-medium' : ''">{{ copied ? 'Copied' : 'Copy' }}</span>
         </button>
 
-        <!-- Open in External Editor -->
-        <button
-          type="button"
-          class="rounded-[5px] p-1 text-dim transition-colors hover:bg-raised hover:text-fg"
-          aria-label="Open in native editor"
-          @click="openInEditor"
-        >
-          <Icon name="external" class="h-3.5 w-3.5" />
-        </button>
+        <!-- More Actions / 3-dot Menu -->
+        <div class="relative">
+          <button
+            ref="menuButtonRef"
+            type="button"
+            class="rounded-[5px] p-1 text-dim transition-colors hover:bg-raised hover:text-fg"
+            :class="menuOpen ? 'bg-raised text-fg' : ''"
+            aria-label="More file actions"
+            :aria-expanded="menuOpen"
+            @click="menuOpen = !menuOpen"
+          >
+            <Icon name="ellipsis" class="h-3.5 w-3.5" />
+          </button>
+
+          <!-- Dropdown menu -->
+          <Transition
+            enter-active-class="transition duration-100 ease-out"
+            enter-from-class="opacity-0 scale-95"
+            enter-to-class="opacity-100 scale-100"
+            leave-active-class="transition duration-75 ease-in"
+            leave-from-class="opacity-100 scale-100"
+            leave-to-class="opacity-0 scale-95"
+          >
+            <div
+              v-if="menuOpen"
+              ref="menuRef"
+              class="absolute right-0 top-full z-40 mt-1 min-w-52 origin-top-right overflow-hidden rounded-[10px] border border-line/60 bg-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md select-none"
+              role="menu"
+              aria-label="File options"
+            >
+              <button
+                role="menuitem"
+                class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+                :disabled="!isRealFileSystemPath"
+                @click="openInDefaultApp"
+              >
+                <Icon name="external" class="h-3.5 w-3.5 shrink-0 text-faint" />
+                <span class="min-w-0 flex-1 truncate">Open in default app</span>
+              </button>
+
+              <button
+                role="menuitem"
+                class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+                :disabled="!isRealFileSystemPath"
+                @click="revealInFileManager"
+              >
+                <Icon name="folder-open" class="h-3.5 w-3.5 shrink-0 text-faint" />
+                <span class="min-w-0 flex-1 truncate">Reveal in file manager</span>
+              </button>
+
+              <hr class="my-1 border-t border-line/50" />
+
+              <button
+                role="menuitem"
+                class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg"
+                @click="copyFullPath"
+              >
+                <Icon :name="copiedFullPath ? 'check' : 'copy'" class="h-3.5 w-3.5 shrink-0" :class="copiedFullPath ? 'text-ok' : 'text-faint'" />
+                <span class="min-w-0 flex-1 truncate" :class="copiedFullPath ? 'text-ok font-medium' : ''">
+                  {{ copiedFullPath ? 'Full path copied' : 'Copy full path' }}
+                </span>
+              </button>
+
+              <button
+                v-if="cleanPath !== fullPath"
+                role="menuitem"
+                class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg"
+                @click="copyRelativePath"
+              >
+                <Icon :name="copiedRelPath ? 'check' : 'file'" class="h-3.5 w-3.5 shrink-0" :class="copiedRelPath ? 'text-ok' : 'text-faint'" />
+                <span class="min-w-0 flex-1 truncate" :class="copiedRelPath ? 'text-ok font-medium' : ''">
+                  {{ copiedRelPath ? 'Relative path copied' : 'Copy relative path' }}
+                </span>
+              </button>
+            </div>
+          </Transition>
+        </div>
 
         <!-- Close Button -->
         <button
@@ -394,7 +539,7 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
         <button
           type="button"
           class="mt-3 rounded-[6px] border border-line bg-raised px-3 py-1.5 text-[12px] font-medium text-fg hover:bg-raised/80"
-          @click="openInEditor"
+          @click="openInDefaultApp"
         >
           Open in native editor instead
         </button>

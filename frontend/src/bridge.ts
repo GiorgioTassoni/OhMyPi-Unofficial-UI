@@ -133,6 +133,8 @@ export interface RowSnapshot {
   jobs: JobDeliverySnapshot[];
   /** The slash command that produced this output, if known. */
   command?: string | null;
+  /** True when this user message was injected as a mid-run steer. */
+  steering?: boolean;
 }
 
 /**

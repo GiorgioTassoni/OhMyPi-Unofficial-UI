@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ToolSnapshot } from "../bridge";
 import { row, said } from "./rows.fixture";
-import { conversationTurns, workLabel } from "./turnActivity";
+import { conversationTurns, formatTurnDuration, workLabel } from "./turnActivity";
 
 function call(toolName: string, args: string, details = "", extra: Partial<ToolSnapshot> = {}) {
   return row({ role: "tool", tool: {
@@ -50,6 +50,20 @@ describe("conversation turn activity", () => {
       .toEqual(["Read 2 files", "Ran 2 commands", "Edited 3 files"]);
     expect(turns[0].items[2].kind === "group" ? turns[0].items[2].group.added : null).toBe(3);
     expect(workLabel(turns[1])).toBe("Working…");
+    expect(workLabel(turns[1], 64_000)).toBe("Working…");
+    expect(workLabel(turns[1], 69_000)).toBe("Working 5s");
+    expect(workLabel(turns[1], 64_000 + 752_000)).toBe("Working 12m 32s");
+    expect(workLabel(turns[1], 64_000 + 3665_000)).toBe("Working 1h 1m 05s");
+  });
+
+  test("formatTurnDuration handles seconds, minutes, and hours", () => {
+    expect(formatTurnDuration(0)).toBe("0s");
+    expect(formatTurnDuration(5)).toBe("5s");
+    expect(formatTurnDuration(59)).toBe("59s");
+    expect(formatTurnDuration(60)).toBe("1m 00s");
+    expect(formatTurnDuration(62)).toBe("1m 02s");
+    expect(formatTurnDuration(752)).toBe("12m 32s");
+    expect(formatTurnDuration(3665)).toBe("1h 1m 05s");
   });
 
   test("unknown timing stays neutral and unknown tools are not dropped", () => {
@@ -60,15 +74,15 @@ describe("conversation turn activity", () => {
     expect(turns[0].items[0].kind === "group" && turns[0].items[0].group.label).toBe("Used 1 tool");
   });
 
-  test("does not invent line counts for a write without a diff", () => {
+  test("computes created label and line count for whole-file write", () => {
     const turns = conversationTurns([
       row({ role: "user", text: "write" }),
       call("write", '{"path":"new.ts","content":"hello"}', '{"resolvedPath":"new.ts"}'),
       said("done"),
     ], false);
     const item = turns[0].items[0];
-    expect(item.kind === "group" && item.group.label).toBe("Edited 1 file");
-    expect(item.kind === "group" && item.group.added).toBeNull();
+    expect(item.kind === "group" && item.group.label).toBe("Created 1 file");
+    expect(item.kind === "group" && item.group.added).toBe(1);
   });
 
   test("only adjacent calls group; a thought or another tool splits the run", () => {
@@ -179,5 +193,24 @@ describe("conversation turn activity", () => {
     expect(turns[1].user?.row.text).toContain('User invoked the "impeccable" skill');
     expect(turns[1].answer?.row.text).toBe("Inspecting settings UI...");
     expect(turns[1].items.some((item) => item.kind === "row" && item.entry.row.customType === "skill-prompt")).toBe(false);
+  });
+
+  test("marks a steered turn with isSteer and adjusts workLabel for the interrupted turn", () => {
+    const turns = conversationTurns([
+      row({ role: "user", text: "initial task" }),
+      call("bash", "npm test", "running..."),
+      row({ role: "user", text: "stop and do other thing", steering: true }),
+      said("ok switching tasks"),
+    ], false);
+
+    expect(turns.length).toBe(2);
+    expect(turns[0].isSteer).toBe(false);
+    expect(turns[0].answer).toBeNull();
+    // Interrupted turn label reflects the steer
+    expect(workLabel(turns[0], undefined, true)).toBe("Interrupted by steer");
+
+    expect(turns[1].isSteer).toBe(true);
+    expect(turns[1].user?.row.text).toBe("stop and do other thing");
+    expect(turns[1].answer?.row.text).toBe("ok switching tasks");
   });
 });

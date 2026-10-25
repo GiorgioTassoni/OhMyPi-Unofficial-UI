@@ -8,7 +8,16 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { displayName, dotFor, isNoLiveThreadError, projectName, sidebarModel } from "./threads";
+import {
+  displayName,
+  dotFor,
+  isNoLiveThreadError,
+  loadProjectOrder,
+  projectName,
+  reorderItems,
+  saveProjectOrder,
+  sidebarModel,
+} from "./threads";
 import type { SessionSummary, ThreadSnapshot } from "../bridge";
 
 const NOW = 1_700_000_000_000;
@@ -98,6 +107,27 @@ describe("the model", () => {
 
     expect(groups.map((group) => group.name).sort()).toEqual(["App", "Other"]);
     expect(groups.find((group) => group.name === "Other")?.threads.map((row) => row.id)).toEqual(["b"]);
+  });
+
+  test("projects follow user's custom order instead of last modification time", () => {
+    const groups = sidebarModel({
+      sessions: [
+        session("a", { cwd: "/home/me/Projects/Alpha", modifiedAt: NOW }),
+        session("b", { cwd: "/home/me/Projects/Beta", modifiedAt: NOW - 10000 }),
+        session("c", { cwd: "/home/me/Projects/Gamma", modifiedAt: NOW - 5000 }),
+      ],
+      live: [],
+      unread: [],
+      hidden: [],
+      projectOrder: ["/home/me/Projects/Beta", "/home/me/Projects/Gamma", "/home/me/Projects/Alpha"],
+      now: NOW,
+    });
+
+    expect(groups.map((g) => g.path)).toEqual([
+      "/home/me/Projects/Beta",
+      "/home/me/Projects/Gamma",
+      "/home/me/Projects/Alpha",
+    ]);
   });
 
   test("a thread that exists only in memory is still listed", () => {
@@ -306,6 +336,73 @@ describe("isNoLiveThreadError", () => {
   test("does not match other errors", () => {
     expect(isNoLiveThreadError("network timeout")).toBe(false);
     expect(isNoLiveThreadError(new Error("failed to spawn sidecar"))).toBe(false);
+  });
+});
+
+describe("reorderItems", () => {
+  const list = ["A", "B", "C", "D"];
+
+  test("moves item down below target", () => {
+    // move A below B
+    expect(reorderItems(list, 0, 1, "below")).toEqual(["B", "A", "C", "D"]);
+    // move A below C
+    expect(reorderItems(list, 0, 2, "below")).toEqual(["B", "C", "A", "D"]);
+  });
+
+  test("moves item down above target", () => {
+    // move A above C
+    expect(reorderItems(list, 0, 2, "above")).toEqual(["B", "A", "C", "D"]);
+  });
+
+  test("moves item up above target", () => {
+    // move D above B
+    expect(reorderItems(list, 3, 1, "above")).toEqual(["A", "D", "B", "C"]);
+    // move D above A
+    expect(reorderItems(list, 3, 0, "above")).toEqual(["D", "A", "B", "C"]);
+  });
+
+  test("moves item up below target", () => {
+    // move D below B
+    expect(reorderItems(list, 3, 1, "below")).toEqual(["A", "B", "D", "C"]);
+  });
+
+  test("returns original order when target equals source or invalid index", () => {
+    expect(reorderItems(list, 1, 1, "above")).toEqual(list);
+    expect(reorderItems(list, -1, 1, "above")).toEqual(list);
+    expect(reorderItems(list, 0, 10, "below")).toEqual(list);
+  });
+});
+
+describe("loadProjectOrder and saveProjectOrder", () => {
+  function makeMockStorage(initial: Record<string, string> = {}): Storage {
+    const store = new Map<string, string>(Object.entries(initial));
+    return {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, val: string) => { store.set(key, val); },
+      removeItem: (key: string) => { store.delete(key); },
+      clear: () => { store.clear(); },
+      key: (i: number) => [...store.keys()][i] ?? null,
+      length: store.size,
+    };
+  }
+
+  test("loads empty array when storage is undefined or empty", () => {
+    expect(loadProjectOrder(undefined)).toEqual([]);
+    expect(loadProjectOrder(makeMockStorage())).toEqual([]);
+  });
+
+  test("saves and reloads string array correctly", () => {
+    const storage = makeMockStorage();
+    saveProjectOrder(["/path/1", "/path/2"], storage);
+    expect(loadProjectOrder(storage)).toEqual(["/path/1", "/path/2"]);
+  });
+
+  test("filters out non-string items or malformed JSON safely", () => {
+    const storage = makeMockStorage({ "omp:projects-order": JSON.stringify(["/path/1", 42, null, "/path/2"]) });
+    expect(loadProjectOrder(storage)).toEqual(["/path/1", "/path/2"]);
+
+    const badStorage = makeMockStorage({ "omp:projects-order": "not valid json {" });
+    expect(loadProjectOrder(badStorage)).toEqual([]);
   });
 });
 

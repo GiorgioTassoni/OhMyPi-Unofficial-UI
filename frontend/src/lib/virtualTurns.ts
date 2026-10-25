@@ -25,7 +25,7 @@ export function turnLayout(
 }
 
 /** Binary search keeps scroll handling logarithmic even with thousands of turns. */
-export function visibleTurns(layout: TurnLayout, top: number, viewportHeight: number, overscan = 700): TurnWindow {
+export function visibleTurns(layout: TurnLayout, top: number, viewportHeight: number, overscan = 1500): TurnWindow {
   const count = layout.offsets.length - 1;
   if (count === 0) return { start: 0, end: 0, before: 0, after: 0 };
   const low = Math.max(0, top - overscan);

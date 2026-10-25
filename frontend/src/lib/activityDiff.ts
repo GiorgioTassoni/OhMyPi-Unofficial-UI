@@ -42,6 +42,30 @@ function rawCounts(diff: string): { added: number; removed: number } | null {
   return added + removed > 0 ? { added, removed } : null;
 }
 
+function countLines(content: string): number {
+  if (!content) return 0;
+  const end = content.endsWith("\n")
+    ? (content.endsWith("\r\n") ? content.length - 2 : content.length - 1)
+    : content.length;
+  if (end <= 0) return 0;
+  let lines = 1;
+  for (let i = 0; i < end; i++) {
+    if (content.charCodeAt(i) === 10) lines++;
+  }
+  return lines;
+}
+
+export function wholeFileDiffPiece(content: string): ReviewPiece | null {
+  if (!content) return null;
+  const rawLines = content.replace(/\r?\n$/, "").split(/\r?\n/);
+  if (rawLines.length === 0 || (rawLines.length === 1 && rawLines[0] === "")) return null;
+  const diffLines = [
+    `@@ -0,0 +1,${rawLines.length} @@`,
+    ...rawLines.map((line) => `+${line}`),
+  ];
+  return { kind: "diff", text: diffLines.join("\n") };
+}
+
 /** Counts for collapsed headers without constructing source-ordered diff rows. */
 export function activityDiffCounts(tool: ToolSnapshot): { added: number; removed: number } | null {
   if (!tool.finished || tool.isError) return null;
@@ -52,7 +76,13 @@ export function activityDiffCounts(tool: ToolSnapshot): { added: number; removed
   if (touched.length === 1) {
     const diff = typeof details?.diff === "string" ? details.diff
       : typeof args?.diff === "string" ? args.diff : "";
-    return rawCounts(diff);
+    const counts = rawCounts(diff);
+    if (counts) return counts;
+    if (tool.toolName === "write" && typeof args?.content === "string") {
+      const added = countLines(args.content);
+      return added > 0 ? { added, removed: 0 } : null;
+    }
+    return null;
   }
   const entries = Array.isArray(details?.perFileResults) ? details.perFileResults : [];
   if (entries.length !== touched.length) return null;
@@ -66,7 +96,7 @@ export function activityDiffCounts(tool: ToolSnapshot): { added: number; removed
   );
 }
 
-/** Display only changed lines; never treat a write's `args.content` as a diff. */
+/** Display changed lines; synthesizes an added-lines diff for whole-file writes. */
 export function activityDiff(tool: ToolSnapshot): ActivityDiff {
   const details = parseObject(tool.details);
   const args = parseObject(tool.args);
@@ -80,7 +110,11 @@ export function activityDiff(tool: ToolSnapshot): ActivityDiff {
     const fromResult = perFile.find((value) => value.path === path);
     const diff = typeof fromResult?.diff === "string" ? fromResult.diff
       : touched.length === 1 ? joined : null;
-    const pieces = diff ? orderedReviewPieces([diff]) : [];
+    let pieces = diff ? orderedReviewPieces([diff]) : [];
+    if (pieces.length === 0 && tool.toolName === "write" && typeof args?.content === "string") {
+      const whole = wholeFileDiffPiece(args.content);
+      if (whole) pieces = [whole];
+    }
     const total = counts(pieces);
     return { path, pieces, added: total?.added ?? null, removed: total?.removed ?? null };
   });

@@ -45,13 +45,18 @@ watch(
 const mutationTitle = computed(() => {
   const files = touched.value;
   if (files.length === 0) return "Edited files";
-  const verb = files[0].kind === "written" ? "Wrote" : "Edited";
+  const verb = files[0].kind === "written" ? "Created" : "Edited";
   if (files.length !== 1) return `${verb} ${files.length} files`;
   const filename = files[0].path.split(/[\\/]/).filter(Boolean).pop() || files[0].path;
   return `${verb} ${filename}`;
 });
 
 const diffStats = computed(() => {
+  if (view.value.body.kind === "file") {
+    const rawLines = view.value.body.text.replace(/\r?\n$/, "").split(/\r?\n/);
+    const added = rawLines.length === 1 && rawLines[0] === "" ? 0 : rawLines.length;
+    return added > 0 ? { added, removed: 0 } : null;
+  }
   if (view.value.body.kind !== "diff") return null;
   const lines = view.value.body.text.split("\n");
   let added = 0;

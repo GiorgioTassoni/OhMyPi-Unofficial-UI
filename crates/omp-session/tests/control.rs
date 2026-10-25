@@ -204,6 +204,14 @@ fn a_finished_todo_call_is_what_makes_the_plan_stale() {
         "a `todo` tool result is the plan moving, so the caller must re-read get_state"
     );
 
+    assert!(
+        control.apply(&SessionEvent::decode(&json!({
+            "type": "todo_auto_clear"
+        }))),
+        "todo_auto_clear clears the plan and marks state stale"
+    );
+    assert!(control.todo_phases.is_empty());
+
     // Every other tool leaves the plan where it was; re-reading for each of them would
     // be a poll loop by another name.
     for tool in ["bash", "edit", "read", "todolist"] {

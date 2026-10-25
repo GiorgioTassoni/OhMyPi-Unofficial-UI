@@ -40,9 +40,12 @@ import type { ThreadChrome } from "../lib/chrome";
 import { jumpTarget } from "../lib/search";
 import { type ChipRow } from "../lib/chips";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { useViewDragDrop } from "../lib/dragDrop";
 import Composer from "./Composer.vue";
 import ConversationRow from "./ConversationRow.vue";
 import DialogPanel from "./DialogPanel.vue";
+import DragDropOverlay from "./DragDropOverlay.vue";
+import PendingSteerBadge from "./PendingSteerBadge.vue";
 import Icon from "./ui/Icon.vue";
 import TurnFiles from "./TurnFiles.vue";
 import TurnActivity from "./TurnActivity.vue";
@@ -443,6 +446,39 @@ watch(waitingForOutput, (waiting) => {
   if (waiting && isAtBottom()) followAfterRender();
 });
 
+const pendingSteer = ref<{ text: string } | null>(null);
+
+function onSteering(payload: { text: string }): void {
+  if (!payload.text) {
+    pendingSteer.value = null;
+  } else {
+    pendingSteer.value = { text: payload.text };
+    followAfterRender();
+  }
+}
+
+function isNextTurnSteer(current: ConversationTurn): boolean {
+  if (pendingSteer.value && current === turns.value.at(-1)) {
+    return true;
+  }
+  const index = turns.value.findIndex((t) => t.start === current.start);
+  if (index >= 0 && index < turns.value.length - 1) {
+    return turns.value[index + 1]?.isSteer === true;
+  }
+  return false;
+}
+
+watch(rows, (newRows) => {
+  if (pendingSteer.value) {
+    const hasLanded = newRows.slice(-3).some(
+      (r) => r.role === "user" && (r.steering || (pendingSteer.value && r.text.includes(pendingSteer.value.text))),
+    );
+    if (hasLanded) {
+      pendingSteer.value = null;
+    }
+  }
+});
+
 /**
  * Re-read everything: the status and the conversation.
  *
@@ -567,8 +603,26 @@ function openDetails(element: HTMLDetailsElement): void {
   element.dispatchEvent(new Event("toggle"));
 }
 
-/** The composer, for the one op that has to reach into it. */
-const composer = ref<{ setDraft: (text: string) => void } | null>(null);
+/** The composer, for the operations that reach into it. */
+const composer = ref<{
+  setDraft: (text: string) => void;
+  attachPaths: (paths: readonly string[]) => Promise<void>;
+  attachFiles: (files: File[]) => Promise<void>;
+  attachPastedText: (text: string) => void;
+} | null>(null);
+
+const {
+  isDraggingOver,
+  onDragEnter,
+  onDragOver,
+  onDragLeave,
+  onHtmlDrop,
+} = useViewDragDrop({
+  active: computed(() => props.active),
+  targetRef: computed(() => conversationRef.value?.closest("section") ?? null),
+  onFiles: (files) => composer.value?.attachFiles(files),
+  onPaths: (paths) => composer.value?.attachPaths(paths),
+});
 
 /**
  * Put the engine's own text in this thread's composer (`editor-text`, `lib/chrome.ts`).
@@ -597,7 +651,7 @@ let viewportObserver: ResizeObserver | null = null;
 let pendingHeightCorrection = 0;
 let heightCorrectionScheduled = false;
 
-onMounted(() => {
+onMounted(async () => {
   const el = conversationRef.value;
   if (!el) return;
   viewportHeight.value = el.clientHeight || viewportHeight.value;
@@ -726,7 +780,15 @@ defineExpose({
 </script>
 
 <template>
-  <section class="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+  <section
+    class="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+    @dragenter.prevent="onDragEnter"
+    @dragover.prevent="onDragOver"
+    @dragleave.prevent="onDragLeave"
+    @drop.prevent="onHtmlDrop"
+  >
+    <!-- Drag & drop visual drop overlay -->
+    <DragDropOverlay :active="isDraggingOver" />
     <!--
       The row kinds of `docs/12` §3.1, rendered from the patch stream. Each kind lives in
       `ConversationRow`: a user turn with its attachments, an assistant turn as sanitized
@@ -738,7 +800,7 @@ defineExpose({
     -->
     <div
       ref="conversationRef"
-      class="flex min-h-0 flex-1 flex-col overflow-auto px-4"
+      class="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden px-4"
       data-conversation
       @scroll="onScroll"
     >
@@ -769,7 +831,7 @@ defineExpose({
             <Icon name="clock" class="h-4 w-4 text-faint" />
             <span>
               <strong class="font-medium text-fg">{{ remainingArchivedTurns }}</strong>
-              {{ remainingArchivedTurns === 1 ? "turno precedente archiviato" : "turni precedenti archiviati" }}
+              {{ remainingArchivedTurns === 1 ? "earlier turn archived" : "earlier turns archived" }}
             </span>
           </div>
           <button
@@ -780,13 +842,19 @@ defineExpose({
           >
             <Icon v-if="loadingEarlier" name="refresh" class="h-3.5 w-3.5 animate-spin" />
             <Icon v-else name="arrow-up" class="h-3.5 w-3.5" />
-            <span>{{ loadingEarlier ? "Caricamento…" : `Carica turni precedenti (${Math.min(5, remainingArchivedTurns)})` }}</span>
+            <span>{{ loadingEarlier ? "Loading…" : `Load earlier turns (${Math.min(5, remainingArchivedTurns)})` }}</span>
           </button>
         </div>
 
         <div aria-hidden="true" :style="{ height: `${visible.before}px` }" />
         <MeasuredTurn v-for="turn in visibleTurnEntries" :key="turn.start" :start="turn.start" @measured="onTurnMeasured">
-        <article class="flex min-w-0 flex-col gap-2 border-line/50" :class="turn.start === turns[0]?.start ? '' : 'border-t pt-4'">
+        <article
+          class="flex min-w-0 flex-col gap-2 border-line/50"
+          :class="[
+            turn.start === turns[0]?.start ? '' : 'border-t pt-4',
+            turn.isSteer ? 'border-amber-500/25' : '',
+          ]"
+        >
           <div
             v-if="turn.user"
             class="shrink-0 rounded-[8px] transition-colors duration-500"
@@ -799,6 +867,7 @@ defineExpose({
             :turn="turn"
             :flashed="flashed"
             :memory="disclosureMemory"
+            :next-turn-is-steer="isNextTurnSteer(turn)"
             @failed="emit('failed', $event)"
             @open-file="emit('openFile', $event)"
           />
@@ -839,6 +908,9 @@ defineExpose({
         </article>
         </MeasuredTurn>
         <div aria-hidden="true" :style="{ height: `${visible.after}px` }" />
+
+        <!-- Optimistic Steer indicator while awaiting engine interrupt -->
+        <PendingSteerBadge v-if="pendingSteer" :text="pendingSteer.text" />
 
         <p
           v-if="waitingForOutput"
@@ -915,6 +987,7 @@ defineExpose({
         :chips="chips"
         @failed="emit('failed', $event)"
         @changed="onChanged"
+        @steering="onSteering"
         @workspace="emit('workspace', $event)"
         @terminal="emit('terminal', $event)"
         @favourites="emit('favourites', $event)"

@@ -154,6 +154,10 @@ impl SessionControl {
             // but a re-read is authoritative and already plumbed, so this arm only
             // reports that one is due.
             SessionEvent::ToolExecutionEnd(end) if end.tool_name == "todo" => return true,
+            SessionEvent::TodoAutoClear => {
+                self.todo_phases.clear();
+                return true;
+            }
             SessionEvent::ModelChanged | SessionEvent::ConfigWarningsChanged => return true,
             _ => {}
         }

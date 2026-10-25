@@ -50,12 +50,19 @@ const emit = defineEmits<{
   toggleDiagnostics: [];
   openAgent: [thread: string, id: string];
   closeFileViewer: [];
+  openFile: [file: { path: string; content?: string; artifactId?: string | null }];
 }>();
 
 /** `docs/12` §8 opens on the plan, which is the sketch's order. */
 const tab = ref<"todos" | "files" | "subagents">("todos");
 
 const activeSubagentsCount = computed(() => (props.subagents ?? []).filter((s) => s.running).length);
+const activeTodosCount = computed(() =>
+  props.phases.reduce(
+    (sum, p) => sum + p.tasks.filter((t) => t.status !== "completed" && t.status !== "abandoned").length,
+    0
+  )
+);
 
 watch(
   () => props.review?.id,
@@ -103,8 +110,8 @@ const BUTTON =
             @click="tab = name"
           >
             {{ name === "todos" ? "Todos" : name === "files" ? "Files" : "Subagents" }}
-            <span v-if="name === 'todos' && props.phases.length" class="ml-1 rounded-full bg-surface px-1.5 py-0.5 font-mono text-[10px] text-accent">
-              {{ props.phases.length }}
+            <span v-if="name === 'todos' && activeTodosCount > 0" class="ml-1 rounded-full bg-surface px-1.5 py-0.5 font-mono text-[10px] text-accent">
+              {{ activeTodosCount }}
             </span>
             <span
               v-else-if="name === 'subagents' && props.subagents && props.subagents.length > 0"
@@ -176,6 +183,7 @@ const BUTTON =
           @jump="emit('jump', $event)"
           @failed="emit('failed', $event)"
           @close-review="emit('closeReview')"
+          @open-file="emit('openFile', $event)"
         />
         <ThreadSubagentsPanel
           v-else-if="tab === 'subagents'"

@@ -29,6 +29,7 @@
 
 import DOMPurify from "dompurify";
 import { marked } from "marked";
+import markedKatex from "marked-katex-extension";
 
 /**
  * The elements a conversation message is allowed to produce.
@@ -66,6 +67,29 @@ const ALLOWED_TAGS = [
   "tr",
   "th",
   "td",
+  // KaTeX / MathML elements
+  "math",
+  "semantics",
+  "mrow",
+  "mi",
+  "mo",
+  "mn",
+  "ms",
+  "mspace",
+  "mtext",
+  "annotation",
+  "mover",
+  "munder",
+  "munderover",
+  "msup",
+  "msub",
+  "msubsup",
+  "mfrac",
+  "mroot",
+  "msqrt",
+  "mtable",
+  "mtr",
+  "mtd",
 ];
 
 /**
@@ -73,8 +97,26 @@ const ALLOWED_TAGS = [
  * must not be able to produce a navigable anchor, and our own `data-href` is the
  * only URL carrier the sanitizer lets survive.
  */
-const ALLOWED_ATTR = ["class", "title", "data-href", "open"];
+const ALLOWED_ATTR = ["class", "title", "data-href", "open", "style", "aria-hidden", "encoding", "xmlns"];
 
+// Restrict inline `style` strictly to KaTeX math elements to prevent CSS injection/redressing.
+if (typeof DOMPurify.addHook === "function") {
+  DOMPurify.addHook("uponSanitizeAttribute", (node, data) => {
+    if (data.attrName === "style") {
+      const tag = node.tagName.toLowerCase();
+      const isMathTag = tag.startsWith("m");
+      const isKatexSpan = tag === "span" && (
+        (typeof node.className === "string" && (node.className.includes("katex") || node.className.includes("vlist") || node.className.includes("strut")))
+        || (typeof node.closest === "function" && Boolean(node.closest(".katex")))
+      );
+      if (!isMathTag && !isKatexSpan) {
+        data.keepAttr = false;
+      }
+    }
+  });
+}
+
+marked.use(markedKatex({ throwOnError: false }));
 marked.use({
   gfm: true,
   // A chat message is not a document: a single newline in an answer is a line

@@ -30,6 +30,7 @@ const emit = defineEmits<{
   jump: [row: number];
   failed: [message: string];
   closeReview: [];
+  openFile: [file: { path: string; content?: string; artifactId?: string | null }];
 }>();
 
 type View = "changed" | "tree" | "artifacts";
@@ -252,6 +253,7 @@ async function copy(text: string): Promise<void> {
           :workspace="props.cwd"
           sidebar
           @jump="emit('jump', $event)"
+          @open-file="emit('openFile', $event)"
         />
       </div>
     </div>
@@ -276,8 +278,9 @@ async function copy(text: string): Promise<void> {
             <Icon :name="file.kind === 'written' ? 'file' : 'pencil'" class="h-3.5 w-3.5" />
           </span>
           <button
-            class="min-w-0 flex-1 truncate text-left font-mono text-[12px] text-fg"
-            @click="file.row >= 0 && emit('jump', file.row)"
+            class="min-w-0 flex-1 truncate text-left font-mono text-[12px] text-fg hover:underline cursor-pointer"
+            title="View file in-app"
+            @click="emit('openFile', { path: file.path })"
           >
             <span class="text-faint">{{ file.folder }}</span><span>{{ file.name }}</span>
             <span
@@ -293,6 +296,14 @@ async function copy(text: string): Promise<void> {
           <span v-if="file.stats" class="shrink-0 font-mono text-[10.5px]">
             <span class="text-ok">+{{ file.stats.added }}</span> <span class="text-err">−{{ file.stats.removed }}</span>
           </span>
+          <button
+            v-if="file.row >= 0"
+            class="shrink-0 rounded-[5px] px-1.5 py-0.5 text-[11px] text-faint hover:bg-surface hover:text-fg"
+            title="Jump to row in chat"
+            @click="emit('jump', file.row)"
+          >
+            jump
+          </button>
           <button
             v-if="file.diff"
             class="shrink-0 rounded-[5px] px-2 py-0.5 text-[11.5px]"
@@ -314,6 +325,7 @@ async function copy(text: string): Promise<void> {
       :thread="props.thread"
       :node="null"
       :depth="0"
+      @open-file="emit('openFile', $event)"
       @failed="emit('failed', $event)"
     />
 

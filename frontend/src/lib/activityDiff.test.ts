@@ -28,8 +28,17 @@ describe("activity edit diffs", () => {
     })))).toEqual({ added: 2, removed: 2 });
   });
 
-  test("never displays a whole-file write as a diff", () => {
-    const diff = activityDiff(tool("write", '{"path":"/new.ts","content":"entire file"}', '{"resolvedPath":"/new.ts"}'));
+  test("displays a whole-file write as an added-lines diff with line counts", () => {
+    const diff = activityDiff(tool("write", '{"path":"/new.ts","content":"line 1\\nline 2"}', '{"resolvedPath":"/new.ts"}'));
+    expect(diff.files[0].pieces).toEqual([
+      { kind: "diff", text: "@@ -0,0 +1,2 @@\n+line 1\n+line 2" },
+    ]);
+    expect([diff.added, diff.removed]).toEqual([2, 0]);
+    expect(activityDiffCounts(tool("write", '{"path":"/new.ts","content":"line 1\\nline 2"}', '{"resolvedPath":"/new.ts"}'))).toEqual({ added: 2, removed: 0 });
+  });
+
+  test("handles empty whole-file write without fake diff", () => {
+    const diff = activityDiff(tool("write", '{"path":"/empty.ts","content":""}', '{"resolvedPath":"/empty.ts"}'));
     expect(diff.files[0].pieces).toEqual([]);
     expect(diff.added).toBeNull();
   });

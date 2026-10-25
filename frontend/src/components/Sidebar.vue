@@ -10,7 +10,7 @@
 import { computed, ref, watch } from "vue";
 
 import { pickDirectory } from "../bridge";
-import type { ProjectGroup, ThreadRow } from "../lib/threads";
+import { reorderItems, type ProjectGroup, type ThreadRow } from "../lib/threads";
 import logo from "../assets/ohmypi-logo.svg";
 import ProjectMenu from "./ProjectMenu.vue";
 import Icon from "./ui/Icon.vue";
@@ -56,6 +56,7 @@ const emit = defineEmits<{
   /** The inline rename was abandoned, so the row goes back to its title. */
   cancelRename: [];
   deleteProject: [group: ProjectGroup];
+  reorderProjects: [paths: string[]];
   collapse: [];
 }>();
 
@@ -147,6 +148,66 @@ function isOpen(path: string): boolean {
 /** Threads that need the user, so their group can say so while collapsed. */
 function attention(rows: ThreadRow[]): number {
   return rows.filter((row) => row.dot === "attention" || row.unread).length;
+}
+
+const draggingIndex = ref<number | null>(null);
+const dropTargetIndex = ref<number | null>(null);
+const dropPosition = ref<"above" | "below" | null>(null);
+
+function onDragStart(event: DragEvent, index: number): void {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("button")) {
+    event.preventDefault();
+    return;
+  }
+  draggingIndex.value = index;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(index));
+  }
+}
+
+function onDragOver(event: DragEvent, index: number): void {
+  if (draggingIndex.value === null || draggingIndex.value === index) {
+    dropTargetIndex.value = null;
+    dropPosition.value = null;
+    return;
+  }
+  const targetEl = event.currentTarget as HTMLElement | null;
+  if (!targetEl) return;
+  const rect = targetEl.getBoundingClientRect();
+  const midY = rect.top + rect.height / 2;
+  dropTargetIndex.value = index;
+  dropPosition.value = event.clientY < midY ? "above" : "below";
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "move";
+  }
+}
+
+function onDragLeave(index: number): void {
+  if (dropTargetIndex.value === index) {
+    dropTargetIndex.value = null;
+    dropPosition.value = null;
+  }
+}
+
+function onDrop(): void {
+  const fromIndex = draggingIndex.value;
+  const toIndex = dropTargetIndex.value;
+  const position = dropPosition.value;
+  draggingIndex.value = null;
+  dropTargetIndex.value = null;
+  dropPosition.value = null;
+
+  if (fromIndex === null || toIndex === null || position === null) return;
+  const reordered = reorderItems(props.groups.map((g) => g.path), fromIndex, toIndex, position);
+  emit("reorderProjects", reordered);
+}
+
+function onDragEnd(): void {
+  draggingIndex.value = null;
+  dropTargetIndex.value = null;
+  dropPosition.value = null;
 }
 
 const total = computed(() => props.groups.reduce((count, group) => count + group.threads.length, 0));
@@ -289,9 +350,24 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
         No sessions yet — click to browse for a project.
       </button>
 
-      <section v-for="group in props.groups" :key="group.path || group.name" class="mb-0.5">
+      <section
+        v-for="(group, index) in props.groups"
+        :key="group.path || group.name"
+        class="mb-0.5 rounded-[6px] border-t-2 border-b-2 border-transparent transition-all"
+        :class="{
+          'opacity-40': draggingIndex === index,
+          '!border-t-accent': dropTargetIndex === index && dropPosition === 'above',
+          '!border-b-accent': dropTargetIndex === index && dropPosition === 'below',
+        }"
+        @dragover.prevent="onDragOver($event, index)"
+        @dragleave="onDragLeave(index)"
+        @drop.prevent="onDrop"
+      >
         <div
-          class="group flex items-center gap-1 rounded-[6px] px-1.5 py-1.5 hover:bg-raised"
+          class="group flex items-center gap-1 rounded-[6px] px-1.5 py-1.5 hover:bg-raised cursor-grab active:cursor-grabbing select-none"
+          draggable="true"
+          @dragstart="onDragStart($event, index)"
+          @dragend="onDragEnd"
           @contextmenu.prevent="onProjectContext($event, group)"
         >
           <button

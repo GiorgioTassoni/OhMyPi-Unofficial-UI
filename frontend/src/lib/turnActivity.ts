@@ -8,8 +8,10 @@ export { isSkillInvocation };
 
 export interface IndexedRow { index: number; row: RowSnapshot }
 export type GroupKind = "read" | "command" | "edit" | "other";
+export type GroupIcon = "search" | "terminal" | "pencil" | "wrench" | "file";
 export interface ToolGroup {
   kind: GroupKind;
+  icon: GroupIcon;
   rows: IndexedRow[];
   label: string;
   added: number | null;
@@ -33,6 +35,8 @@ export interface ConversationTurn {
   spawnedAgents: string[];
   working: boolean;
   durationMs: number | null;
+  startTime?: number | null;
+  isSteer?: boolean;
 }
 
 function category(tool: ToolSnapshot): GroupKind {
@@ -45,20 +49,30 @@ function category(tool: ToolSnapshot): GroupKind {
 function makeGroup(kind: GroupKind, rows: IndexedRow[]): ToolGroup {
   const count = rows.length;
   let label: string;
-  if (kind === "read") label = `Read ${count} file${count === 1 ? "" : "s"}`;
-  else if (kind === "command") label = `Ran ${count} command${count === 1 ? "" : "s"}`;
-  else if (kind === "edit") {
+  let icon: GroupIcon = "wrench";
+  if (kind === "read") {
+    label = `Read ${count} file${count === 1 ? "" : "s"}`;
+    icon = "search";
+  } else if (kind === "command") {
+    label = `Ran ${count} command${count === 1 ? "" : "s"}`;
+    icon = "terminal";
+  } else if (kind === "edit") {
     const paths = new Set(rows.flatMap(({ row }) => row.tool ? touchedFiles(row.tool).map((file) => file.path) : []));
     const files = paths.size || count;
-    label = `Edited ${files} file${files === 1 ? "" : "s"}`;
-  } else label = `Used ${count} tool${count === 1 ? "" : "s"}`;
+    const allWritten = rows.length > 0 && rows.every(({ row }) => row.tool?.toolName === "write");
+    const verb = allWritten ? "Created" : "Edited";
+    label = `${verb} ${files} file${files === 1 ? "" : "s"}`;
+    icon = allWritten ? "file" : "pencil";
+  } else {
+    label = `Used ${count} tool${count === 1 ? "" : "s"}`;
+  }
 
   const counts = kind === "edit" ? rows.map(({ row }) => {
     if (!row.tool?.finished || row.tool.isError) return null;
     return activityDiffCounts(row.tool);
   }) : [];
   return {
-    kind, rows, label,
+    kind, icon, rows, label,
     added: counts.length > 0 && counts.every((value) => value !== null) ? counts.reduce((sum, value) => sum + value!.added, 0) : null,
     removed: counts.length > 0 && counts.every((value) => value !== null) ? counts.reduce((sum, value) => sum + value!.removed, 0) : null,
   };
@@ -163,12 +177,15 @@ function turn(segment: IndexedRow[], working: boolean, jobNames: ReadonlyMap<str
     for (const agent of taskProgress(row.tool)) spawnedAgents.add(agent.id);
   }
 
-  const startTime = user?.row.timestamp;
+  const startTime = (typeof user?.row.timestamp === "number" && Number.isFinite(user.row.timestamp))
+    ? user.row.timestamp
+    : (segment.find((e) => typeof e.row.timestamp === "number" && Number.isFinite(e.row.timestamp))?.row.timestamp ?? (working ? Date.now() : null));
   const endTime = answer?.row.timestamp;
   const durationMs = !working && typeof startTime === "number" && Number.isFinite(startTime)
     && typeof endTime === "number" && Number.isFinite(endTime) && endTime >= startTime
     ? endTime - startTime : null;
-  return { start: segment[0].index, end: segment[segment.length - 1].index, user, answer, items, notices, spawnedAgents: [...spawnedAgents], working, durationMs };
+  const isSteer = user?.row.steering === true;
+  return { start: segment[0].index, end: segment[segment.length - 1].index, user, answer, items, notices, spawnedAgents: [...spawnedAgents], working, durationMs, startTime, isSteer };
 }
 
 function turnsFrom(rows: RowSnapshot[], streaming: boolean, start: number): ConversationTurn[] {
@@ -199,9 +216,35 @@ export function patchedConversationTurns(
   return { turns: [...prefix, ...turnsFrom(rows, streaming, rebuiltFrom)], rebuiltFrom };
 }
 
-export function workLabel(item: ConversationTurn): string {
-  if (item.working) return "Working…";
+export function formatTurnDuration(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(s / 3600);
+  const mins = Math.floor((s % 3600) / 60);
+  const secs = String(s % 60).padStart(2, "0");
+  if (hours > 0) {
+    return `${hours}h ${mins}m ${secs}s`;
+  }
+  if (mins > 0) {
+    return `${mins}m ${secs}s`;
+  }
+  return `${s}s`;
+}
+
+export function workLabel(item: ConversationTurn, nowMs?: number, nextTurnIsSteer?: boolean): string {
+  if (item.working) {
+    if (typeof nowMs === "number" && Number.isFinite(nowMs)) {
+      const start = item.startTime ?? nowMs;
+      const elapsedSeconds = Math.max(0, Math.floor((nowMs - start) / 1000));
+      if (elapsedSeconds > 0) {
+        return `Working ${formatTurnDuration(elapsedSeconds)}`;
+      }
+    }
+    return "Working…";
+  }
+  if (nextTurnIsSteer && !item.answer) {
+    return "Interrupted by steer";
+  }
   if (item.durationMs === null) return "Completed turn";
   const seconds = Math.round(item.durationMs / 1000);
-  return `Worked for ${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
+  return `Worked for ${formatTurnDuration(seconds)}`;
 }

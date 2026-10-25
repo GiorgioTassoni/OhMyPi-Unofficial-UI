@@ -23,7 +23,10 @@ const props = defineProps<{
   depth: number;
 }>();
 
-const emit = defineEmits<{ failed: [message: string] }>();
+const emit = defineEmits<{
+  failed: [message: string];
+  openFile: [file: { path: string; content?: string; artifactId?: string | null }];
+}>();
 
 const children = ref<WorkspaceEntry[] | null>(null);
 const open = ref(false);
@@ -94,7 +97,7 @@ function parent(target: string): string {
       <button
         v-else
         class="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-        @click="launch(props.node.path)"
+        @click="emit('openFile', { path: props.node.path })"
       >
         <Icon name="file" class="h-3.5 w-3.5 shrink-0 text-faint" />
         <span class="min-w-0 truncate text-[12.5px] text-dim">{{ label }}</span>
@@ -119,6 +122,7 @@ function parent(target: string): string {
       :thread="props.thread"
       :node="child"
       :depth="props.depth + 1"
+      @open-file="emit('openFile', $event)"
       @failed="emit('failed', $event)"
     />
 

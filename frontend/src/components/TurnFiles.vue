@@ -12,7 +12,11 @@ const props = defineProps<{
   sidebar?: boolean;
 }>();
 
-const emit = defineEmits<{ jump: [row: number]; review: [summary: TurnFileSummary] }>();
+const emit = defineEmits<{
+  jump: [row: number];
+  review: [summary: TurnFileSummary];
+  openFile: [file: { path: string }];
+}>();
 const openFiles = ref<string[]>(props.sidebar ? props.summary.files.map((file) => file.path) : []);
 const reviews = computed(() => new Map(
   props.summary.files.map((file) => [file.path, fileReview(props.summary, file.path)]),
@@ -69,6 +73,14 @@ function toggleFile(path: string): void {
             <span class="text-ok">+{{ file.lines.added }}</span>
             <span class="ml-1 text-err">-{{ file.lines.removed }}</span>
           </span>
+          <button
+            type="button"
+            class="grid h-5 w-5 shrink-0 place-items-center rounded-[4px] text-faint hover:bg-surface hover:text-fg"
+            title="View file in-app"
+            @click.stop="emit('openFile', { path: file.path })"
+          >
+            <Icon name="file" class="h-3 w-3" />
+          </button>
           <Icon
             name="chevron-right"
             class="h-3 w-3 shrink-0 text-faint transition-transform"

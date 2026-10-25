@@ -78,7 +78,7 @@ import {
   soundForNotification,
 } from "./lib/notificationSound";
 import { selectAfterClose, selectFrom, tabsFrom, type TerminalTab } from "./lib/terminals";
-import { sidebarModel, type ProjectGroup } from "./lib/threads";
+import { loadProjectOrder, saveProjectOrder, sidebarModel, type ProjectGroup } from "./lib/threads";
 import type { TurnFileSummary, TurnReviewRequest } from "./lib/panel";
 import type { ThreadContext } from "./lib/thread-menu";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -152,6 +152,13 @@ const live = ref<ThreadSnapshot[]>([]);
  */
 const rosters = ref<ThreadAgents[]>([]);
 const projects = ref<ProjectSnapshot[]>([]);
+
+const projectOrder = ref<string[]>(loadProjectOrder());
+function onReorderProjects(paths: string[]): void {
+  projectOrder.value = paths;
+  saveProjectOrder(paths);
+}
+
 const activeId = ref<string | null>(null);
 const agentTabs = ref<{ thread: string; id: string }[]>([]);
 const activeAgentKey = ref<string | null>(null);
@@ -742,6 +749,7 @@ const groups = computed(() =>
     live: live.value,
     unread: [...unread.value],
     hidden: projects.value.filter((project) => project.hidden).map((project) => project.path),
+    projectOrder: projectOrder.value,
     now: Date.now(),
   }),
 );
@@ -1390,6 +1398,7 @@ function describe(cause: unknown): string {
             @agents="openAgents"
             @settings="openSettings(true)"
             @collapse="sidebarCollapsed = true"
+            @reorder-projects="onReorderProjects"
           />
         </div>
 
@@ -1599,6 +1608,7 @@ function describe(cause: unknown): string {
               @close="panelOpen = false; closeFileViewer()"
               @close-review="turnReview = null"
               @close-file-viewer="closeFileViewer"
+              @open-file="activeId && onOpenFile(activeId, $event)"
               @toggle-terminals="terminalsOpen = !terminalsOpen"
               @toggle-diagnostics="diagnostics = !diagnostics"
               @open-agent="openAgentTab"
