@@ -121,12 +121,9 @@ const skillPrompt = computed(() => parseSkillPrompt(props.row));
   <!-- A user turn: right-aligned, so a long thread reads as a dialogue rather
        than one column of prose. -->
   <div v-else-if="row.role === 'user' && !isSystemReminder" class="flex flex-col items-end gap-1.5 my-1">
-    <div
-      v-if="row.steering"
-      class="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-medium tracking-wider text-amber-500 uppercase select-none shadow-sm"
-    >
-      <Icon name="steer" class="h-3 w-3 text-amber-500" />
-      <span>Steer</span>
+    <div v-if="row.steering" class="flex items-center gap-1 text-[11px] text-faint select-none">
+      <Icon name="steer" class="h-2.5 w-2.5 text-faint" />
+      <span>steer</span>
     </div>
     <div v-if="row.attachments.length > 0" class="flex flex-wrap justify-end gap-1.5">
       <img
@@ -140,8 +137,7 @@ const skillPrompt = computed(() => parseSkillPrompt(props.row));
     <div v-if="row.text" class="group/message flex max-w-[80%] min-w-0 flex-col items-end gap-1.5">
       <p
         v-if="userMessage.text"
-        class="whitespace-pre-wrap break-words rounded-[16px] bg-raised/95 border px-4 py-2.5 text-[13px] leading-relaxed text-fg shadow-sm select-text"
-        :class="row.steering ? 'border-amber-500/40 ring-1 ring-amber-500/20' : 'border-line/60 border-t-line-strong/40'"
+        class="whitespace-pre-wrap break-words rounded-[16px] bg-raised/95 border border-line/60 border-t-line-strong/40 px-4 py-2.5 text-[13px] leading-relaxed text-fg shadow-sm select-text"
       >
         {{ userMessage.text }}
       </p>

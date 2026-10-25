@@ -242,7 +242,7 @@ export function workLabel(item: ConversationTurn, nowMs?: number, nextTurnIsStee
     return "Working…";
   }
   if (nextTurnIsSteer && !item.answer) {
-    return "Interrupted by steer";
+    return "Interrupted";
   }
   if (item.durationMs === null) return "Completed turn";
   const seconds = Math.round(item.durationMs / 1000);

@@ -453,7 +453,9 @@ function onSteering(payload: { text: string }): void {
     pendingSteer.value = null;
   } else {
     pendingSteer.value = { text: payload.text };
-    followAfterRender();
+    void nextTick(() => {
+      scrollToBottom();
+    });
   }
 }
 
@@ -850,10 +852,7 @@ defineExpose({
         <MeasuredTurn v-for="turn in visibleTurnEntries" :key="turn.start" :start="turn.start" @measured="onTurnMeasured">
         <article
           class="flex min-w-0 flex-col gap-2 border-line/50"
-          :class="[
-            turn.start === turns[0]?.start ? '' : 'border-t pt-4',
-            turn.isSteer ? 'border-amber-500/25' : '',
-          ]"
+          :class="turn.start === turns[0]?.start ? '' : 'border-t pt-4'"
         >
           <div
             v-if="turn.user"

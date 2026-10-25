@@ -718,8 +718,7 @@ defineExpose({ setDraft, attachPaths, attachFiles, attachPastedText });
       <button
         v-if="hasInput || steeringPending"
         :disabled="!canSend || steeringPending"
-        class="flex h-7 min-w-7 shrink-0 items-center justify-center rounded-[6px] px-2.5 text-[12px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100 shadow-sm"
-        :class="steeringPending ? 'bg-amber-500' : 'bg-accent'"
+        class="flex h-7 min-w-7 shrink-0 items-center justify-center rounded-[6px] bg-accent px-2.5 text-[12px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100 shadow-sm"
         @click="send(isWorking ? 'steer' : 'prompt')"
       >
         <span v-if="steeringPending" class="inline-flex items-center gap-1.5">
@@ -774,9 +773,9 @@ defineExpose({ setDraft, attachPaths, attachFiles, attachPastedText });
         </button>
       </template>
 
-      <span v-if="steeringPending" class="inline-flex items-center gap-1.5 text-amber-500 font-medium animate-pulse">
-        <Icon name="steer" class="h-3 w-3" />
-        interrupting turn…
+      <span v-if="steeringPending" class="inline-flex items-center gap-1.5 text-dim">
+        <Icon name="refresh" class="h-3 w-3 animate-spin text-faint" />
+        steering…
       </span>
       <span v-else-if="queued > 0" class="text-dim">{{ queued }} queued</span>
       <span v-else-if="streaming" class="text-ok">streaming</span>
