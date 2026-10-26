@@ -432,7 +432,10 @@ watch(
   },
 );
 watch(streaming, (isStreaming) => {
-  if (!isStreaming) void refreshSubagentFileChanges();
+  if (!isStreaming) {
+    void refreshSubagentFileChanges();
+    void refreshStatus();
+  }
   if (rows.value.length > 0) projection.value = projectTranscript(projection.value, rows.value, streaming.value, rows.value.length);
 });
 /** The turn has started, but the engine has not produced a row the reader can follow yet. */

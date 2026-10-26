@@ -11,7 +11,7 @@
  * plan from the transcript the next time the thread is resumed. The panel therefore renders the
  * engine's answer rather than keeping an optimistic copy of the request.
  */
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import type { RowSnapshot, TodoPhaseSnapshot } from "../bridge";
 import { setTodos } from "../bridge";
 import { taskRow } from "../lib/panel";
@@ -162,6 +162,19 @@ async function clearCompleted(): Promise<void> {
     busy.value = false;
   }
 }
+
+/**
+ * Auto-clear completed or abandoned tasks at the end of a turn,
+ * without requiring any manual user action.
+ */
+watch(
+  () => props.rows.some((r) => r.streaming),
+  (isStreaming, wasStreaming) => {
+    if (wasStreaming && !isStreaming && props.live && hasCompletedTasks.value && !busy.value) {
+      void clearCompleted();
+    }
+  }
+);
 </script>
 
 <template>
@@ -186,17 +199,6 @@ async function clearCompleted(): Promise<void> {
       <p class="mt-1 max-w-[220px] text-[12px] leading-relaxed text-faint">
         The agent writes tasks here as it plans work with its <span class="rounded bg-raised/80 px-1 py-0.5 font-mono text-[11px] text-muted">todo</span> tool.
       </p>
-    </div>
-
-    <div v-if="phases.length > 0 && hasCompletedTasks" class="flex justify-end px-3.5 pt-2">
-      <button
-        type="button"
-        class="text-[11px] font-medium text-dim hover:text-accent hover:underline select-none disabled:opacity-50"
-        :disabled="busy || !props.live"
-        @click="clearCompleted"
-      >
-        Clear completed
-      </button>
     </div>
 
     <ul v-if="phases.length > 0" class="flex flex-col">

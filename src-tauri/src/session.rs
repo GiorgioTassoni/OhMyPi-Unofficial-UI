@@ -27,6 +27,7 @@ use omp_transport::palette::{self, AdvertisedCommand};
 use omp_transport::protocol::ui::{self, UiResponse};
 use omp_transport::protocol::{self, commands, ImageContent};
 use omp_transport::{ClientOptions, OmpClient, SessionEvent, SidecarSpec};
+use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 
 use tokio::sync::broadcast::error::RecvError;
@@ -1803,6 +1804,104 @@ async fn refresh_control(
     Ok(refreshed)
 }
 
+/// Determine if a plan contains completed or abandoned tasks, and return the filtered phases.
+fn filter_completed_todos(phases: &[TodoPhase]) -> (bool, Vec<Value>) {
+    let has_completed = phases.iter().any(|phase| {
+        phase
+            .tasks
+            .iter()
+            .any(|task| task.status == "completed" || task.status == "abandoned")
+    });
+
+    if !has_completed {
+        return (false, Vec::new());
+    }
+
+    let remaining: Vec<Value> = phases
+        .iter()
+        .filter_map(|phase| {
+            let remaining_tasks: Vec<Value> = phase
+                .tasks
+                .iter()
+                .filter(|task| task.status != "completed" && task.status != "abandoned")
+                .map(|task| {
+                    let mut obj = json!({
+                        "content": task.content,
+                        "status": task.status,
+                    });
+                    if let Some(ref blocker) = task.blocker {
+                        obj["blocker"] = json!(blocker);
+                    }
+                    obj
+                })
+                .collect();
+
+            if remaining_tasks.is_empty() {
+                None
+            } else {
+                Some(json!({
+                    "name": phase.name,
+                    "tasks": remaining_tasks,
+                }))
+            }
+        })
+        .collect();
+
+    (true, remaining)
+}
+
+/// Auto-clear completed or abandoned tasks at the end of a turn,
+/// updating the in-memory plan in the engine without requiring user action.
+async fn auto_clear_completed_todos(
+    client: &OmpClient,
+    control: &Mutex<SessionControl>,
+) {
+    let (has_completed, remaining_phases) = {
+        let Ok(ctrl) = control.lock() else { return };
+        filter_completed_todos(&ctrl.todo_phases)
+    };
+
+    if has_completed {
+        let response = call(
+            client,
+            commands::set_todos(Value::Array(remaining_phases)),
+            None,
+            "auto-clearing completed todos",
+        )
+        .await;
+
+        match response {
+            Ok(response) => {
+                let raw = &response["data"]["todoPhases"];
+                if raw.is_array() {
+                    let stored = omp_session::decode_phases(raw);
+                    if let Ok(mut ctrl) = control.lock() {
+                        ctrl.todo_phases = stored;
+                    }
+                } else if let Ok(mut ctrl) = control.lock() {
+                    ctrl.todo_phases.retain_mut(|phase| {
+                        phase
+                            .tasks
+                            .retain(|t| t.status != "completed" && t.status != "abandoned");
+                        !phase.tasks.is_empty()
+                    });
+                }
+            }
+            Err(err) => {
+                eprintln!("[omp-desktop] could not auto-clear completed todos: {err}");
+                if let Ok(mut ctrl) = control.lock() {
+                    ctrl.todo_phases.retain_mut(|phase| {
+                        phase
+                            .tasks
+                            .retain(|t| t.status != "completed" && t.status != "abandoned");
+                        !phase.tasks.is_empty()
+                    });
+                }
+            }
+        }
+    }
+}
+
 /// Subscribe to both of the client's streams and reduce them forever.
 ///
 /// Frames that ask the host for something become pending dialogs, which announce
@@ -2094,6 +2193,7 @@ pub fn spawn_pump(
                         }
 
                         if turn_finished {
+                            auto_clear_completed_todos(&client, &control).await;
                             spawn_title_generation(
                                 Arc::clone(&client),
                                 Arc::clone(&control),
@@ -2822,5 +2922,65 @@ mod tests {
             200,
         );
         assert_eq!(agents.lock().unwrap().active(), 0);
+    }
+
+    #[test]
+    fn filter_completed_todos_clears_completed_and_abandoned_tasks_and_empty_phases() {
+        use omp_session::{TodoPhase, TodoTask};
+
+        let phases = vec![
+            TodoPhase {
+                name: "Phase 1".to_string(),
+                tasks: vec![
+                    TodoTask {
+                        content: "Task 1".to_string(),
+                        status: "completed".to_string(),
+                        blocker: None,
+                    },
+                    TodoTask {
+                        content: "Task 2".to_string(),
+                        status: "abandoned".to_string(),
+                        blocker: None,
+                    },
+                ],
+            },
+            TodoPhase {
+                name: "Phase 2".to_string(),
+                tasks: vec![
+                    TodoTask {
+                        content: "Task 3".to_string(),
+                        status: "completed".to_string(),
+                        blocker: None,
+                    },
+                    TodoTask {
+                        content: "Task 4".to_string(),
+                        status: "pending".to_string(),
+                        blocker: Some("waiting on approval".to_string()),
+                    },
+                ],
+            },
+        ];
+
+        let (has_completed, remaining) = super::filter_completed_todos(&phases);
+        assert!(has_completed);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0]["name"], "Phase 2");
+        assert_eq!(remaining[0]["tasks"].as_array().unwrap().len(), 1);
+        assert_eq!(remaining[0]["tasks"][0]["content"], "Task 4");
+        assert_eq!(remaining[0]["tasks"][0]["status"], "pending");
+        assert_eq!(remaining[0]["tasks"][0]["blocker"], "waiting on approval");
+
+        // If no tasks are completed or abandoned:
+        let pending_only = vec![TodoPhase {
+            name: "Phase 1".to_string(),
+            tasks: vec![TodoTask {
+                content: "Task A".to_string(),
+                status: "in_progress".to_string(),
+                blocker: None,
+            }],
+        }];
+        let (has_completed, remaining) = super::filter_completed_todos(&pending_only);
+        assert!(!has_completed);
+        assert!(remaining.is_empty());
     }
 }
