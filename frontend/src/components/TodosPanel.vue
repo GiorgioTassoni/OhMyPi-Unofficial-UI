@@ -11,7 +11,7 @@
  * plan from the transcript the next time the thread is resumed. The panel therefore renders the
  * engine's answer rather than keeping an optimistic copy of the request.
  */
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import type { RowSnapshot, TodoPhaseSnapshot } from "../bridge";
 import { setTodos } from "../bridge";
 import { taskRow } from "../lib/panel";
@@ -133,48 +133,6 @@ async function flip(phase: TodoPhaseSnapshot, content: string): Promise<void> {
     busy.value = false;
   }
 }
-
-const hasCompletedTasks = computed(() =>
-  phases.value.some((phase) => phase.tasks.some((task) => task.status === "completed" || task.status === "abandoned"))
-);
-
-async function clearCompleted(): Promise<void> {
-  const thread = props.thread;
-  if (thread === null) return;
-
-  busy.value = true;
-  failure.value = null;
-  try {
-    const next = phases.value
-      .map((entry) => ({
-        name: entry.name,
-        tasks: entry.tasks.filter((task) => task.status !== "completed" && task.status !== "abandoned"),
-      }))
-      .filter((entry) => entry.tasks.length > 0);
-
-    await setTodos(thread, next);
-    failure.value = null;
-    emit("written");
-  } catch (cause) {
-    failure.value = cause instanceof Error ? cause.message : String(cause);
-    emit("failed", failure.value);
-  } finally {
-    busy.value = false;
-  }
-}
-
-/**
- * Auto-clear completed or abandoned tasks at the end of a turn,
- * without requiring any manual user action.
- */
-watch(
-  () => props.rows.some((r) => r.streaming),
-  (isStreaming, wasStreaming) => {
-    if (wasStreaming && !isStreaming && props.live && hasCompletedTasks.value && !busy.value) {
-      void clearCompleted();
-    }
-  }
-);
 </script>
 
 <template>
