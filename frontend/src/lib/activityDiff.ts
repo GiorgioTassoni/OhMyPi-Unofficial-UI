@@ -1,5 +1,5 @@
 import type { ToolSnapshot } from "../bridge";
-import { parseObject, touchedFiles } from "./toolView";
+import { fileToolAction, parseObject, touchedFiles } from "./toolView";
 import { batchReviewPiece, orderedReviewPieces, type ReviewPiece } from "./reviewDiff";
 
 export interface FileDiff {
@@ -78,8 +78,9 @@ export function activityDiffCounts(tool: ToolSnapshot): { added: number; removed
       : typeof args?.diff === "string" ? args.diff : "";
     const counts = rawCounts(diff);
     if (counts) return counts;
-    if (tool.toolName === "write" && typeof args?.content === "string") {
-      const added = countLines(args.content);
+    const action = fileToolAction(tool);
+    if (action.isCreation && typeof action.content === "string") {
+      const added = countLines(action.content);
       return added > 0 ? { added, removed: 0 } : null;
     }
     return null;
@@ -111,9 +112,12 @@ export function activityDiff(tool: ToolSnapshot): ActivityDiff {
     const diff = typeof fromResult?.diff === "string" ? fromResult.diff
       : touched.length === 1 ? joined : null;
     let pieces = diff ? orderedReviewPieces([diff]) : [];
-    if (pieces.length === 0 && tool.toolName === "write" && typeof args?.content === "string") {
-      const whole = wholeFileDiffPiece(args.content);
-      if (whole) pieces = [whole];
+    if (pieces.length === 0) {
+      const action = fileToolAction(tool);
+      if (action.isCreation && typeof action.content === "string") {
+        const whole = wholeFileDiffPiece(action.content);
+        if (whole) pieces = [whole];
+      }
     }
     const total = counts(pieces);
     return { path, pieces, added: total?.added ?? null, removed: total?.removed ?? null };

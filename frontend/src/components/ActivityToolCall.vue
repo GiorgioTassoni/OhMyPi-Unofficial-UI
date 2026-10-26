@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { activityDiff, activityDiffCounts } from "../lib/activityDiff";
 import { commandProgram } from "../lib/approval";
-import { parseObject, wholeFileRead, toolView, touchedFiles } from "../lib/toolView";
+import { fileToolAction, toolView, touchedFiles } from "../lib/toolView";
 import type { DisclosureMemory } from "../lib/disclosureMemory";
 import type { GroupKind, IndexedRow } from "../lib/turnActivity";
 import DiffView from "./DiffView.vue";
@@ -33,7 +33,8 @@ const counts = computed(() => props.kind === "edit" ? activityDiffCounts(tool.va
 const files = computed(() => props.kind === "edit" ? touchedFiles(tool.value) : []);
 const basename = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || path;
 
-const isWrite = computed(() => tool.value.toolName === "write" || files.value[0]?.kind === "written");
+const action = computed(() => fileToolAction(tool.value));
+const isWrite = computed(() => action.value.isCreation);
 
 const title = computed(() => {
   if (props.kind === "edit") {
@@ -53,17 +54,9 @@ const icon = computed(() => {
   return "wrench";
 });
 
-const wholeRead = computed(() => (failed.value ? { isWhole: false, path: null } : wholeFileRead(tool.value)));
-const isWholeFile = computed(() => wholeRead.value.isWhole || (isWrite.value && !failed.value && files.value.length === 1));
-const filePath = computed(() => wholeRead.value.path || files.value[0]?.path || view.value.summary || "");
-
-const fileContent = computed(() => {
-  if (tool.value.toolName === "write") {
-    const args = parseObject(tool.value.args);
-    if (typeof args?.content === "string") return args.content;
-  }
-  return tool.value.output;
-});
+const isWholeFile = computed(() => !failed.value && action.value.isWholeFile);
+const filePath = computed(() => action.value.path || view.value.summary || "");
+const fileContent = computed(() => action.value.content ?? tool.value.output);
 
 function openFileInSidebar(targetPath?: string): void {
   const p = targetPath || filePath.value;

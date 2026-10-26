@@ -41,6 +41,8 @@ import { jumpTarget } from "../lib/search";
 import { type ChipRow } from "../lib/chips";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { useViewDragDrop } from "../lib/dragDrop";
+import { useOptimisticSteer } from "../lib/optimisticSteer";
+import ArchivedTurnsBanner from "./ArchivedTurnsBanner.vue";
 import Composer from "./Composer.vue";
 import ConversationRow from "./ConversationRow.vue";
 import DialogPanel from "./DialogPanel.vue";
@@ -446,39 +448,10 @@ watch(waitingForOutput, (waiting) => {
   if (waiting && isAtBottom()) followAfterRender();
 });
 
-const pendingSteer = ref<{ text: string } | null>(null);
-
-function onSteering(payload: { text: string }): void {
-  if (!payload.text) {
-    pendingSteer.value = null;
-  } else {
-    pendingSteer.value = { text: payload.text };
-    void nextTick(() => {
-      scrollToBottom();
-    });
-  }
-}
-
-function isNextTurnSteer(current: ConversationTurn): boolean {
-  if (pendingSteer.value && current === turns.value.at(-1)) {
-    return true;
-  }
-  const index = turns.value.findIndex((t) => t.start === current.start);
-  if (index >= 0 && index < turns.value.length - 1) {
-    return turns.value[index + 1]?.isSteer === true;
-  }
-  return false;
-}
-
-watch(rows, (newRows) => {
-  if (pendingSteer.value) {
-    const hasLanded = newRows.slice(-3).some(
-      (r) => r.role === "user" && (r.steering || (pendingSteer.value && r.text.includes(pendingSteer.value.text))),
-    );
-    if (hasLanded) {
-      pendingSteer.value = null;
-    }
-  }
+const { pendingSteer, setSteering: onSteering } = useOptimisticSteer(rows, () => {
+  void nextTick(() => {
+    scrollToBottom();
+  });
 });
 
 /**
@@ -653,7 +626,7 @@ let viewportObserver: ResizeObserver | null = null;
 let pendingHeightCorrection = 0;
 let heightCorrectionScheduled = false;
 
-onMounted(async () => {
+onMounted(() => {
   const el = conversationRef.value;
   if (!el) return;
   viewportHeight.value = el.clientHeight || viewportHeight.value;
@@ -824,29 +797,11 @@ defineExpose({
 
       <div v-else class="mx-auto w-full max-w-[46rem] py-4">
         <!-- Archived history banner -->
-        <div
-          v-if="remainingArchivedTurns > 0"
-          class="mb-4 flex items-center justify-between rounded-[8px] border border-line bg-raised/40 px-3.5 py-2 text-[13px] text-dim transition-colors hover:bg-raised/70"
-          data-archived-banner
-        >
-          <div class="flex items-center gap-2">
-            <Icon name="clock" class="h-4 w-4 text-faint" />
-            <span>
-              <strong class="font-medium text-fg">{{ remainingArchivedTurns }}</strong>
-              {{ remainingArchivedTurns === 1 ? "earlier turn archived" : "earlier turns archived" }}
-            </span>
-          </div>
-          <button
-            type="button"
-            class="inline-flex items-center gap-1.5 rounded-[6px] bg-accent/15 px-2.5 py-1 text-[12px] font-medium text-accent hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50 transition-colors cursor-pointer"
-            :disabled="loadingEarlier"
-            @click="loadEarlier"
-          >
-            <Icon v-if="loadingEarlier" name="refresh" class="h-3.5 w-3.5 animate-spin" />
-            <Icon v-else name="arrow-up" class="h-3.5 w-3.5" />
-            <span>{{ loadingEarlier ? "Loading…" : `Load earlier turns (${Math.min(5, remainingArchivedTurns)})` }}</span>
-          </button>
-        </div>
+        <ArchivedTurnsBanner
+          :remaining="remainingArchivedTurns"
+          :loading="loadingEarlier"
+          @load="loadEarlier"
+        />
 
         <div aria-hidden="true" :style="{ height: `${visible.before}px` }" />
         <MeasuredTurn v-for="turn in visibleTurnEntries" :key="turn.start" :start="turn.start" @measured="onTurnMeasured">
@@ -866,7 +821,7 @@ defineExpose({
             :turn="turn"
             :flashed="flashed"
             :memory="disclosureMemory"
-            :next-turn-is-steer="isNextTurnSteer(turn)"
+            :next-turn-is-steer="turn.nextTurnIsSteer || (Boolean(pendingSteer) && turn === turns.at(-1))"
             @failed="emit('failed', $event)"
             @open-file="emit('openFile', $event)"
           />

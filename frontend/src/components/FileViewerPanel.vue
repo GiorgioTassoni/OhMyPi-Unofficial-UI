@@ -25,6 +25,7 @@ import { highlightCode } from "../lib/highlighter";
 import { parseFrontmatter } from "../lib/frontmatter";
 import Icon from "./ui/Icon.vue";
 import MarkdownBody from "./MarkdownBody.vue";
+import Popover from "./Popover.vue";
 
 export interface FileViewRequest {
   path: string;
@@ -212,14 +213,12 @@ const isRealFileSystemPath = computed(() => {
 });
 
 const parentDirectory = computed(() => {
-  const p = fullPath.value.replace(/\/+$/, "");
-  const cut = p.lastIndexOf("/");
-  return cut <= 0 ? "/" : p.slice(0, cut);
+  const p = fullPath.value.replace(/[/\\]+$/, "");
+  const cut = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  return cut <= 0 ? (p.startsWith("/") ? "/" : p) : p.slice(0, cut);
 });
 
 const menuOpen = ref(false);
-const menuRef = ref<HTMLElement | null>(null);
-const menuButtonRef = ref<HTMLElement | null>(null);
 
 const copiedFullPath = ref(false);
 let fullPathCopyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -270,16 +269,6 @@ async function copyRelativePath(): Promise<void> {
   }
 }
 
-function onPointerDown(e: PointerEvent): void {
-  if (!menuOpen.value) return;
-  const target = e.target as Node | null;
-  if (!target) return;
-  if (menuRef.value?.contains(target) || menuButtonRef.value?.contains(target)) {
-    return;
-  }
-  menuOpen.value = false;
-}
-
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === "Escape") {
     e.preventDefault();
@@ -293,12 +282,10 @@ function onKeydown(e: KeyboardEvent): void {
 
 onMounted(() => {
   window.addEventListener("keydown", onKeydown);
-  document.addEventListener("pointerdown", onPointerDown, true);
 });
 
 onUnmounted(() => {
   window.removeEventListener("keydown", onKeydown);
-  document.removeEventListener("pointerdown", onPointerDown, true);
   if (copyTimer) clearTimeout(copyTimer);
   if (fullPathCopyTimer) clearTimeout(fullPathCopyTimer);
   if (relPathCopyTimer) clearTimeout(relPathCopyTimer);
@@ -415,83 +402,75 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
           <span :class="copied ? 'text-ok font-medium' : ''">{{ copied ? 'Copied' : 'Copy' }}</span>
         </button>
 
-        <!-- More Actions / 3-dot Menu -->
-        <div class="relative">
-          <button
-            ref="menuButtonRef"
-            type="button"
-            class="rounded-[5px] p-1 text-dim transition-colors hover:bg-raised hover:text-fg"
-            :class="menuOpen ? 'bg-raised text-fg' : ''"
-            aria-label="More file actions"
-            :aria-expanded="menuOpen"
-            @click="menuOpen = !menuOpen"
-          >
-            <Icon name="ellipsis" class="h-3.5 w-3.5" />
-          </button>
-
-          <!-- Dropdown menu -->
-          <Transition
-            enter-active-class="transition duration-100 ease-out"
-            enter-from-class="opacity-0 scale-95"
-            enter-to-class="opacity-100 scale-100"
-            leave-active-class="transition duration-75 ease-in"
-            leave-from-class="opacity-100 scale-100"
-            leave-to-class="opacity-0 scale-95"
-          >
-            <div
-              v-if="menuOpen"
-              ref="menuRef"
-              class="absolute right-0 top-full z-40 mt-1 min-w-52 origin-top-right overflow-hidden rounded-[10px] border border-line/60 bg-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md select-none"
-              role="menu"
-              aria-label="File options"
+        <!-- More Actions / 3-dot Menu via canonical Popover -->
+        <Popover
+          :open="menuOpen"
+          label="File options"
+          :width="210"
+          side="below"
+          hide-header
+          @close="menuOpen = false"
+        >
+          <template #trigger>
+            <button
+              type="button"
+              class="rounded-[5px] p-1 text-dim transition-colors hover:bg-raised hover:text-fg"
+              :class="menuOpen ? 'bg-raised text-fg' : ''"
+              aria-label="More file actions"
+              :aria-expanded="menuOpen"
+              @click="menuOpen = !menuOpen"
             >
-              <button
-                role="menuitem"
-                class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
-                :disabled="!isRealFileSystemPath"
-                @click="openInDefaultApp"
-              >
-                <Icon name="external" class="h-3.5 w-3.5 shrink-0 text-faint" />
-                <span class="min-w-0 flex-1 truncate">Open in default app</span>
-              </button>
+              <Icon name="ellipsis" class="h-3.5 w-3.5" />
+            </button>
+          </template>
 
-              <button
-                role="menuitem"
-                class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
-                :disabled="!isRealFileSystemPath"
-                @click="revealInFileManager"
-              >
-                <Icon name="folder-open" class="h-3.5 w-3.5 shrink-0 text-faint" />
-                <span class="min-w-0 flex-1 truncate">Reveal in file manager</span>
-              </button>
+          <div class="p-1 select-none" role="menu" aria-label="File options">
+            <button
+              role="menuitem"
+              class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+              :disabled="!isRealFileSystemPath"
+              @click="openInDefaultApp"
+            >
+              <Icon name="external" class="h-3.5 w-3.5 shrink-0 text-faint" />
+              <span class="min-w-0 flex-1 truncate">Open in default app</span>
+            </button>
 
-              <hr class="my-1 border-t border-line/50" />
+            <button
+              role="menuitem"
+              class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+              :disabled="!isRealFileSystemPath"
+              @click="revealInFileManager"
+            >
+              <Icon name="folder-open" class="h-3.5 w-3.5 shrink-0 text-faint" />
+              <span class="min-w-0 flex-1 truncate">Reveal in file manager</span>
+            </button>
 
-              <button
-                role="menuitem"
-                class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg"
-                @click="copyFullPath"
-              >
-                <Icon :name="copiedFullPath ? 'check' : 'copy'" class="h-3.5 w-3.5 shrink-0" :class="copiedFullPath ? 'text-ok' : 'text-faint'" />
-                <span class="min-w-0 flex-1 truncate" :class="copiedFullPath ? 'text-ok font-medium' : ''">
-                  {{ copiedFullPath ? 'Full path copied' : 'Copy full path' }}
-                </span>
-              </button>
+            <hr class="my-1 border-t border-line/50" />
 
-              <button
-                v-if="cleanPath !== fullPath"
-                role="menuitem"
-                class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg"
-                @click="copyRelativePath"
-              >
-                <Icon :name="copiedRelPath ? 'check' : 'file'" class="h-3.5 w-3.5 shrink-0" :class="copiedRelPath ? 'text-ok' : 'text-faint'" />
-                <span class="min-w-0 flex-1 truncate" :class="copiedRelPath ? 'text-ok font-medium' : ''">
-                  {{ copiedRelPath ? 'Relative path copied' : 'Copy relative path' }}
-                </span>
-              </button>
-            </div>
-          </Transition>
-        </div>
+            <button
+              role="menuitem"
+              class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg"
+              @click="copyFullPath"
+            >
+              <Icon :name="copiedFullPath ? 'check' : 'copy'" class="h-3.5 w-3.5 shrink-0" :class="copiedFullPath ? 'text-ok' : 'text-faint'" />
+              <span class="min-w-0 flex-1 truncate" :class="copiedFullPath ? 'text-ok font-medium' : ''">
+                {{ copiedFullPath ? 'Full path copied' : 'Copy full path' }}
+              </span>
+            </button>
+
+            <button
+              v-if="cleanPath !== fullPath"
+              role="menuitem"
+              class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg"
+              @click="copyRelativePath"
+            >
+              <Icon :name="copiedRelPath ? 'check' : 'file'" class="h-3.5 w-3.5 shrink-0" :class="copiedRelPath ? 'text-ok' : 'text-faint'" />
+              <span class="min-w-0 flex-1 truncate" :class="copiedRelPath ? 'text-ok font-medium' : ''">
+                {{ copiedRelPath ? 'Relative path copied' : 'Copy relative path' }}
+              </span>
+            </button>
+          </div>
+        </Popover>
 
         <!-- Close Button -->
         <button

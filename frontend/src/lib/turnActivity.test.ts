@@ -205,8 +205,10 @@ describe("conversation turn activity", () => {
 
     expect(turns.length).toBe(2);
     expect(turns[0].isSteer).toBe(false);
+    expect(turns[0].nextTurnIsSteer).toBe(true);
     expect(turns[0].answer).toBeNull();
-    // Interrupted turn label reflects the steer
+    // Interrupted turn label automatically reflects the steer via nextTurnIsSteer
+    expect(workLabel(turns[0])).toBe("Interrupted");
     expect(workLabel(turns[0], undefined, true)).toBe("Interrupted");
 
     expect(turns[1].isSteer).toBe(true);

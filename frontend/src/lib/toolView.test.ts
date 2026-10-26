@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ToolSnapshot } from "../bridge";
-import { wholeFileRead } from "./toolView";
+import { fileToolAction, wholeFileRead } from "./toolView";
 
 function makeTool(name: string, args: Record<string, unknown>, finished = true, isError = false): ToolSnapshot {
   return {
@@ -43,5 +43,40 @@ describe("wholeFileRead", () => {
     expect(wholeFileRead(makeTool("read", { path: "src/a.ts" }, true, true)).isWhole).toBe(false);
     expect(wholeFileRead(makeTool("write", { path: "src/a.ts" })).isWhole).toBe(false);
     expect(wholeFileRead(makeTool("bash", { command: "cat file.txt" })).isWhole).toBe(false);
+  });
+});
+
+describe("fileToolAction", () => {
+  test("identifies whole file read as non-creation whole-file action", () => {
+    const tool = makeTool("read", { path: "src/main.ts" });
+    const action = fileToolAction(tool);
+    expect(action.isCreation).toBe(false);
+    expect(action.isWholeFile).toBe(true);
+    expect(action.path).toBe("src/main.ts");
+    expect(action.content).toBe("file content here");
+  });
+
+  test("identifies write tool as creation whole-file action with content from args", () => {
+    const tool = makeTool("write", { path: "src/new.ts", content: "console.log('hello');" });
+    const action = fileToolAction(tool);
+    expect(action.isCreation).toBe(true);
+    expect(action.isWholeFile).toBe(true);
+    expect(action.path).toBe("src/new.ts");
+    expect(action.content).toBe("console.log('hello');");
+  });
+
+  test("identifies edit tool as non-creation non-whole-file action", () => {
+    const tool = makeTool("edit", { path: "src/existing.ts" });
+    const action = fileToolAction(tool);
+    expect(action.isCreation).toBe(false);
+    expect(action.isWholeFile).toBe(false);
+    expect(action.path).toBe("src/existing.ts");
+  });
+
+  test("returns empty action on tool error", () => {
+    const tool = makeTool("write", { path: "src/bad.ts" }, true, true);
+    const action = fileToolAction(tool);
+    expect(action.isWholeFile).toBe(false);
+    expect(action.isCreation).toBe(false);
   });
 });

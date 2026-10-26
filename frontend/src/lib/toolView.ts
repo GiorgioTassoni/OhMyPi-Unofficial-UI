@@ -252,6 +252,51 @@ export interface WholeFileRead {
   path: string | null;
 }
 
+export interface FileToolAction {
+  isCreation: boolean;
+  isWholeFile: boolean;
+  path: string | null;
+  content: string | null;
+}
+
+/**
+ * Normalizes file tool actions (reading or writing whole files, or modifying them).
+ */
+export function fileToolAction(tool: ToolSnapshot): FileToolAction {
+  if (tool.isError) {
+    return { isCreation: false, isWholeFile: false, path: null, content: null };
+  }
+  const read = wholeFileRead(tool);
+  if (read.isWhole) {
+    return {
+      isCreation: false,
+      isWholeFile: true,
+      path: read.path,
+      content: tool.output || null,
+    };
+  }
+
+  const files = touchedFiles(tool);
+  const isCreation = FILE_TOOLS.has(tool.toolName) || files[0]?.kind === "written";
+  if (isCreation && tool.finished && files.length === 1) {
+    const args = parseObject(tool.args);
+    const content = typeof args?.content === "string" ? args.content : (tool.output || null);
+    return {
+      isCreation: true,
+      isWholeFile: true,
+      path: files[0]?.path || null,
+      content,
+    };
+  }
+
+  return {
+    isCreation,
+    isWholeFile: false,
+    path: files[0]?.path || null,
+    content: null,
+  };
+}
+
 /**
  * Determine whether a tool call represents reading a whole file (without line or offset limits).
  */

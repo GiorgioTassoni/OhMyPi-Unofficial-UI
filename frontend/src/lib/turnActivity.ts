@@ -1,6 +1,6 @@
 import type { RowSnapshot, ToolSnapshot } from "../bridge";
 import { turnContainingRow } from "./virtualTurns";
-import { parseObject, touchedFiles } from "./toolView";
+import { fileToolAction, parseObject, touchedFiles } from "./toolView";
 import { activityDiffCounts } from "./activityDiff";
 import { isSkillInvocation } from "./skillPrompt";
 
@@ -37,6 +37,7 @@ export interface ConversationTurn {
   durationMs: number | null;
   startTime?: number | null;
   isSteer?: boolean;
+  nextTurnIsSteer?: boolean;
 }
 
 function category(tool: ToolSnapshot): GroupKind {
@@ -59,7 +60,7 @@ function makeGroup(kind: GroupKind, rows: IndexedRow[]): ToolGroup {
   } else if (kind === "edit") {
     const paths = new Set(rows.flatMap(({ row }) => row.tool ? touchedFiles(row.tool).map((file) => file.path) : []));
     const files = paths.size || count;
-    const allWritten = rows.length > 0 && rows.every(({ row }) => row.tool?.toolName === "write");
+    const allWritten = rows.length > 0 && rows.every(({ row }) => row.tool ? fileToolAction(row.tool).isCreation : false);
     const verb = allWritten ? "Created" : "Edited";
     label = `${verb} ${files} file${files === 1 ? "" : "s"}`;
     icon = allWritten ? "file" : "pencil";
@@ -200,8 +201,15 @@ function turnsFrom(rows: RowSnapshot[], streaming: boolean, start: number): Conv
   return segments.map((segment, index) => turn(segment, streaming && index === segments.length - 1, jobNames));
 }
 
+function linkTurns(turns: ConversationTurn[]): ConversationTurn[] {
+  for (let i = 0; i < turns.length; i++) {
+    turns[i].nextTurnIsSteer = turns[i + 1]?.isSteer === true;
+  }
+  return turns;
+}
+
 export function conversationTurns(rows: RowSnapshot[], streaming: boolean): ConversationTurn[] {
-  return turnsFrom(rows, streaming, 0);
+  return linkTurns(turnsFrom(rows, streaming, 0));
 }
 
 /** Reuse every turn strictly before the patch; the latest turn is rebuilt on an append. */
@@ -213,7 +221,8 @@ export function patchedConversationTurns(
   const keep = affected >= 0 ? affected : previous.length - 1;
   const prefix = previous.slice(0, keep);
   const rebuiltFrom = prefix.length ? prefix[prefix.length - 1].end + 1 : 0;
-  return { turns: [...prefix, ...turnsFrom(rows, streaming, rebuiltFrom)], rebuiltFrom };
+  const combined = [...prefix, ...turnsFrom(rows, streaming, rebuiltFrom)];
+  return { turns: linkTurns(combined), rebuiltFrom };
 }
 
 export function formatTurnDuration(seconds: number): string {
@@ -241,7 +250,8 @@ export function workLabel(item: ConversationTurn, nowMs?: number, nextTurnIsStee
     }
     return "Working…";
   }
-  if (nextTurnIsSteer && !item.answer) {
+  const isInterrupted = nextTurnIsSteer ?? item.nextTurnIsSteer ?? false;
+  if (isInterrupted && !item.answer) {
     return "Interrupted";
   }
   if (item.durationMs === null) return "Completed turn";
