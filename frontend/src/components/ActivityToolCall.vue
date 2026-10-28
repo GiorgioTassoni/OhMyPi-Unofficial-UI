@@ -57,6 +57,8 @@ const icon = computed(() => {
 const isWholeFile = computed(() => !failed.value && action.value.isWholeFile);
 const filePath = computed(() => action.value.path || view.value.summary || "");
 const fileContent = computed(() => action.value.content ?? tool.value.output);
+const canOpenRead = computed(() => props.kind === "read" && !failed.value && Boolean(filePath.value));
+const isActionable = computed(() => canOpenRead.value || isWholeFile.value);
 
 function openFileInSidebar(targetPath?: string): void {
   const p = targetPath || filePath.value;
@@ -66,13 +68,17 @@ function openFileInSidebar(targetPath?: string): void {
     artifactId: view.value.artifact,
   };
   const c = (targetPath && targetPath !== filePath.value) ? undefined : fileContent.value;
-  if (c !== undefined) {
+  if (c !== undefined && c !== null) {
     payload.content = c;
   }
   emit("openFile", payload);
 }
 
 function onRowClick(): void {
+  if (props.kind === "read") {
+    if (canOpenRead.value) openFileInSidebar();
+    return;
+  }
   if (!isWholeFile.value) return;
   openFileInSidebar();
 }
@@ -84,19 +90,19 @@ function onRowClick(): void {
     class="flex min-w-0 items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] select-none transition-colors"
     :class="[
       flashed ? 'bg-accent/10 ring-1 ring-accent' : '',
-      isWholeFile
+      canOpenRead
         ? 'cursor-pointer text-dim hover:bg-raised/75 hover:text-fg'
         : 'text-dim'
     ]"
     :data-row-index="entry.index"
-    :role="isWholeFile ? 'button' : undefined"
-    :tabindex="isWholeFile ? 0 : undefined"
+    :role="canOpenRead ? 'button' : undefined"
+    :tabindex="canOpenRead ? 0 : undefined"
     @click="onRowClick"
     @keydown.enter="onRowClick"
   >
     <Icon name="file" class="h-3.5 w-3.5 shrink-0 text-faint" />
     <span class="min-w-0 truncate font-mono">{{ title }}</span>
-    <span v-if="isWholeFile" class="ml-auto flex items-center gap-1 text-faint">
+    <span v-if="canOpenRead" class="ml-auto flex items-center gap-1 text-faint">
       <span class="rounded bg-raised/80 px-1.5 py-0.5 font-mono text-[10px] text-faint">view</span>
       <Icon name="chevron-right" class="h-3 w-3 shrink-0 text-faint" />
     </span>
@@ -123,7 +129,7 @@ function onRowClick(): void {
       </span>
       <span v-else class="ml-auto" />
       <span
-        v-if="isWholeFile && !failed"
+        v-if="isActionable && !failed"
         role="button"
         tabindex="0"
         title="Open in sidebar"

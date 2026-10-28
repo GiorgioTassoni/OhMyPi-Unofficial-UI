@@ -73,6 +73,10 @@ pub fn clear_subagent_transcript_cache() {
 /// not turn into a window that will not open.
 const MAX_ENTRIES: usize = 2000;
 
+/// Maximum number of recently active subagent transcripts to scan for file mutations
+/// when no specific agent ID is requested. Caps disk I/O on large historical threads.
+pub const MAX_SCANNED_SUBAGENT_DIFFS: usize = 5;
+
 /// The advisor's transcript file name, and the prefix a named one carries.
 const ADVISOR: &str = "__advisor";
 const JSONL_SUFFIX: &str = ".jsonl";
@@ -469,24 +473,36 @@ pub fn scan_subagent_file_changes(
 /// Every file touched by subagents for this session.
 ///
 /// If `agent_id` is supplied, only that subagent's changes are returned.
-/// Otherwise, all parked non-advisor subagents are scanned.
+/// Otherwise, only the 5 most recently active subagents are scanned to keep
+/// disk I/O and UI responsiveness instantaneous with large sessions.
 pub fn subagent_file_changes(
     session_file: &str,
     agent_id: Option<&str>,
 ) -> Result<Vec<SubagentFileChange>, String> {
-    let parked_agents = parked(session_file)?;
+    let mut parked_agents = parked(session_file)?;
     let mut changes = Vec::new();
 
-    for agent in parked_agents {
-        if agent.advisor {
-            continue;
-        }
-        if let Some(requested_id) = agent_id {
-            if agent.id != requested_id {
-                continue;
+    if let Some(requested_id) = agent_id {
+        if let Some(agent) = parked_agents.iter().find(|a| a.id == requested_id) {
+            if !agent.advisor {
+                let agent_name = resolve_agent_name(Path::new(&agent.path), &agent.id);
+                changes.extend(scan_subagent_file_changes(
+                    Path::new(&agent.path),
+                    &agent.id,
+                    &agent_name,
+                ));
             }
         }
+        return Ok(changes);
+    }
 
+    // Sort newest modified first and limit scan to top recent subagents.
+    parked_agents.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
+    for agent in parked_agents
+        .into_iter()
+        .filter(|a| !a.advisor)
+        .take(MAX_SCANNED_SUBAGENT_DIFFS)
+    {
         let agent_name = resolve_agent_name(Path::new(&agent.path), &agent.id);
         let agent_changes =
             scan_subagent_file_changes(Path::new(&agent.path), &agent.id, &agent_name);

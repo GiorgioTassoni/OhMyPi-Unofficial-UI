@@ -192,6 +192,7 @@ pub fn run() {
             bridge::thread_todos,
             bridge::set_todos,
             bridge::workspace_tree,
+            bridge::search_workspace_files,
             bridge::read_artifact,
             bridge::read_file_content,
             bridge::read_file_base64,

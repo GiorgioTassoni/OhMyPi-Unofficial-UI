@@ -1523,19 +1523,27 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
                 steering,
             }
         }
-        omp_session::Row::Assistant { message, streaming } => RowSnapshot {
-            role: "assistant".to_string(),
-            timestamp: message.timestamp,
-            text: message.text(),
-            thinking: optional(message.thinking()),
-            streaming: *streaming,
-            tool: None,
-            attachments: attachments(message),
-            custom_type: message.custom_type.clone(),
-            jobs: jobs(message),
-            command: None,
-            steering: None,
-        },
+        omp_session::Row::Assistant { message, streaming } => {
+            let mut text = message.text();
+            if text.is_empty() {
+                if let Some(err) = message.error_message() {
+                    text = err.to_string();
+                }
+            }
+            RowSnapshot {
+                role: "assistant".to_string(),
+                timestamp: message.timestamp,
+                text,
+                thinking: optional(message.thinking()),
+                streaming: *streaming,
+                tool: None,
+                attachments: attachments(message),
+                custom_type: message.custom_type.clone(),
+                jobs: jobs(message),
+                command: None,
+                steering: None,
+            }
+        }
         omp_session::Row::Tool(card) => RowSnapshot {
             role: "tool".to_string(),
             timestamp: None,

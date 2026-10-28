@@ -258,6 +258,22 @@ impl Message {
             _ => None,
         })
     }
+
+    /// Present when an assistant turn failed; the UI must show it rather than an empty answer.
+    pub fn error_message(&self) -> Option<&str> {
+        match &self.kind {
+            MessageKind::Assistant { error_message, .. } => error_message.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// The engine-provided stop reason for an assistant turn, if known.
+    pub fn stop_reason(&self) -> Option<&str> {
+        match &self.kind {
+            MessageKind::Assistant { stop_reason, .. } => stop_reason.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 fn decode_kind(role: &str, raw: &Value) -> MessageKind {

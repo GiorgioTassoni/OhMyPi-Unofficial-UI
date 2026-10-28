@@ -31,6 +31,16 @@ import {
   formatRemaining,
   remainingMs,
 } from "../lib/approval";
+import {
+  cleanOptionLabel,
+  isDoneOption,
+  isMultiSelectDialog,
+  isOptionSelected,
+  loadSelectedOptions,
+  questionKey,
+  saveSelectedOptions,
+  titleParts,
+} from "../lib/dialogSelect";
 
 const props = defineProps<{
   /** The thread the dialogs belong to: an answer goes to its session. */
@@ -54,6 +64,13 @@ const writing = ref<string | null>(null);
 /** The host names the next unapproved executable; the frontend never guesses. */
 const candidatePrograms = ref<Record<string, string | null>>({});
 let candidateRead = 0;
+
+/** Client-side tracking of selected options in multi-choice questions across roundtrips. */
+const selectedOptionsByQuestion = ref<Record<string, Set<string>>>(
+  Object.fromEntries(
+    Object.entries(loadSelectedOptions()).map(([k, arr]) => [k, new Set(arr)]),
+  ),
+);
 
 async function refreshCandidates(): Promise<void> {
   const read = ++candidateRead;
@@ -115,6 +132,33 @@ watch(
       if (dialog.prefill !== null && replies.value[dialog.id] === undefined) {
         replies.value[dialog.id] = dialog.prefill;
       }
+      // Sync any option already flagged by the engine or with checkmark prefix
+      if (dialog.kind === "select") {
+        const key = questionKey(props.thread, dialog.title);
+        dialog.options.forEach((opt, idx) => {
+          if (
+            dialog.optionDetails?.[idx]?.selected === true ||
+            /^(\[[xX✓✔☑]\]|[✓✔☑])\s+/i.test(opt)
+          ) {
+            selectedOptionsByQuestion.value[key] ??= new Set<string>();
+            selectedOptionsByQuestion.value[key]!.add(cleanOptionLabel(opt));
+          }
+        });
+      }
+    }
+
+    // Drop stale question keys belonging to this thread
+    const threadPrefix = `${props.thread}:`;
+    const liveKeys = new Set(dialogs.map((d) => questionKey(props.thread, d.title)));
+    let changed = false;
+    for (const k of Object.keys(selectedOptionsByQuestion.value)) {
+      if (k.startsWith(threadPrefix) && !liveKeys.has(k)) {
+        delete selectedOptionsByQuestion.value[k];
+        changed = true;
+      }
+    }
+    if (changed) {
+      saveSelectedOptions(selectedOptionsByQuestion.value);
     }
   },
   { immediate: true, deep: true },
@@ -155,6 +199,51 @@ onUnmounted(() => {
   }
 });
 
+function optionDescription(dialog: UiRequestSnapshot, index: number): string | null {
+  const desc = dialog.optionDetails?.[index]?.description?.trim();
+  return desc && desc.length > 0 ? desc : null;
+}
+
+interface DialogOptionView {
+  label: string;
+  cleanLabel: string;
+  description: string | null;
+  index: number;
+  isSelected: boolean;
+}
+
+interface DialogSelectViewModel {
+  selectable: DialogOptionView[];
+  doneOption: { label: string; index: number } | null;
+  isMulti: boolean;
+}
+
+function selectViewModel(dialog: UiRequestSnapshot): DialogSelectViewModel {
+  const isMulti = isMultiSelectDialog(dialog);
+  const qKey = questionKey(props.thread, dialog.title);
+  const selectedSet = selectedOptionsByQuestion.value[qKey];
+
+  let doneOption: { label: string; index: number } | null = null;
+  const selectable: DialogOptionView[] = [];
+
+  for (let i = 0; i < dialog.options.length; i++) {
+    const opt = dialog.options[i];
+    if (isDoneOption(opt)) {
+      doneOption = { label: opt, index: i };
+    } else {
+      selectable.push({
+        label: opt,
+        cleanLabel: cleanOptionLabel(opt),
+        description: optionDescription(dialog, i),
+        index: i,
+        isSelected: isOptionSelected(dialog, opt, i, selectedSet),
+      });
+    }
+  }
+
+  return { selectable, doneOption, isMulti };
+}
+
 /**
  * One pass over the pending set per render.
  *
@@ -174,6 +263,7 @@ const cards = computed(() =>
       program: candidatePrograms.value[dialog.id] ?? null,
       deadline: left === null ? null : formatRemaining(left),
       busy: answering.value[dialog.id] === true,
+      select: dialog.kind === "select" ? selectViewModel(dialog) : null,
     };
   }),
 );
@@ -237,9 +327,28 @@ async function allowCommandForConversation(
   await answer(dialog, { value: APPROVE });
 }
 
-function optionDescription(dialog: UiRequestSnapshot, index: number): string | null {
-  const desc = dialog.optionDetails?.[index]?.description?.trim();
-  return desc && desc.length > 0 ? desc : null;
+function onSelectOption(dialog: UiRequestSnapshot, option: string, _index?: number): void {
+  if (answering.value[dialog.id] === true) return;
+
+  if (isDoneOption(option)) {
+    void answer(dialog, { value: option });
+    return;
+  }
+
+  if (isMultiSelectDialog(dialog)) {
+    const key = questionKey(props.thread, dialog.title);
+    selectedOptionsByQuestion.value[key] ??= new Set<string>();
+    const set = selectedOptionsByQuestion.value[key]!;
+    const clean = cleanOptionLabel(option);
+    if (set.has(clean)) {
+      set.delete(clean);
+    } else {
+      set.add(clean);
+    }
+    saveSelectedOptions(selectedOptionsByQuestion.value);
+  }
+
+  void answer(dialog, { value: option });
 }
 
 /** Tauri rejects with a plain string, and a thrown `Error` would stringify badly. */
@@ -381,9 +490,17 @@ function describe(cause: unknown): string {
 
       <!-- Any other dialog: the engine's text, and a control that answers it. -->
       <template v-else>
-        <p class="text-[12.5px] font-medium whitespace-pre-wrap text-fg">
-          {{ card.dialog.title }}
-        </p>
+        <div class="flex items-start gap-2">
+          <span
+            v-if="titleParts(card.dialog.title).selectedBadge"
+            class="inline-flex shrink-0 items-center rounded-md bg-accent/15 px-2 py-0.5 text-[11px] font-semibold text-accent ring-1 ring-inset ring-accent/30"
+          >
+            {{ titleParts(card.dialog.title).selectedBadge }}
+          </span>
+          <p class="text-[12.5px] font-medium whitespace-pre-wrap text-fg">
+            {{ titleParts(card.dialog.title).text }}
+          </p>
+        </div>
         <p
           v-if="card.dialog.message"
           class="mt-2 text-[12.5px] leading-relaxed whitespace-pre-wrap text-dim"
@@ -391,27 +508,81 @@ function describe(cause: unknown): string {
           {{ card.dialog.message }}
         </p>
 
-        <div v-if="card.dialog.kind === 'select'" class="mt-3 flex flex-col gap-1.5">
+        <div v-if="card.dialog.kind === 'select' && card.select" class="mt-3 flex flex-col gap-1.5">
+          <!-- Selectable options: checkboxes for multi-select, radios for single-select -->
           <button
-            v-for="(option, optIndex) in card.dialog.options"
-            :key="`${option}_${optIndex}`"
-            class="group flex items-start gap-2.5 rounded-[8px] border border-line-strong/50 bg-surface/60 px-3.5 py-2.5 text-left text-[12.5px] text-fg transition-all hover:border-accent/70 hover:bg-raised hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-            @click="answer(card.dialog, { value: option })"
+            v-for="opt in card.select.selectable"
+            :key="`${opt.label}_${opt.index}`"
+            :disabled="card.busy"
+            class="group relative flex items-start gap-3 rounded-[8px] border px-3.5 py-2.5 text-left text-[12.5px] transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            :class="[
+              opt.isSelected
+                ? 'border-accent/80 bg-accent/10 text-fg shadow-xs ring-1 ring-accent/30'
+                : 'border-line-strong/50 bg-surface/60 text-fg hover:border-accent/70 hover:bg-raised hover:text-fg',
+              card.busy ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer',
+            ]"
+            @click="onSelectOption(card.dialog, opt.label, opt.index)"
           >
-            <span
-              class="h-1.5 w-1.5 shrink-0 rounded-full bg-faint/60 transition-colors group-hover:bg-accent"
-              :class="optionDescription(card.dialog, optIndex) ? 'mt-1.5' : 'mt-1'"
-            />
+            <!-- Multi-select checkbox -->
+            <div
+              v-if="card.select.isMulti"
+              class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors"
+              :class="[
+                opt.isSelected
+                  ? 'border-accent bg-accent text-canvas shadow-xs'
+                  : 'border-line-strong bg-surface text-transparent group-hover:border-accent/60',
+              ]"
+            >
+              <svg class="h-3 w-3 fill-current stroke-current stroke-[0.5]" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+              </svg>
+            </div>
+
+            <!-- Single-select radio -->
+            <div
+              v-else
+              class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface transition-colors group-hover:border-accent/60"
+            >
+              <div class="h-1.5 w-1.5 rounded-full bg-transparent group-hover:bg-accent" />
+            </div>
+
             <div class="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span class="leading-snug text-fg">{{ option }}</span>
+              <div class="flex items-center gap-2">
+                <span class="leading-snug" :class="opt.isSelected ? 'font-medium text-fg' : 'text-fg'">
+                  {{ opt.cleanLabel }}
+                </span>
+                <span
+                  v-if="opt.isSelected"
+                  class="rounded bg-accent/20 px-1.5 py-0.2 text-[10.5px] font-medium text-accent"
+                >
+                  selected
+                </span>
+              </div>
               <span
-                v-if="optionDescription(card.dialog, optIndex)"
+                v-if="opt.description"
                 class="text-[11.5px] leading-relaxed text-dim transition-colors whitespace-pre-wrap group-hover:text-fg/80"
               >
-                {{ optionDescription(card.dialog, optIndex) }}
+                {{ opt.description }}
               </span>
             </div>
           </button>
+
+          <!-- Done selecting primary action button (if present) -->
+          <div
+            v-if="card.select.doneOption"
+            class="mt-2 flex items-center justify-end pt-1"
+          >
+            <button
+              :disabled="card.busy"
+              class="flex items-center gap-2 rounded-[8px] bg-accent px-4 py-2 text-[12.5px] font-medium text-canvas shadow-xs transition-all hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 disabled:cursor-not-allowed"
+              @click="onSelectOption(card.dialog, card.select.doneOption.label, card.select.doneOption.index)"
+            >
+              <svg class="h-3.5 w-3.5 fill-current stroke-current stroke-[0.5]" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+              </svg>
+              <span>Done selecting</span>
+            </button>
+          </div>
         </div>
 
         <div v-else-if="card.dialog.kind === 'confirm'" class="mt-3 flex gap-1.5">

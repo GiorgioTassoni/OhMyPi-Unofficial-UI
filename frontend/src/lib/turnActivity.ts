@@ -41,9 +41,9 @@ export interface ConversationTurn {
 }
 
 function category(tool: ToolSnapshot): GroupKind {
-  if (tool.toolName === "read") return "read";
+  if (tool.toolName === "read" || tool.toolName === "read_file") return "read";
   if (["bash", "bash_interactive", "eval"].includes(tool.toolName)) return "command";
-  if (["edit", "write", "ast_edit", "apply_patch", "memory_edit"].includes(tool.toolName)) return "edit";
+  if (["edit", "write", "write_file", "ast_edit", "apply_patch", "memory_edit"].includes(tool.toolName)) return "edit";
   return "other";
 }
 

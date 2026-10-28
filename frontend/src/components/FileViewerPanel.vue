@@ -81,6 +81,7 @@ async function load(): Promise<void> {
   error.value = null;
   imageDimensions.value = null;
   imageDataUrl.value = null;
+  content.value = props.file.content ?? "";
 
   try {
     if (isImage.value) {
@@ -98,7 +99,7 @@ async function load(): Promise<void> {
       return;
     }
 
-    if (props.file.content) {
+    if (props.file.content !== undefined && props.file.content !== null) {
       content.value = props.file.content;
       return;
     }
@@ -117,7 +118,11 @@ async function load(): Promise<void> {
   }
 }
 
-watch(() => [props.file.path, props.file.content, props.file.artifactId], load, { immediate: true });
+watch(
+  () => [props.file.path, props.file.content, props.file.artifactId, props.thread, props.workspace],
+  load,
+  { immediate: true },
+);
 
 function onImageLoad(e: Event): void {
   const target = e.target as HTMLImageElement;

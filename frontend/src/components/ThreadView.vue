@@ -48,6 +48,7 @@ import ConversationRow from "./ConversationRow.vue";
 import DialogPanel from "./DialogPanel.vue";
 import DragDropOverlay from "./DragDropOverlay.vue";
 import PendingSteerBadge from "./PendingSteerBadge.vue";
+import UnexpectedResumeBanner from "./UnexpectedResumeBanner.vue";
 import Icon from "./ui/Icon.vue";
 import TurnFiles from "./TurnFiles.vue";
 import TurnActivity from "./TurnActivity.vue";
@@ -413,7 +414,6 @@ const chips = computed<ChipRow>(() => ({
 
 /** What the composer needs to know about the turn in flight. */
 const streaming = computed(() => status.value?.control.isStreaming ?? false);
-const queued = computed(() => status.value?.control.queuedMessageCount ?? 0);
 const turns = computed(() => projection.value.turns);
 const fileSummaries = computed<Map<number, TurnFileSummary>>(() => {
   const baseSummaries = projection.value.summaries;
@@ -880,7 +880,7 @@ defineExpose({
       </div>
     </div>
 
-    <div class="relative mx-auto w-full max-w-[46rem] px-4 pb-4">
+    <div class="relative mx-auto w-full max-w-[46rem] px-4 pb-4 shrink-0">
       <!-- Floating scroll-to-bottom button when reading history -->
       <Transition
         enter-active-class="transition duration-150 ease-out"
@@ -925,6 +925,14 @@ defineExpose({
         data-status
       >{{ props.chrome.status }}</p>
 
+      <!-- Unexpected close banner: shown when thread is idle but background subagents were revived by the engine -->
+      <UnexpectedResumeBanner
+        v-if="props.activeAgents.length > 0 && !streaming"
+        :thread="thread"
+        :count="props.activeAgents.length"
+        @failed="emit('failed', $event)"
+      />
+
       <!-- The dialogs the agent is waiting on (`docs/12` §10). -->
       <DialogPanel
         :thread="thread"
@@ -937,7 +945,6 @@ defineExpose({
         :thread="thread"
         :streaming="streaming"
         :has-active-agents="props.activeAgents.length > 0"
-        :queued="queued"
         :disabled="status === null"
         :frame-limit="status?.ready.maxFrameBytes ?? 0"
         :commands="commands"

@@ -17,9 +17,11 @@ import { computed, nextTick, ref, watch } from "vue";
 import {
   followUp,
   prompt as sendPrompt,
+  searchWorkspaceFiles,
   steer,
   stopTurn,
   stopTurnAndSend,
+  type WorkspaceFileMatch,
 } from "../bridge";
 import { operationFor } from "../lib/composer";
 import {
@@ -31,6 +33,7 @@ import {
   WINDOW_ACTIONS,
   type CommandEntry,
 } from "../lib/palette";
+import { findAtToken } from "../lib/filePalette";
 import {
   frameRefusal,
   imagesToSend,
@@ -48,6 +51,7 @@ import { type ChipRow } from "../lib/chips";
 import AttachmentStrip from "./AttachmentStrip.vue";
 import Icon from "./ui/Icon.vue";
 import CommandPalette from "./CommandPalette.vue";
+import FilePalette from "./FilePalette.vue";
 import ComposerChips from "./ComposerChips.vue";
 
 const props = defineProps<{
@@ -57,8 +61,6 @@ const props = defineProps<{
   streaming: boolean;
   /** Whether any subagents are currently in flight for this thread. */
   hasActiveAgents?: boolean;
-  /** Messages waiting behind the running turn. */
-  queued: number;
   /** No session, so there is nowhere to send. */
   disabled: boolean;
   /** Everything the chip row renders from (`docs/12` §5.1), passed through untouched. */
@@ -151,13 +153,44 @@ const selected = computed(() => {
 watch(draft, () => {
   paletteDismissed.value = false;
   paletteIndex.value = 0;
+  fileIndex.value = 0;
 });
+
+const atToken = computed(() => (paletteDismissed.value ? null : findAtToken(before.value)));
+const fileMatches = ref<WorkspaceFileMatch[]>([]);
+const fileIndex = ref(0);
+const isFilePaletteOpen = computed(() => atToken.value !== null && fileMatches.value.length > 0);
+
+let searchSeq = 0;
+watch(
+  [() => props.thread, () => (atToken.value ? `${atToken.value.start}:${atToken.value.query}` : null)],
+  async ([thread, tokenKey]) => {
+    if (!tokenKey || !thread || !atToken.value) {
+      fileMatches.value = [];
+      fileIndex.value = 0;
+      return;
+    }
+    const query = atToken.value.query;
+    const seq = ++searchSeq;
+    try {
+      const results = await searchWorkspaceFiles(thread, query, 25);
+      if (seq === searchSeq) {
+        fileMatches.value = results;
+        fileIndex.value = 0;
+      }
+    } catch {
+      if (seq === searchSeq) {
+        fileMatches.value = [];
+        fileIndex.value = 0;
+      }
+    }
+  },
+  { immediate: true },
+);
 
 const hasDraft = computed(() => draft.value.trim() !== "");
 /** An attachment alone is enough to send a turn. */
 const hasInput = computed(() => hasDraft.value || attachments.value.length > 0);
-/** Whether the thread is actively working — streaming tokens or running subagents. */
-const isWorking = computed(() => props.streaming || (props.hasActiveAgents ?? false));
 const canSend = computed(
   () => hasInput.value && !props.disabled && !sending.value && !readingFiles.value,
 );
@@ -540,6 +573,25 @@ async function accept(): Promise<void> {
   await dispatch(text);
 }
 
+/**
+ * Accept a selected file match into the draft at the current `@` token.
+ */
+async function acceptFile(index?: number): Promise<void> {
+  const i = index ?? fileIndex.value;
+  const match = fileMatches.value[i];
+  if (!match || !atToken.value) return;
+  const tokenStart = atToken.value.start;
+  const replacement = `@${match.path} `;
+  const next = replaceToken(draft.value, caret.value, replacement, tokenStart);
+  draft.value = next.text;
+  caret.value = next.caret;
+  fileMatches.value = [];
+  fileIndex.value = 0;
+  await nextTick();
+  box.value?.focus();
+  box.value?.setSelectionRange(next.caret, next.caret);
+}
+
 async function stop(): Promise<void> {
   if (stopping.value) return;
   stopping.value = true;
@@ -563,6 +615,9 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
     ? event.currentTarget.selectionStart ?? draft.value.length
     : draft.value.length;
 
+  const isPaletteActive = palette.value !== null;
+  const isFilesActive = !isPaletteActive && isFilePaletteOpen.value;
+
   const operation = operationFor(
     {
       key: event.key,
@@ -571,10 +626,10 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
       composing: event.isComposing,
     },
     {
-      streaming: isWorking.value,
+      streaming: props.streaming,
       draft: draft.value,
       attachments: attachments.value.length,
-      palette: palette.value !== null,
+      palette: isPaletteActive || isFilesActive,
     },
   );
 
@@ -598,25 +653,41 @@ async function onKeydown(event: KeyboardEvent): Promise<void> {
 
     case "palette-down":
       event.preventDefault();
-      paletteIndex.value = move("down", paletteIndex.value, palette.value?.items.length ?? 0);
+      if (isPaletteActive) {
+        paletteIndex.value = move("down", paletteIndex.value, palette.value?.items.length ?? 0);
+      } else if (isFilesActive) {
+        fileIndex.value = move("down", fileIndex.value, fileMatches.value.length);
+      }
       return;
 
     case "palette-up":
       event.preventDefault();
-      paletteIndex.value = move("up", paletteIndex.value, palette.value?.items.length ?? 0);
+      if (isPaletteActive) {
+        paletteIndex.value = move("up", paletteIndex.value, palette.value?.items.length ?? 0);
+      } else if (isFilesActive) {
+        fileIndex.value = move("up", fileIndex.value, fileMatches.value.length);
+      }
       return;
 
     case "palette-accept":
       event.preventDefault();
-      await accept();
+      if (isPaletteActive) {
+        await accept();
+      } else if (isFilesActive) {
+        await acceptFile();
+      }
       return;
 
     case "palette-complete": {
       event.preventDefault();
-      const item = selected.value;
-      // A window action has nothing to complete — it is not text the box will send.
-      if (item !== null && item.kind !== "app") {
-        await insert(insertionOf(item));
+      if (isPaletteActive) {
+        const item = selected.value;
+        // A window action has nothing to complete — it is not text the box will send.
+        if (item !== null && item.kind !== "app") {
+          await insert(insertionOf(item));
+        }
+      } else if (isFilesActive) {
+        await acceptFile();
       }
       return;
     }
@@ -674,6 +745,15 @@ defineExpose({ setDraft, attachPaths, attachFiles, attachPastedText });
       @hover="(index) => { paletteIndex = index; }"
     />
 
+    <FilePalette
+      v-else-if="isFilePaletteOpen"
+      :files="fileMatches"
+      :selected="fileIndex"
+      :query="atToken?.query ?? ''"
+      @pick="(index) => { fileIndex = index; void acceptFile(index); }"
+      @hover="(index) => { fileIndex = index; }"
+    />
+
     <!--
       The card, in the reference's language: one raised rounded block with a leading `+`, the
       prompt itself in the window's sans at reading size, and the actions appearing inside it
@@ -705,7 +785,7 @@ defineExpose({ setDraft, attachPaths, attachFiles, attachPastedText });
         :value="draft"
         rows="1"
         spellcheck="false"
-        placeholder="Type / for commands"
+        placeholder="Type / for commands, @ for files"
         class="max-h-40 min-h-[28px] flex-1 resize-none overflow-y-auto bg-transparent py-1 text-[13px] leading-5 text-fg outline-none placeholder:text-faint [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         @input="onInput"
         @keydown="onKeydown"
@@ -719,16 +799,16 @@ defineExpose({ setDraft, attachPaths, attachFiles, attachPastedText });
         v-if="hasInput || steeringPending"
         :disabled="!canSend || steeringPending"
         class="flex h-7 min-w-7 shrink-0 items-center justify-center rounded-[6px] bg-accent px-2.5 text-[12px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100 shadow-sm"
-        @click="send(isWorking ? 'steer' : 'prompt')"
+        @click="send(props.streaming ? 'steer' : 'prompt')"
       >
         <span v-if="steeringPending" class="inline-flex items-center gap-1.5">
           <Icon name="refresh" class="h-3 w-3 animate-spin text-canvas" />
           <span>steer…</span>
         </span>
-        <span v-else class="leading-none select-none">{{ isWorking ? "steer" : "↵" }}</span>
+        <span v-else class="leading-none select-none">{{ props.streaming ? "steer" : "↵" }}</span>
       </button>
       <button
-        v-if="isWorking"
+        v-if="props.streaming || props.hasActiveAgents"
         :disabled="stopping"
         class="flex h-7 shrink-0 items-center justify-center rounded-[6px] border border-line px-2.5 text-[11.5px] text-dim transition-all hover:border-err/60 hover:text-err hover:bg-err/10 active:scale-95 disabled:opacity-50"
         @click="stop"
@@ -746,43 +826,5 @@ defineExpose({ setDraft, attachPaths, attachFiles, attachPastedText });
       @terminal="emit('terminal', $event)"
       @favourites="emit('favourites', $event)"
     />
-
-    <div
-      v-if="isWorking || queued > 0"
-      class="mt-2 flex items-center gap-2 text-[11px] text-faint"
-    >
-      <!--
-        The streaming actions are labelled, not modifier-only: `steer` is already the
-        primary button, so the two less-common ones appear beside it only when there
-        is something to send.
-      -->
-      <template v-if="isWorking && hasInput">
-        <button
-          :disabled="!canSend"
-          class="rounded-[6px] border border-line px-2 py-0.5 hover:border-line-strong hover:text-fg disabled:opacity-40"
-          @click="send('follow-up')"
-        >
-          queue
-        </button>
-        <button
-          :disabled="!canSend"
-          class="rounded-[6px] border border-line px-2 py-0.5 hover:border-err/60 hover:text-err disabled:opacity-40"
-          @click="send('stop-and-send')"
-        >
-          stop and send
-        </button>
-      </template>
-
-      <span v-if="steeringPending" class="inline-flex items-center gap-1.5 text-dim">
-        <Icon name="refresh" class="h-3 w-3 animate-spin text-faint" />
-        steering…
-      </span>
-      <span v-else-if="queued > 0" class="text-dim">{{ queued }} queued</span>
-      <span v-else-if="streaming" class="text-ok">streaming</span>
-      <span v-else-if="props.hasActiveAgents" class="text-ok">agents working</span>
-      <span v-if="isWorking" class="ml-auto text-faint">
-        enter steers · ⌥enter queues · esc stops
-      </span>
-    </div>
   </div>
 </template>

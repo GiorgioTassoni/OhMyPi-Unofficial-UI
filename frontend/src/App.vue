@@ -97,6 +97,7 @@ import ThreadActions from "./components/ThreadActions.vue";
 import TerminalPanel from "./components/TerminalPanel.vue";
 import ThreadView from "./components/ThreadView.vue";
 import TitleBar from "./components/TitleBar.vue";
+import WindowFrameBar from "./components/WindowFrameBar.vue";
 
 /**
  * What a `ThreadView` exposes to the shell.
@@ -1337,14 +1338,21 @@ function describe(cause: unknown): string {
 </script>
 
 <template>
-  <div class="flex h-full w-full bg-canvas text-fg overflow-hidden">
-    <!--
-      Settings covers the window's working area (`docs/12` §12): the rail and the section stand
-      where the sidebar and the thread's column were, and the terminal drawer below goes with
-      them — it is a place in the window, not a panel over one.
-    -->
-    <SettingsScreen
-      v-if="settings"
+  <div class="flex h-full w-full flex-col bg-canvas text-fg overflow-hidden relative">
+    <!-- Custom integrated window frame bar -->
+    <WindowFrameBar
+      :project="project"
+      :title="activeAgentTab ? tabAgentLabel(activeAgentTab.thread, activeAgentTab.id) : (activeRow?.title ?? null)"
+    />
+
+    <div class="relative flex min-h-0 flex-1 w-full overflow-hidden">
+      <!--
+        Settings covers the window's working area (`docs/12` §12): the rail and the section stand
+        where the sidebar and the thread's column were, and the terminal drawer below goes with
+        them — it is a place in the window, not a panel over one.
+      -->
+      <SettingsScreen
+        v-if="settings"
       :thread="activeId"
       :workspace="workspace"
       :identity="identity"
@@ -1617,6 +1625,7 @@ function describe(cause: unknown): string {
         </div>
       </Transition>
     </div>
+  </div>
 
     <!--
       The thread menu and the dialogs its actions need (`docs/12` §2.3). It lives here

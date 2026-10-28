@@ -363,14 +363,34 @@ impl Transcript {
 
             // Lifecycle and side channels that are not transcript rows.
             SessionEvent::AgentStart
-            | SessionEvent::AgentEnd(_)
             | SessionEvent::TurnStart
-            | SessionEvent::TurnEnd(_)
             | SessionEvent::ConfigWarningsChanged
             | SessionEvent::AdvisorCostChanged
             | SessionEvent::AdvisorYielded
             | SessionEvent::TodoAutoClear
             | SessionEvent::IrcMessage(_) => {}
+
+            SessionEvent::TurnEnd(end) => {
+                if end.message.get("stopReason").and_then(|v| v.as_str()) == Some("error") {
+                    let err = end
+                        .message
+                        .get("errorMessage")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("The turn ended with an error");
+                    self.record_error_notice(err);
+                }
+            }
+            SessionEvent::AgentEnd(end) => {
+                for msg in &end.messages {
+                    if msg.get("stopReason").and_then(|v| v.as_str()) == Some("error") {
+                        let err = msg
+                            .get("errorMessage")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("The run ended with an error");
+                        self.record_error_notice(err);
+                    }
+                }
+            }
         }
     }
 
@@ -413,6 +433,21 @@ impl Transcript {
     /// the same place — and the same shape — a failed turn lands in.
     pub fn apply_error(&mut self, text: &str, source: &str) {
         self.notice("error", text.to_string(), source, None);
+    }
+
+    /// Records an error notice if the same error wasn't already recorded in recent rows.
+    fn record_error_notice(&mut self, err: &str) {
+        let already_reported = self.rows.iter().rev().take(3).any(|row| match row {
+            Row::Assistant { message, .. } => {
+                message.text().contains(err)
+                    || message.error_message().is_some_and(|m| m.contains(err))
+            }
+            Row::Notice { text, .. } => text.contains(err),
+            _ => false,
+        });
+        if !already_reported {
+            self.notice("error", err.to_string(), "provider_error", None);
+        }
     }
 
     fn notice(&mut self, level: &str, text: String, kind: &str, source: Option<String>) {

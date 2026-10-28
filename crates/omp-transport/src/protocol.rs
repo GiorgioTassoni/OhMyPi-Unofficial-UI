@@ -696,6 +696,8 @@ pub mod ui {
     pub struct UiOptionDetail {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub description: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub selected: Option<bool>,
     }
 
     /// A dialog the engine is waiting on.
@@ -781,7 +783,10 @@ pub mod ui {
                 match item {
                     Value::String(s) => {
                         labels.push(s.clone());
-                        details.push(UiOptionDetail { description: None });
+                        details.push(UiOptionDetail {
+                            description: None,
+                            selected: None,
+                        });
                     }
                     Value::Object(map) => {
                         let label = map
@@ -799,8 +804,16 @@ pub mod ui {
                             .and_then(Value::as_str)
                             .map(|s| s.trim().to_string())
                             .filter(|s| !s.is_empty());
+                        let selected = map
+                            .get("selected")
+                            .or_else(|| map.get("checked"))
+                            .or_else(|| map.get("isSelected"))
+                            .and_then(Value::as_bool);
                         labels.push(label);
-                        details.push(UiOptionDetail { description });
+                        details.push(UiOptionDetail {
+                            description,
+                            selected,
+                        });
                     }
                     _ => {}
                 }
@@ -815,39 +828,81 @@ pub mod ui {
 
         if let Some(details_array) = option_details_val.and_then(Value::as_array) {
             for (i, item) in details_array.iter().enumerate() {
-                let desc = match item {
-                    Value::Object(map) => map
-                        .get("description")
-                        .or_else(|| map.get("desc"))
-                        .or_else(|| map.get("hint"))
-                        .and_then(Value::as_str)
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty()),
+                let (desc, sel) = match item {
+                    Value::Object(map) => {
+                        let d = map
+                            .get("description")
+                            .or_else(|| map.get("desc"))
+                            .or_else(|| map.get("hint"))
+                            .and_then(Value::as_str)
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty());
+                        let s = map
+                            .get("selected")
+                            .or_else(|| map.get("checked"))
+                            .or_else(|| map.get("isSelected"))
+                            .and_then(Value::as_bool);
+                        (d, s)
+                    }
                     Value::String(s) => {
                         let trimmed = s.trim();
-                        if !trimmed.is_empty() {
-                            Some(trimmed.to_string())
-                        } else {
-                            None
-                        }
+                        (
+                            if !trimmed.is_empty() {
+                                Some(trimmed.to_string())
+                            } else {
+                                None
+                            },
+                            None,
+                        )
                     }
-                    _ => None,
+                    _ => (None, None),
                 };
-                if let Some(desc) = desc {
+
+                if desc.is_some() || sel.is_some() {
                     if i < details.len() {
-                        details[i].description = Some(desc);
+                        if desc.is_some() {
+                            details[i].description = desc;
+                        }
+                        if sel.is_some() {
+                            details[i].selected = sel;
+                        }
                     } else if i < labels.len() {
                         while details.len() <= i {
-                            details.push(UiOptionDetail { description: None });
+                            details.push(UiOptionDetail {
+                                description: None,
+                                selected: None,
+                            });
                         }
-                        details[i].description = Some(desc);
+                        details[i].description = desc;
+                        details[i].selected = sel;
+                    }
+                }
+            }
+        }
+
+        // Also check frame-level checkedIndices / selectedIndices
+        let checked_indices = frame
+            .get("checkedIndices")
+            .or_else(|| frame.get("checked_indices"))
+            .or_else(|| frame.get("selectedIndices"))
+            .or_else(|| frame.get("selected_indices"))
+            .and_then(Value::as_array);
+
+        if let Some(indices) = checked_indices {
+            for idx_val in indices {
+                if let Some(idx) = idx_val.as_u64().map(|n| n as usize) {
+                    if idx < details.len() {
+                        details[idx].selected = Some(true);
                     }
                 }
             }
         }
 
         while details.len() < labels.len() {
-            details.push(UiOptionDetail { description: None });
+            details.push(UiOptionDetail {
+                description: None,
+                selected: None,
+            });
         }
 
         (labels, details)
@@ -1400,12 +1455,17 @@ mod tests {
             request.option_details,
             vec![
                 ui::UiOptionDetail {
-                    description: Some("Details for first".to_string())
+                    description: Some("Details for first".to_string()),
+                    selected: None,
                 },
                 ui::UiOptionDetail {
-                    description: Some("Details for second".to_string())
+                    description: Some("Details for second".to_string()),
+                    selected: None,
                 },
-                ui::UiOptionDetail { description: None },
+                ui::UiOptionDetail {
+                    description: None,
+                    selected: None,
+                },
             ]
         );
 
@@ -1429,5 +1489,26 @@ mod tests {
             Some("Run batch 1")
         );
         assert_eq!(obj_req.option_details[1].description, None);
+
+        // Frame with checkedIndices and per-option selected flags
+        let multi_frame = json!({
+            "type": "extension_ui_request",
+            "id": "ui_10",
+            "method": "select",
+            "title": "(1 selected) Choose frameworks",
+            "options": [
+                { "label": "Vue", "description": "Progressive JS framework", "selected": true },
+                { "label": "React", "description": "UI library" },
+                "Svelte"
+            ],
+            "checkedIndices": [0, 2]
+        });
+        let Some(ui::Incoming::Request(multi_req)) = ui::decode(&multi_frame) else {
+            panic!("must decode multi select dialog");
+        };
+        assert_eq!(multi_req.options, vec!["Vue", "React", "Svelte"]);
+        assert_eq!(multi_req.option_details[0].selected, Some(true));
+        assert_eq!(multi_req.option_details[1].selected, None);
+        assert_eq!(multi_req.option_details[2].selected, Some(true));
     }
 }

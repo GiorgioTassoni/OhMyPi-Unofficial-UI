@@ -32,6 +32,7 @@ use crate::dto::{
     ProjectSnapshot, RowSnapshot, SearchHit, SessionStatus, SessionSummaryDto, SidebarSnapshot,
     SubagentFileChange, TerminalSnapshot, ThreadAgents, ThreadSnapshot, TodoPhaseInput,
     TodoPhaseSnapshot, UiAnswer, UiRequestSnapshot, WorkspaceEntry,
+    WorkspaceFileMatch,
 };
 use crate::favourites::Favourites;
 use crate::flows;
@@ -953,6 +954,19 @@ pub async fn workspace_tree(
     // On a blocking worker: a directory can be large, or on a network filesystem, and an
     // async worker parked in `read_dir` is a worker not answering the rest of the window.
     scan(move || panel::tree(&root, path.as_deref())).await
+}
+
+/// Search files across the thread's workspace matching a query, for `@` mentions.
+#[tauri::command]
+pub async fn search_workspace_files(
+    state: State<'_, AppState>,
+    thread: String,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<WorkspaceFileMatch>, String> {
+    let root = thread_root(&state, &thread).await?;
+    let limit = limit.unwrap_or(20);
+    scan(move || panel::search_workspace_files(&root, &query, limit)).await
 }
 
 /// Read one tool result the engine spilled to `artifact://<id>` (`docs/12` §8.2).

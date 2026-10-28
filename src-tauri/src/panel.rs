@@ -35,7 +35,7 @@ use serde_json::{json, Value};
 
 use crate::dto::{
     ArtifactSnapshot, TodoPhaseInput, TodoPhaseSnapshot, TodoTaskSnapshot,
-    WorkspaceEntry,
+    WorkspaceEntry, WorkspaceFileMatch,
 };
 
 /// The most entries one level of the tree answers with.
@@ -197,6 +197,137 @@ pub fn tree(cwd: &str, path: Option<&str>) -> Result<Vec<WorkspaceEntry>, String
     });
 
     Ok(entries)
+}
+
+const IGNORED_SEARCH_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".next",
+    ".nuxt",
+    ".output",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".svelte-kit",
+    ".turbo",
+    ".cache",
+    ".omp",
+    ".idea",
+    ".vscode",
+];
+
+/// Search workspace files recursively matching a query, for `@` file mentions.
+pub fn search_workspace_files(
+    cwd: &str,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<WorkspaceFileMatch>, String> {
+    let root = fs::canonicalize(cwd)
+        .map_err(|error| format!("the workspace `{cwd}` cannot be read: {error}"))?;
+
+    let query_trimmed = query.trim().to_lowercase();
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(root.clone());
+
+    let mut scanned_entries: usize = 0;
+    const MAX_VISITED_ENTRIES: usize = 8000;
+
+    struct ScoredMatch {
+        entry: WorkspaceFileMatch,
+        score: u8,
+    }
+    let mut scored: Vec<ScoredMatch> = Vec::new();
+
+    while let Some(dir) = queue.pop_front() {
+        if scanned_entries >= MAX_VISITED_ENTRIES {
+            break;
+        }
+
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+
+        for entry in entries.flatten() {
+            scanned_entries += 1;
+            if scanned_entries >= MAX_VISITED_ENTRIES {
+                break;
+            }
+
+            let path = entry.path();
+            let name_os = entry.file_name();
+            let name = name_os.to_string_lossy();
+
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+
+            if is_dir {
+                if IGNORED_SEARCH_DIRS.iter().any(|&d| d == name) || name.starts_with('.') {
+                    continue;
+                }
+                queue.push_back(path);
+                continue;
+            }
+
+            if name.starts_with('.') {
+                continue;
+            }
+
+            let rel_path = path
+                .strip_prefix(&root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            if query_trimmed.is_empty() {
+                scored.push(ScoredMatch {
+                    entry: WorkspaceFileMatch {
+                        name: name.to_string(),
+                        path: rel_path,
+                        is_dir: false,
+                    },
+                    score: 4,
+                });
+                if scored.len() >= limit * 2 {
+                    break;
+                }
+            } else {
+                let name_lower = name.to_lowercase();
+                let rel_lower = rel_path.to_lowercase();
+
+                let score = if name_lower == query_trimmed {
+                    0
+                } else if name_lower.starts_with(&query_trimmed) {
+                    1
+                } else if name_lower.contains(&query_trimmed) {
+                    2
+                } else if rel_lower.contains(&query_trimmed) {
+                    3
+                } else {
+                    continue;
+                };
+
+                scored.push(ScoredMatch {
+                    entry: WorkspaceFileMatch {
+                        name: name.to_string(),
+                        path: rel_path,
+                        is_dir: false,
+                    },
+                    score,
+                });
+            }
+        }
+    }
+
+    scored.sort_by(|a, b| {
+        a.score
+            .cmp(&b.score)
+            .then_with(|| a.entry.path.len().cmp(&b.entry.path.len()))
+            .then_with(|| a.entry.path.cmp(&b.entry.path))
+    });
+
+    Ok(scored.into_iter().take(limit).map(|s| s.entry).collect())
 }
 
 /// One spilled tool result, read back.
@@ -622,5 +753,29 @@ mod tests {
             "tasks": [{ "content": "write it", "status": "blocked", "blocker": "   " }],
         }]));
         assert_eq!(phases(&blank)[0].tasks[0].blocker, None);
+    }
+
+    #[test]
+    fn searching_workspace_files_finds_matches_and_skips_ignored() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+
+        fs::create_dir_all(root.join("src/components")).expect("mkdir");
+        fs::create_dir_all(root.join("target/debug")).expect("mkdir target");
+        fs::create_dir_all(root.join(".git")).expect("mkdir git");
+
+        fs::write(root.join("src/components/ThreadView.vue"), "").expect("write");
+        fs::write(root.join("src/main.rs"), "").expect("write");
+        fs::write(root.join("target/debug/app"), "").expect("write ignored");
+        fs::write(root.join(".git/config"), "").expect("write ignored git");
+
+        let matches = search_workspace_files(root.to_str().unwrap(), "Thread", 10).expect("search");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].name, "ThreadView.vue");
+        assert_eq!(matches[0].path, "src/components/ThreadView.vue");
+
+        // Target and .git must be ignored
+        let target_matches = search_workspace_files(root.to_str().unwrap(), "app", 10).expect("search");
+        assert!(target_matches.is_empty());
     }
 }

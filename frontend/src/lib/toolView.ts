@@ -52,8 +52,10 @@ const SUMMARY_FIELDS: Record<string, readonly string[]> = {
   bash: ["command"],
   bash_interactive: ["command"],
   eval: ["title", "code"],
-  read: ["path"],
-  write: ["path"],
+  read: ["path", "file_path", "filePath"],
+  read_file: ["path", "file_path", "filePath"],
+  write: ["path", "file_path", "filePath"],
+  write_file: ["path", "file_path", "filePath"],
   edit: ["path", "file_path"],
   ast_edit: ["path", "file_path"],
   apply_patch: ["path", "file_path"],
@@ -66,7 +68,7 @@ const SUMMARY_FIELDS: Record<string, readonly string[]> = {
 const DIFF_TOOLS = new Set(["edit", "ast_edit", "apply_patch", "memory_edit"]);
 
 /** Tools whose arguments carry the whole file they wrote. */
-const FILE_TOOLS = new Set(["write"]);
+const FILE_TOOLS = new Set(["write", "write_file"]);
 
 /** Every tool that changes a file, whichever way it reports the change. */
 const MUTATING_TOOLS = new Set([...DIFF_TOOLS, ...FILE_TOOLS]);
@@ -301,7 +303,7 @@ export function fileToolAction(tool: ToolSnapshot): FileToolAction {
  * Determine whether a tool call represents reading a whole file (without line or offset limits).
  */
 export function wholeFileRead(tool: ToolSnapshot): WholeFileRead {
-  if (tool.toolName !== "read" || tool.isError || !tool.finished) {
+  if ((tool.toolName !== "read" && tool.toolName !== "read_file") || tool.isError || !tool.finished) {
     return { isWhole: false, path: null };
   }
 
@@ -321,7 +323,7 @@ export function wholeFileRead(tool: ToolSnapshot): WholeFileRead {
     return { isWhole: false, path: null };
   }
 
-  const rawPath = typeof args.path === "string" ? args.path : typeof args.file_path === "string" ? args.file_path : null;
+  const rawPath = typeof args.path === "string" ? args.path : typeof args.file_path === "string" ? args.file_path : typeof args.filePath === "string" ? args.filePath : null;
   const path = rawPath && rawPath.trim() ? rawPath.trim() : null;
   return { isWhole: path !== null, path };
 }

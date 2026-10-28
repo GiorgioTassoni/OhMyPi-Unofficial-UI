@@ -2,11 +2,11 @@
 /**
  * The Subagents tab in the thread panel (`RightPanel.vue`).
  *
- * Shows all subagents called in the current conversation (active and finished),
- * sorted with in-flight subagents on top, followed by finished subagents (newer on top).
- * Clicking an agent opens its transcript tab in the main view.
+ * Shows all subagents called in the current conversation:
+ * - Active subagents and the latest 5 finished subagents have full details and transcript access.
+ * - Older subagents (beyond the top 5) show only their name and finished status without diffs or chronology.
  */
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { type ChatSubagent, age } from "../lib/agents";
 import Icon from "./ui/Icon.vue";
 
@@ -27,6 +27,25 @@ function formatAgentAge(ms: number | null): string {
 }
 
 const activeCount = computed(() => props.subagents.filter((s) => s.running).length);
+
+/** Maximum number of finished subagents rendered with full detail cards and transcript access. */
+const MAX_DETAILED_FINISHED_AGENTS = 5;
+
+const activeSubagents = computed(() => props.subagents.filter((s) => s.running));
+const finishedSubagents = computed(() => props.subagents.filter((s) => !s.running));
+const detailedFinishedSubagents = computed(() =>
+  finishedSubagents.value.slice(0, MAX_DETAILED_FINISHED_AGENTS),
+);
+const olderFinishedSubagents = computed(() =>
+  finishedSubagents.value.slice(MAX_DETAILED_FINISHED_AGENTS),
+);
+
+const primarySubagents = computed(() => [
+  ...activeSubagents.value,
+  ...detailedFinishedSubagents.value,
+]);
+
+const showOlder = ref(false);
 </script>
 
 <template>
@@ -56,7 +75,7 @@ const activeCount = computed(() => props.subagents.filter((s) => s.running).leng
       </div>
 
       <ul class="flex flex-col gap-1.5">
-        <li v-for="agent in props.subagents" :key="agent.id">
+        <li v-for="agent in primarySubagents" :key="agent.id">
           <button
             type="button"
             class="group flex w-full flex-col gap-1 rounded-lg border p-2.5 text-left transition-all"
@@ -99,6 +118,34 @@ const activeCount = computed(() => props.subagents.filter((s) => s.running).leng
           </button>
         </li>
       </ul>
+
+      <!-- Older subagents (beyond the latest 5) - showing only name and finished without diff/chronology -->
+      <div v-if="olderFinishedSubagents.length > 0" class="mt-3 pt-2.5 border-t border-line/20">
+        <button
+          type="button"
+          class="flex w-full items-center justify-between rounded px-1.5 py-1 text-[11px] text-faint hover:text-dim hover:bg-raised/30 transition-colors"
+          :aria-expanded="showOlder"
+          aria-controls="earlier-subagents-list"
+          @click="showOlder = !showOlder"
+        >
+          <span class="font-medium">Earlier completed ({{ olderFinishedSubagents.length }})</span>
+          <div class="flex items-center gap-1">
+            <span class="text-[10px]">{{ showOlder ? 'hide' : 'show' }}</span>
+            <Icon :name="showOlder ? 'chevron-down' : 'chevron-right'" class="h-3 w-3" />
+          </div>
+        </button>
+
+        <ul v-if="showOlder" id="earlier-subagents-list" class="mt-1.5 flex flex-col gap-1">
+          <li
+            v-for="agent in olderFinishedSubagents"
+            :key="agent.id"
+            class="flex items-center justify-between rounded border border-line/20 bg-surface/20 px-2.5 py-1 text-[11.5px]"
+          >
+            <span class="truncate font-medium text-dim">{{ agent.name }}</span>
+            <span class="shrink-0 font-mono text-[10px] text-faint">finished</span>
+          </li>
+        </ul>
+      </div>
     </div>
   </div>
 </template>

@@ -235,6 +235,8 @@ pub struct SubcommandSnapshot {
 pub struct UiOptionDetail {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected: Option<bool>,
 }
 
 /// A dialog the agent is waiting on, flattened for the frontend.
@@ -658,6 +660,15 @@ pub struct WorkspaceEntry {
     pub size: u64,
     /// Unix milliseconds, 0 when the platform will not say.
     pub modified_at: u64,
+}
+
+/// A workspace file match for `@` mention autocompletion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFileMatch {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
 }
 
 /// A tool result the engine spilled to `artifact://<id>`, read back.

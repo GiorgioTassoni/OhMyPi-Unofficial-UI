@@ -3,5 +3,16 @@
   "identifier": "default",
   "description": "Permissions for the main window. Only Tauri core APIs are granted: the agent runs as a child process spawned by our own Rust code (not through tauri-plugin-shell), so no shell permissions are needed and none are granted. The notification permission covers the plugin's own command surface; the banner the app actually shows is sent from Rust (`bridge::notify_os`), which the capability system does not gate.",
   "windows": ["main"],
-  "permissions": ["core:default", "notification:default"]
+  "permissions": [
+    "core:default",
+    "notification:default",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging"
+  ]
 }

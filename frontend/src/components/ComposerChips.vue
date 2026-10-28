@@ -52,14 +52,14 @@ function toggle(chip: typeof openChip.value): void {
 
 const currentModel = computed(
   () =>
-    props.models.find(
+    (props.models ?? []).find(
       (option) =>
         option.provider === props.model?.provider && option.id === props.model?.id,
     ) ?? null,
 );
 
 const modelPopoverLabel = computed(() => {
-  const label = modelChipLabel(props.model, props.models);
+  const label = modelChipLabel(props.model, props.models ?? []);
   return label !== "no model" ? `model · ${label}` : "model";
 });
 
@@ -68,7 +68,7 @@ const ring = computed(() => ringDash(contextPercent.value, 7));
 
 /** Every known directory but the current one — what the switcher offers. */
 const otherWorkspaces = computed(() =>
-  props.recent.filter((path) => path !== props.workspace),
+  (props.recent ?? []).filter((path) => path !== props.workspace),
 );
 
 function openWorkspace(path: string): void {

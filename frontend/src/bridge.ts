@@ -158,6 +158,7 @@ export interface ActivitySnapshot {
 /** Mirrors `dto::UiOptionDetail`. */
 export interface UiOptionDetail {
   description?: string | null;
+  selected?: boolean | null;
 }
 
 /** Mirrors `dto::UiRequestSnapshot`. */
@@ -799,6 +800,26 @@ export async function workspaceTree(
   path: string | null,
 ): Promise<WorkspaceEntry[]> {
   return invoke<WorkspaceEntry[]>("workspace_tree", { thread, path });
+}
+
+/** A workspace file match for `@` mention autocompletion. */
+export interface WorkspaceFileMatch {
+  name: string;
+  path: string;
+  isDir: boolean;
+}
+
+/** Search files across the thread's workspace matching a query, for `@` mentions. */
+export async function searchWorkspaceFiles(
+  thread: string,
+  query: string,
+  limit?: number,
+): Promise<WorkspaceFileMatch[]> {
+  return invoke<WorkspaceFileMatch[]>("search_workspace_files", {
+    thread,
+    query,
+    limit: limit ?? 20,
+  });
 }
 
 /** A tool result the engine spilled to `artifact://<id>`, read back. */

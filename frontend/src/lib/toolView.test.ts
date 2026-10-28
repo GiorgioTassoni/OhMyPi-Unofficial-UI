@@ -30,6 +30,13 @@ describe("wholeFileRead", () => {
     expect(res.path).toBe("/etc/hosts");
   });
 
+  test("supports read_file tool and filePath property", () => {
+    const tool = makeTool("read_file", { filePath: "docs.md" });
+    const res = wholeFileRead(tool);
+    expect(res.isWhole).toBe(true);
+    expect(res.path).toBe("docs.md");
+  });
+
   test("rejects partial reads with line range or offset", () => {
     expect(wholeFileRead(makeTool("read", { path: "src/a.ts", offset: 100 })).isWhole).toBe(false);
     expect(wholeFileRead(makeTool("read", { path: "src/a.ts", limit: 50 })).isWhole).toBe(false);

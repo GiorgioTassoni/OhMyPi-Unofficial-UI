@@ -695,3 +695,30 @@ fn a_streamed_image_block_keeps_its_bytes() {
         vec![("image/png", "AAAA")]
     );
 }
+
+#[test]
+fn a_turn_ending_in_provider_error_produces_a_visible_notice() {
+    let mut transcript = Transcript::new();
+    apply(
+        &mut transcript,
+        json!({
+            "type": "turn_end",
+            "message": {
+                "role": "assistant",
+                "stopReason": "error",
+                "errorMessage": "401 Invalid 'Authorization' header or token",
+            },
+            "toolResults": [],
+        }),
+    );
+
+    assert_eq!(transcript.rows().len(), 1);
+    match &transcript.rows()[0] {
+        Row::Notice { level, text, kind, .. } => {
+            assert_eq!(level, "error");
+            assert!(text.contains("401 Invalid"));
+            assert_eq!(kind, "provider_error");
+        }
+        other => panic!("expected an error notice row, got {other:?}"),
+    }
+}
