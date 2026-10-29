@@ -639,7 +639,7 @@ function describe(cause: unknown): string {
               rows="3"
               spellcheck="false"
               :placeholder="card.dialog.placeholder || (card.title.isCustomResponse ? 'Type your custom response...' : 'Type your response...')"
-              class="w-full resize-none bg-transparent text-[12.5px] leading-relaxed text-fg outline-none placeholder:text-faint/70"
+              class="w-full resize-none bg-transparent pr-3 text-[12.5px] leading-relaxed text-fg outline-none placeholder:text-faint/70 [scrollbar-gutter:stable]"
               @keydown="onEditorKeydown($event, card.dialog)"
             />
             <div class="mt-2 flex items-center justify-between border-t border-line-strong/30 pt-2">
