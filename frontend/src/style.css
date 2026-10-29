@@ -336,26 +336,30 @@ textarea:focus-visible,
   outline: none;
 }
 
-/* Modern sleek scrollbars: thin, centered, subtle until hovered */
+/* Modern sleek scrollbars: thin, centered, subtle until hovered, without track borders */
 * {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--color-line-strong) 65%, transparent) transparent;
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
+  background: transparent;
+  border: none;
 }
 
-::-webkit-scrollbar-track {
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-track-piece {
   background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 ::-webkit-scrollbar-thumb {
   background-color: color-mix(in srgb, var(--color-line-strong) 55%, transparent);
-  border: 2px solid transparent;
+  border: none;
   border-radius: 9999px;
-  background-clip: content-box;
   transition: background-color 150ms ease;
 }
 
@@ -369,6 +373,7 @@ textarea:focus-visible,
 
 ::-webkit-scrollbar-corner {
   background: transparent;
+  border: none;
 }
 
 /* The virtualizer preserves the reader's position when measured turn heights change.

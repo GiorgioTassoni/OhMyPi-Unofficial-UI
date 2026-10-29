@@ -37,6 +37,7 @@ import {
 import { applyRowPatch } from "../lib/rows";
 import { isNoLiveThreadError } from "../lib/threads";
 import type { ThreadChrome } from "../lib/chrome";
+import { stripAnsi } from "../lib/ansi";
 import { jumpTarget } from "../lib/search";
 import { type ChipRow } from "../lib/chips";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -916,14 +917,16 @@ defineExpose({
       -->
       <pre
         v-if="props.chrome.widget !== null"
-        class="mb-1 overflow-x-auto whitespace-pre-wrap break-all rounded-[6px] bg-raised px-2 py-1 font-mono text-[11px] leading-snug text-dim"
+        class="mb-1.5 overflow-x-auto whitespace-pre-wrap break-all rounded-[6px] bg-raised/50 px-2 py-1 font-mono text-[11px] leading-snug text-dim"
         data-widget
-      >{{ props.chrome.widget.join("\n") }}</pre>
-      <p
+      >{{ props.chrome.widget.map(stripAnsi).join("\n") }}</pre>
+      <div
         v-if="props.chrome.status !== null"
-        class="mb-1 truncate text-[11px] text-faint"
+        class="mb-1 flex items-center gap-1.5 px-0.5 text-[11px] select-none"
         data-status
-      >{{ props.chrome.status }}</p>
+      >
+        <span class="font-mono text-[10.5px] tracking-tight text-dim/80">{{ stripAnsi(props.chrome.status) }}</span>
+      </div>
 
       <!-- Unexpected close banner: shown when thread is idle but background subagents were revived by the engine -->
       <UnexpectedResumeBanner

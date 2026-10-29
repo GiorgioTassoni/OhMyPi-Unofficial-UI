@@ -403,18 +403,18 @@ function describe(cause: unknown): string {
           </span>
           <span
             v-if="card.title.isCustomResponse"
-            class="inline-flex items-center rounded-md bg-accent/15 px-2 py-0.5 text-[11px] font-medium text-accent ring-1 ring-inset ring-accent/30"
+            class="text-[11px] text-faint"
           >
-            Custom response
+            · Custom response
           </span>
         </template>
         <span
           v-if="card.title.stepBadge"
-          class="ml-auto rounded-full bg-surface/80 px-2.5 py-0.5 text-[11px] font-medium text-dim ring-1 ring-line-strong/60"
+          class="ml-auto font-mono text-[11px] text-faint"
         >
           {{ card.title.stepBadge }}
         </span>
-        <span v-else-if="cards.length > 1" class="ml-auto text-[11px] text-faint">
+        <span v-else-if="cards.length > 1" class="ml-auto font-mono text-[11px] text-faint">
           {{ index + 1 }} of {{ cards.length }}
         </span>
       </header>
@@ -519,7 +519,7 @@ function describe(cause: unknown): string {
         <div class="flex items-start gap-2">
           <span
             v-if="card.title.selectedBadge"
-            class="inline-flex shrink-0 items-center rounded-md bg-accent/15 px-2 py-0.5 text-[11px] font-semibold text-accent ring-1 ring-inset ring-accent/30"
+            class="inline-flex shrink-0 items-center rounded-[4px] bg-accent/15 px-1.5 py-0.5 text-[10.5px] font-medium text-accent"
           >
             {{ card.title.selectedBadge }}
           </span>

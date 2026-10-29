@@ -331,24 +331,20 @@ async function onClick(event: MouseEvent): Promise<void> {
   word-break: break-all;
 }
 
-/* Section reference chips like §4, §Code, §Practices */
+/* Section citations like §4, §Code, §§12-14 */
 .md :deep(.md-section) {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.15rem;
-  padding: 0.05rem 0.35rem;
+  display: inline;
   font-family: var(--font-mono);
-  font-size: 0.82em;
+  font-size: 0.9em;
   font-weight: 500;
-  line-height: 1.3;
+  letter-spacing: -0.01em;
   color: var(--color-fg);
-  background-color: color-mix(in srgb, var(--color-raised) 75%, transparent);
-  border: 1px solid var(--color-line-strong);
-  border-radius: 4px;
-  vertical-align: baseline;
+  white-space: nowrap;
 }
 .md :deep(.md-section-sym) {
   color: var(--color-accent);
   font-weight: 600;
+  margin-right: 0.04em;
+  opacity: 0.85;
 }
 </style>

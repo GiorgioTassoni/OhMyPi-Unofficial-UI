@@ -71,13 +71,29 @@ export function shouldNotifyOs(
   return thread !== activeId && !focused;
 }
 
-/** The notice for one reported notification: the host's title and body, verbatim. */
+/** The concise, descriptive message for what happened in the turn. */
+export function noticeBody(event: NotificationEvent): string {
+  switch (event.kind) {
+    case "needs-you":
+      return "The agent has a question";
+    case "turn-finished":
+      return "The agent finished";
+    case "failed":
+      return event.body.trim().length > 0 ? `Failed: ${event.body}` : "The turn failed";
+    case "job-finished":
+      return event.body.trim().length > 0 ? event.body : "Background task completed";
+    default:
+      return event.body;
+  }
+}
+
+/** The notice for one reported notification. */
 export function noticeFor(event: NotificationEvent, id: string): Notice {
   return {
     id,
     thread: event.thread,
     title: event.title,
-    body: event.body,
+    body: noticeBody(event),
     tone: event.kind === "failed" ? "error" : event.kind === "needs-you" ? "warn" : "info",
   };
 }

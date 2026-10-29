@@ -234,8 +234,33 @@ watch(activeId, (thread) => {
 const notices = ref<Notice[]>([]);
 /** How many notices stay on screen; the oldest goes first, since it is the least new. */
 const NOTICE_LIMIT = 3;
-const ACTION_NOTICE_DURATION = 6000;
-const actionNoticeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const NOTICE_AUTO_DISMISS_DURATION = 6000;
+const noticeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleNoticeAutoDismiss(id: string, durationMs = NOTICE_AUTO_DISMISS_DURATION): void {
+  const existing = noticeTimers.get(id);
+  if (existing) clearTimeout(existing);
+  noticeTimers.set(
+    id,
+    setTimeout(() => {
+      notices.value = dropNotice(notices.value, id);
+      noticeTimers.delete(id);
+    }, durationMs),
+  );
+}
+
+function clearNoticeDismiss(id: string): void {
+  const timer = noticeTimers.get(id);
+  if (timer) {
+    clearTimeout(timer);
+    noticeTimers.delete(id);
+  }
+}
+
+function dismissNotice(id: string): void {
+  clearNoticeDismiss(id);
+  notices.value = dropNotice(notices.value, id);
+}
 
 /**
  * The status line and widget each thread's extensions have pushed (`lib/chrome.ts`).
@@ -943,7 +968,7 @@ onMounted(async () => {
 onUnmounted(() => {
   cleanupAudio?.();
   for (const off of unlisten) off();
-  for (const timer of actionNoticeTimers.values()) clearTimeout(timer);
+  for (const timer of noticeTimers.values()) clearTimeout(timer);
   window.removeEventListener("keydown", onShortcut);
 });
 
@@ -1098,6 +1123,9 @@ function onDeleted(id: string): void {
   agentTabs.value = agentTabs.value.filter((tab) => tab.thread !== id);
   if (activeId.value === id) activeId.value = null;
   unread.value = new Set([...unread.value].filter((entry) => entry !== id));
+  for (const entry of notices.value) {
+    if (entry.thread === id) clearNoticeDismiss(entry.id);
+  }
   notices.value = notices.value.filter((entry) => entry.thread !== id);
   live.value = live.value.filter((thread) => thread.id !== id);
   forgetChrome(id);
@@ -1174,11 +1202,13 @@ function onNotification(event: NotificationEvent): void {
   }
   if (showsNotice(event.thread, activeId.value)) {
     noticeSeq += 1;
+    const noticeId = `notice-${noticeSeq}`;
     notices.value = addNotice(
       notices.value,
-      noticeFor({ ...event, title: name }, `notice-${noticeSeq}`),
+      noticeFor({ ...event, title: name }, noticeId),
       NOTICE_LIMIT,
     );
+    scheduleNoticeAutoDismiss(noticeId);
   }
 
   void deliverOs(event.thread, name, event.body);
@@ -1229,11 +1259,13 @@ function onChromeEvent(event: ChromeEvent): void {
   // the focus rule, because the notice in the window is already carrying it.
   const name = threadTitles.value[event.thread] ?? "";
   noticeSeq += 1;
+  const noticeId = `notice-${noticeSeq}`;
   notices.value = addNotice(
     notices.value,
-    noticeFromChrome(event.thread, name, op.message, op.level, `notice-${noticeSeq}`),
+    noticeFromChrome(event.thread, name, op.message, op.level, noticeId),
     NOTICE_LIMIT,
   );
+  scheduleNoticeAutoDismiss(noticeId);
 
   void deliverOs(event.thread, name, op.message);
 }
@@ -1269,7 +1301,7 @@ async function openNotice(id: string): Promise<void> {
   const notice = notices.value.find((entry) => entry.id === id);
   if (notice === undefined) return;
 
-  notices.value = dropNotice(notices.value, id);
+  dismissNotice(id);
   if (notice.thread !== null) await select(notice.thread);
 }
 
@@ -1282,13 +1314,7 @@ function showActionNotice(message: string): void {
     noticeForAction(message, id),
     NOTICE_LIMIT,
   );
-  actionNoticeTimers.set(
-    id,
-    setTimeout(() => {
-      notices.value = dropNotice(notices.value, id);
-      actionNoticeTimers.delete(id);
-    }, ACTION_NOTICE_DURATION),
-  );
+  scheduleNoticeAutoDismiss(id);
 }
 
 /**
@@ -1741,21 +1767,23 @@ function describe(cause: unknown): string {
           <p class="truncate text-[12px] font-medium text-fg">{{ entry.title }}</p>
           <p class="mt-0.5 line-clamp-3 text-[11.5px] leading-snug text-dim">{{ entry.body }}</p>
         </div>
-        <button
-          v-if="entry.thread !== null"
-          class="shrink-0 rounded-[5px] px-1 text-[11px] text-dim hover:bg-surface hover:text-fg"
-          data-action="open-notice"
-          @click="openNotice(entry.id)"
-        >
-          open
-        </button>
-        <button
-          class="shrink-0 rounded-[5px] px-1 text-[11px] text-faint hover:bg-surface hover:text-fg"
-          data-action="dismiss-notice"
-          @click="notices = dropNotice(notices, entry.id)"
-        >
-          dismiss
-        </button>
+        <div class="flex items-center gap-1.5 self-center shrink-0">
+          <button
+            v-if="entry.thread !== null"
+            class="rounded-[5px] px-2 py-1 text-[11px] font-medium text-accent hover:bg-surface hover:text-accent-bright transition-colors"
+            data-action="open-notice"
+            @click="openNotice(entry.id)"
+          >
+            Open thread
+          </button>
+          <button
+            class="rounded-[5px] px-2 py-1 text-[11px] text-faint hover:bg-surface hover:text-fg transition-colors"
+            data-action="dismiss-notice"
+            @click="dismissNotice(entry.id)"
+          >
+            Dismiss
+          </button>
+        </div>
       </div>
     </TransitionGroup>
   </div>

@@ -57,19 +57,32 @@ describe("in-app notices", () => {
     expect(showsNotice("a", null)).toBe(true);
   });
 
-  test("the host's own words are carried through unchanged", () => {
-    const notice = noticeFor(
+  test("describes what happened rather than raw message dumps", () => {
+    const failedNotice = noticeFor(
       event({ kind: "failed", title: "bash", body: "exit status 2: no such file" }),
       "n1",
     );
-
-    expect(notice).toEqual({
+    expect(failedNotice).toEqual({
       id: "n1",
       thread: "b",
       title: "bash",
-      body: "exit status 2: no such file",
+      body: "Failed: exit status 2: no such file",
       tone: "error",
     });
+
+    const questionNotice = noticeFor(
+      event({ kind: "needs-you", title: "Refactor", body: "What do you prefer?" }),
+      "n2",
+    );
+    expect(questionNotice.body).toBe("The agent has a question");
+    expect(questionNotice.tone).toBe("warn");
+
+    const finishedNotice = noticeFor(
+      event({ kind: "turn-finished", title: "Refactor", body: "All tasks done!" }),
+      "n3",
+    );
+    expect(finishedNotice.body).toBe("The agent finished");
+    expect(finishedNotice.tone).toBe("info");
   });
 
   test("an extension's notify is the thread's name and the engine's sentence", () => {
