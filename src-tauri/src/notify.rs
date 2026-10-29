@@ -102,7 +102,10 @@ impl Notifier {
                     self.failure = Some(error.clone());
                     Some(failed(facts, error))
                 }
-                None => Some(finished(facts)),
+                None => {
+                    self.failure = None;
+                    Some(finished(facts))
+                }
             };
         }
 

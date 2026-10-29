@@ -990,6 +990,11 @@ export async function notifyOs(title: string, body: string): Promise<void> {
   return invoke<void>("notify_os", { title, body });
 }
 
+/** Ask the host to play a system chime for notifications. */
+export async function playSystemSound(kind: string): Promise<void> {
+  return invoke<void>("play_notification_sound", { kind });
+}
+
 /** Subscribe to the fire-and-forget half of the extension-UI vocabulary. */
 export async function onChrome(
   handler: (event: ChromeEvent) => void,

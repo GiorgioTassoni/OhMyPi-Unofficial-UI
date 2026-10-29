@@ -1608,22 +1608,30 @@ pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
 /// ordinary row. The notice at error level is the other path: a retry that gave up, or an
 /// event this build could not read.
 fn last_failure(transcript: &Transcript) -> Option<String> {
-    transcript.rows().iter().rev().find_map(|row| match row {
-        omp_session::Row::Assistant { message, .. } => match &message.kind {
-            omp_session::MessageKind::Assistant {
-                stop_reason,
-                error_message,
-                ..
-            } if stop_reason.as_deref() == Some("error") => Some(
-                error_message
-                    .clone()
-                    .unwrap_or_else(|| "the turn failed".to_string()),
-            ),
-            _ => None,
-        },
-        omp_session::Row::Notice { level, text, .. } if level == "error" => Some(text.clone()),
-        _ => None,
-    })
+    for row in transcript.rows().iter().rev() {
+        match row {
+            omp_session::Row::Assistant { message, .. } => match &message.kind {
+                omp_session::MessageKind::Assistant {
+                    stop_reason,
+                    error_message,
+                    ..
+                } if stop_reason.as_deref() == Some("error") => {
+                    return Some(
+                        error_message
+                            .clone()
+                            .unwrap_or_else(|| "the turn failed".to_string()),
+                    );
+                }
+                _ => return None,
+            },
+            omp_session::Row::Notice { level, text, .. } if level == "error" => {
+                return Some(text.clone());
+            }
+            omp_session::Row::Message(_) => return None,
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The images a message carries, in order (`docs/12` §3.1).
@@ -2882,6 +2890,30 @@ mod tests {
             last_failure(&transcript).as_deref(),
             Some("connection reset")
         );
+
+        // An old failure followed by a new user prompt and a healthy answer does not report a failure.
+        transcript.apply(&omp_transport::events::SessionEvent::decode(
+            &serde_json::json!({
+                "type": "message_end",
+                "message": {
+                    "role": "user",
+                    "content": [{ "type": "text", "text": "try again" }],
+                    "timestamp": 9,
+                },
+            }),
+        ));
+        transcript.apply(&omp_transport::events::SessionEvent::decode(
+            &serde_json::json!({
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "fixed!" }],
+                    "stopReason": "stop",
+                    "timestamp": 10,
+                },
+            }),
+        ));
+        assert_eq!(last_failure(&transcript), None);
 
         // A turn that simply answered carries no failure, however many rows it has.
         let mut healthy = omp_session::Transcript::new();

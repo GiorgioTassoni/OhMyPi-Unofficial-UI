@@ -170,4 +170,12 @@ Run context`;
     expect(html).not.toContain("color:red");
     expect(html).toContain("<p>malicious text</p>");
   });
+
+  test("renders section references as styled section chips", () => {
+    const html = renderMarkdown("See §4 and §Code styling, §§12-14, or §AI-Created 2.");
+    expect(html).toContain('<span class="md-section"><span class="md-section-sym">§</span>4</span>');
+    expect(html).toContain('<span class="md-section"><span class="md-section-sym">§</span>Code</span>');
+    expect(html).toContain('<span class="md-section"><span class="md-section-sym">§§</span>12-14</span>');
+    expect(html).toContain('<span class="md-section"><span class="md-section-sym">§</span>AI-Created</span>');
+  });
 });

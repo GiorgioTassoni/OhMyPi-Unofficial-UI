@@ -77,6 +77,7 @@ import {
   setupAudioUnlock,
   soundForNotification,
 } from "./lib/notificationSound";
+import { isRecentDialogInteraction } from "./lib/dialogSelect";
 import { selectAfterClose, selectFrom, tabsFrom, type TerminalTab } from "./lib/terminals";
 import { loadProjectOrder, saveProjectOrder, sidebarModel, type ProjectGroup } from "./lib/threads";
 import type { TurnFileSummary, TurnReviewRequest } from "./lib/panel";
@@ -1154,7 +1155,8 @@ function markRead(id: string): void {
  */
 function onNotification(event: NotificationEvent): void {
   const sound = soundForNotification(event.kind);
-  if (notificationSoundEnabled.value && sound !== null) {
+  const suppress = sound === "needs-you" && isRecentDialogInteraction(event.thread);
+  if (notificationSoundEnabled.value && sound !== null && !suppress) {
     void playNotificationSound(sound).catch(() => {
       // A webview may refuse audio before its first user interaction; visual notices still work.
     });

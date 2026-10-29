@@ -10,9 +10,14 @@ export interface ParsedSkillPrompt {
  * Identify whether a conversation row represents a skill prompt invocation.
  */
 export function isSkillInvocation(row: RowSnapshot): boolean {
+  if (row.role === "assistant" || row.role === "tool" || row.role === "toolResult") {
+    return false;
+  }
   return (
     row.customType === "skill-prompt" ||
-    (row.role === "custom" && (row.text.includes('User invoked the "') || row.text.startsWith("[IMPORTANT: User invoked the")))
+    row.text.includes('User invoked the "') ||
+    row.text.startsWith("[IMPORTANT: User invoked the") ||
+    /^\/skill:[a-zA-Z0-9_-]+/i.test(row.text)
   );
 }
 

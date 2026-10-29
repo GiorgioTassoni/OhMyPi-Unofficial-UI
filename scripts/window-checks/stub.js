@@ -1291,6 +1291,8 @@ const dispatch = async (cmd, args) => {
         world.notifications.push({ via: "host", ...structuredClone(attempt) });
         return null;
       }
+      case "play_notification_sound":
+        return null;
       case "broker_processes":
         return structuredClone(world.brokers);
       case "stop_broker_process": {

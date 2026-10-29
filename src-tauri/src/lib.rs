@@ -180,6 +180,7 @@ pub fn run() {
             bridge::sidebar_snapshot,
             bridge::set_focused_thread,
             bridge::notify_os,
+            bridge::play_notification_sound,
             bridge::search,
             bridge::index_status,
             bridge::reindex,

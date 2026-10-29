@@ -43,22 +43,74 @@ export function cleanOptionLabel(option: string): string {
   return option.replace(/^(\[[ xX✓✔☑]\]|[✓✔☑•\*\-\+])\s*/i, "").trim();
 }
 
+export interface ParsedDialogTitle {
+  selectedBadge: string | null;
+  stepBadge: string | null;
+  isCustomResponse: boolean;
+  text: string;
+}
+
+let lastDialogInteractionTime = 0;
+let lastDialogInteractionThread: string | null = null;
+
+/** Record when the user answers a dialog to suppress redundant chimes in rapid follow-ups. */
+export function markDialogInteraction(thread: string): void {
+  lastDialogInteractionTime = Date.now();
+  lastDialogInteractionThread = thread;
+}
+
+/** Check if the user interacted with a dialog recently in this thread. */
+export function isRecentDialogInteraction(thread: string, maxAgeMs = 25_000): boolean {
+  return thread === lastDialogInteractionThread && Date.now() - lastDialogInteractionTime < maxAgeMs;
+}
+
 /**
- * Parses the dialog title to extract an optional `N selected` badge and clean title text.
+ * Parses the dialog title to extract an optional `N selected` badge, `X of Y` progress,
+ * detects custom response follow-ups, and strips clutter from the question text.
  */
-export function titleParts(title: string): { selectedBadge: string | null; text: string } {
-  const match = title.match(/^\((\d+)\s+(selected|selezionat[oi])\)\s*(.*)$/i);
-  if (match) {
-    const count = match[1];
-    const isIt = match[2]?.toLowerCase().startsWith("selezionat");
-    return {
-      selectedBadge: isIt ? `${count} selezionati` : `${count} selected`,
-      text: match[3] ?? "",
-    };
+export function titleParts(title: string): ParsedDialogTitle {
+  let text = title;
+  let selectedBadge: string | null = null;
+  let stepBadge: string | null = null;
+  let isCustomResponse = false;
+
+  // 1. Detect and strip dumped CLI choices block (e.g. "\n\n○ Option 1...\n🔘 Other (type your own)")
+  const cliOptionsMatch = text.match(/\n\n\s*(?:[○🔘\u25CB\u25CF\u25C9]|\([ xXoO•\*\-]?\)|\d+\.)[\s\S]*$/);
+  if (cliOptionsMatch) {
+    const dumped = cliOptionsMatch[0];
+    if (dumped.includes("Other") || dumped.includes("Altro") || dumped.includes("🔘") || dumped.includes("(o)")) {
+      isCustomResponse = true;
+    }
+    text = text.slice(0, cliOptionsMatch.index).trim();
   }
+
+  // 2. Multi-choice selected badge: "(1 selected) ..."
+  const selectedMatch = text.match(/^\((\d+)\s+(selected|selezionat[oi])\)\s*(.*)$/i);
+  if (selectedMatch) {
+    const count = selectedMatch[1];
+    const isIt = selectedMatch[2]?.toLowerCase().startsWith("selezionat");
+    selectedBadge = isIt ? `${count} selezionati` : `${count} selected`;
+    text = selectedMatch[3] ?? "";
+  }
+
+  // 3. Question progress badge: e.g. "(1/2)", "(2/2)", "[1/3]", "Question 1 of 2:"
+  const leadingStep = text.match(/^\s*(?:question\s+)?[\(\[](\d+)\s*(?:\/|di|of)\s*(\d+)[\)\]]\s*[:\-\.]?\s*/i);
+  if (leadingStep) {
+    stepBadge = `${leadingStep[1]} of ${leadingStep[2]}`;
+    text = text.slice(leadingStep[0].length).trim();
+  } else {
+    const trailingStep = text.match(/\s*[\(\[](\d+)\s*(?:\/|di|of)\s*(\d+)[\)\]]\s*$/i);
+    if (trailingStep) {
+      stepBadge = `${trailingStep[1]} of ${trailingStep[2]}`;
+      text = text.slice(0, trailingStep.index).trim();
+    }
+  }
+
   return {
-    selectedBadge: null,
-    text: title,
+    selectedBadge,
+    stepBadge,
+    isCustomResponse,
+    text,
   };
 }
 
@@ -66,10 +118,8 @@ export function titleParts(title: string): { selectedBadge: string | null; text:
  * Stable key across round-trips of the same multi-choice question.
  */
 export function questionKey(thread: string, title: string): string {
-  const base = title
-    .replace(/^\((\d+)\s+(selected|selezionat[oi])\)\s*/i, "")
-    .trim();
-  return `${thread}:${base}`;
+  const parts = titleParts(title);
+  return `${thread}:${parts.text.trim()}`;
 }
 
 /**

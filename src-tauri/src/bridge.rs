@@ -1787,12 +1787,8 @@ fn terminal_sink(app: &AppHandle) -> Arc<dyn TerminalSink> {
 /// What this adds is a path that does not depend on a web `Notification` global existing:
 /// measured against `@tauri-apps/plugin-notification` 2.4.0, the JavaScript API is
 /// `new window.Notification(title, options)` and never invokes the plugin's own command, so a
-/// banner sent from the frontend rests on a global none of the three webviews promise. The
-/// plugin's Rust side is `notify-rust` over D-Bus on Linux, with its own implementation per
-/// platform and no permission dance in front of it.
-///
-/// The plugin's own error is returned rather than swallowed: the window may drop it, but the
-/// host must not report a banner that never appeared as success.
+/// Ask the operating system to show a banner. The plugin's Rust side is `notify-rust` over
+/// D-Bus on Linux, with its own implementation per platform and no permission dance in front of it.
 #[tauri::command]
 pub async fn notify_os(app: AppHandle, title: String, body: String) -> Result<(), String> {
     use tauri_plugin_notification::NotificationExt;
@@ -1803,6 +1799,83 @@ pub async fn notify_os(app: AppHandle, title: String, body: String) -> Result<()
         .body(body)
         .show()
         .map_err(|error| format!("the notification was not shown: {error}"))
+}
+
+/// Play a notification chime through the operating system's audio facilities.
+///
+/// Bypasses webview AudioContext/WebKitGTK limitations on Linux desktop.
+#[tauri::command]
+pub fn play_notification_sound(kind: String) {
+    std::thread::spawn(move || {
+        play_sound_sync(&kind);
+    });
+}
+
+fn play_sound_sync(kind: &str) {
+    #[cfg(target_os = "linux")]
+    {
+        let (sound_id, oga_file) = match kind {
+            "needs-you" => (
+                "message-new-instant",
+                "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga",
+            ),
+            _ => (
+                "complete",
+                "/usr/share/sounds/freedesktop/stereo/complete.oga",
+            ),
+        };
+
+        // 1. Try canberra-gtk-play (standard desktop sound theme player)
+        if std::process::Command::new("canberra-gtk-play")
+            .args(["-i", sound_id])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            return;
+        }
+
+        // 2. Try pw-play (PipeWire)
+        if std::path::Path::new(oga_file).exists() {
+            if std::process::Command::new("pw-play")
+                .arg(oga_file)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                return;
+            }
+
+            // 3. Try paplay (PulseAudio)
+            if std::process::Command::new("paplay")
+                .arg(oga_file)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                return;
+            }
+        }
+
+        // 4. Fallback bell
+        eprint!("\x07");
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let sound = match kind {
+            "needs-you" => "/System/Library/Sounds/Ping.aiff",
+            _ => "/System/Library/Sounds/Glass.aiff",
+        };
+        let _ = std::process::Command::new("afplay").arg(sound).status();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("powershell")
+            .args(["-c", "[System.Media.SystemSounds]::Asterisk.Play()"])
+            .status();
+    }
 }
 
 /// The app's terminals, in the order their tabs were opened (`docs/12` §11).

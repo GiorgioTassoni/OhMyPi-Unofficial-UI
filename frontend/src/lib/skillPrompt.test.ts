@@ -49,6 +49,19 @@ describe("skillPrompt helper", () => {
     expect(parsed.args).toBeNull();
   });
 
+  test("identifies skill invocation when role is user and customType is null", () => {
+    const row = makeRow(null, '[IMPORTANT: User invoked the "impeccable" skill; follow its instructions. Full skill below.]\nUser: redesign', "user");
+    expect(isSkillInvocation(row)).toBe(true);
+    expect(skillInvocationName(row.text)).toBe("impeccable");
+    expect(skillInvocationArgs(row.text)).toBe("redesign");
+  });
+
+  test("identifies skill invocation when role is empty and customType is skill-prompt", () => {
+    const row = makeRow("skill-prompt", '[IMPORTANT: User invoked the "impeccable" skill; follow its instructions. Full skill below.]', "");
+    expect(isSkillInvocation(row)).toBe(true);
+    expect(skillInvocationName(row.text)).toBe("impeccable");
+  });
+
   test("returns not a skill for normal user or assistant messages", () => {
     const row = makeRow(null, "hello there", "user");
     expect(isSkillInvocation(row)).toBe(false);

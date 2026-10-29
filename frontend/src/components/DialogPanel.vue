@@ -17,6 +17,7 @@
  * Tool-level "Always allow" persists in OMP; executable grants stay on this conversation.
  */
 import { computed, onUnmounted, ref, watch } from "vue";
+import Icon from "./ui/Icon.vue";
 import {
   allowCommand as grantCommand,
   allowTool,
@@ -37,6 +38,7 @@ import {
   isMultiSelectDialog,
   isOptionSelected,
   loadSelectedOptions,
+  markDialogInteraction,
   questionKey,
   saveSelectedOptions,
   titleParts,
@@ -258,6 +260,7 @@ const cards = computed(() =>
     const command = approval?.fields.find((field) => field.label === "Command")?.value ?? null;
     return {
       dialog,
+      title: titleParts(dialog.title),
       approval,
       command,
       program: candidatePrograms.value[dialog.id] ?? null,
@@ -277,6 +280,7 @@ async function answer(dialog: UiRequestSnapshot, reply: UiAnswer): Promise<void>
     return;
   }
   answering.value = { ...answering.value, [dialog.id]: true };
+  markDialogInteraction(props.thread);
   try {
     await respondUiRequest(props.thread, dialog.id, reply);
   } catch (cause) {
@@ -351,6 +355,16 @@ function onSelectOption(dialog: UiRequestSnapshot, option: string, _index?: numb
   void answer(dialog, { value: option });
 }
 
+function onEditorKeydown(event: KeyboardEvent, dialog: UiRequestSnapshot): void {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    const val = replies.value[dialog.id] ?? "";
+    if (val.trim().length > 0) {
+      void answer(dialog, { value: val });
+    }
+  }
+}
+
 /** Tauri rejects with a plain string, and a thrown `Error` would stringify badly. */
 function describe(cause: unknown): string {
   return typeof cause === "string"
@@ -387,8 +401,20 @@ function describe(cause: unknown): string {
           <span class="text-[12.5px] font-medium text-fg">
             {{ card.dialog.kind === 'confirm' ? 'Confirmation' : 'Question' }}
           </span>
+          <span
+            v-if="card.title.isCustomResponse"
+            class="inline-flex items-center rounded-md bg-accent/15 px-2 py-0.5 text-[11px] font-medium text-accent ring-1 ring-inset ring-accent/30"
+          >
+            Custom response
+          </span>
         </template>
-        <span v-if="cards.length > 1" class="ml-auto text-[11px] text-faint">
+        <span
+          v-if="card.title.stepBadge"
+          class="ml-auto rounded-full bg-surface/80 px-2.5 py-0.5 text-[11px] font-medium text-dim ring-1 ring-line-strong/60"
+        >
+          {{ card.title.stepBadge }}
+        </span>
+        <span v-else-if="cards.length > 1" class="ml-auto text-[11px] text-faint">
           {{ index + 1 }} of {{ cards.length }}
         </span>
       </header>
@@ -492,17 +518,17 @@ function describe(cause: unknown): string {
       <template v-else>
         <div class="flex items-start gap-2">
           <span
-            v-if="titleParts(card.dialog.title).selectedBadge"
+            v-if="card.title.selectedBadge"
             class="inline-flex shrink-0 items-center rounded-md bg-accent/15 px-2 py-0.5 text-[11px] font-semibold text-accent ring-1 ring-inset ring-accent/30"
           >
-            {{ titleParts(card.dialog.title).selectedBadge }}
+            {{ card.title.selectedBadge }}
           </span>
           <p class="text-[12.5px] font-medium whitespace-pre-wrap text-fg">
-            {{ titleParts(card.dialog.title).text }}
+            {{ card.title.text }}
           </p>
         </div>
         <p
-          v-if="card.dialog.message"
+          v-if="card.dialog.message && !card.title.isCustomResponse"
           class="mt-2 text-[12.5px] leading-relaxed whitespace-pre-wrap text-dim"
         >
           {{ card.dialog.message }}
@@ -604,27 +630,56 @@ function describe(cause: unknown): string {
              button; `input` gets one line, with Enter as the obvious way to send. An
              unknown kind falls here too, which is what keeps it answerable. -->
         <div v-else class="mt-3 flex flex-col gap-2">
-          <textarea
+          <div
             v-if="card.dialog.kind === 'editor'"
-            v-model="replies[card.dialog.id]"
-            rows="3"
-            spellcheck="false"
-            class="w-full resize-none rounded-[6px] bg-raised px-2.5 py-2 text-[12.5px] text-fg outline-none placeholder:text-faint focus:ring-1 focus:ring-accent"
-          />
-          <input
-            v-else
-            v-model="replies[card.dialog.id]"
-            :placeholder="card.dialog.placeholder ?? ''"
-            spellcheck="false"
-            class="w-full rounded-[6px] bg-raised px-2.5 py-2 text-[12.5px] text-fg outline-none placeholder:text-faint focus:ring-1 focus:ring-accent"
-            @keydown.enter="answer(card.dialog, { value: replies[card.dialog.id] ?? '' })"
-          />
-          <button
-            :class="[PRIMARY, 'self-start']"
-            @click="answer(card.dialog, { value: replies[card.dialog.id] ?? '' })"
+            class="group relative flex flex-col rounded-[8px] border border-line-strong/60 bg-surface/80 p-2.5 transition-all focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/40"
           >
-            send
-          </button>
+            <textarea
+              v-model="replies[card.dialog.id]"
+              rows="3"
+              spellcheck="false"
+              :placeholder="card.dialog.placeholder || (card.title.isCustomResponse ? 'Type your custom response...' : 'Type your response...')"
+              class="w-full resize-none bg-transparent text-[12.5px] leading-relaxed text-fg outline-none placeholder:text-faint/70"
+              @keydown="onEditorKeydown($event, card.dialog)"
+            />
+            <div class="mt-2 flex items-center justify-between border-t border-line-strong/30 pt-2">
+              <span class="flex items-center gap-1.5 text-[11px] text-faint select-none">
+                <kbd class="rounded border border-line-strong/60 bg-raised/70 px-1.5 py-0.5 text-[10px] font-mono text-dim">Enter</kbd>
+                <span>send</span>
+                <span class="opacity-40">·</span>
+                <kbd class="rounded border border-line-strong/60 bg-raised/70 px-1.5 py-0.5 text-[10px] font-mono text-dim">Shift+Enter</kbd>
+                <span>new line</span>
+              </span>
+              <button
+                :disabled="card.busy || !replies[card.dialog.id]?.trim()"
+                class="inline-flex items-center gap-1.5 rounded-[6px] bg-accent px-3 py-1.5 text-[12px] font-medium text-canvas shadow-xs transition-all hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-35 disabled:cursor-not-allowed"
+                @click="answer(card.dialog, { value: replies[card.dialog.id] ?? '' })"
+              >
+                <span>Send</span>
+                <Icon name="arrow-up" size="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+          <div
+            v-else
+            class="flex items-center gap-2"
+          >
+            <input
+              v-model="replies[card.dialog.id]"
+              :placeholder="card.dialog.placeholder ?? 'Type your answer...'"
+              spellcheck="false"
+              class="flex-1 rounded-[6px] border border-line-strong/60 bg-surface/80 px-3 py-2 text-[12.5px] text-fg outline-none placeholder:text-faint/70 focus:border-accent/80 focus:ring-1 focus:ring-accent/40"
+              @keydown.enter="answer(card.dialog, { value: replies[card.dialog.id] ?? '' })"
+            />
+            <button
+              :disabled="card.busy || !replies[card.dialog.id]?.trim()"
+              class="inline-flex items-center gap-1.5 rounded-[6px] bg-accent px-3 py-2 text-[12px] font-medium text-canvas shadow-xs transition-all hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-35 disabled:cursor-not-allowed"
+              @click="answer(card.dialog, { value: replies[card.dialog.id] ?? '' })"
+            >
+              <span>Send</span>
+              <Icon name="arrow-up" size="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
 
         <div class="mt-2.5 flex items-center justify-between">

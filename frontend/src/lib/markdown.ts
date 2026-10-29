@@ -118,6 +118,33 @@ if (typeof DOMPurify.addHook === "function") {
 
 marked.use(markedKatex({ throwOnError: false }));
 marked.use({
+  extensions: [
+    {
+      name: "sectionRef",
+      level: "inline",
+      start(src: string) {
+        return src.indexOf("§");
+      },
+      tokenizer(src: string) {
+        const match = /^(§{1,2})\s*([a-zA-Z0-9_]+(?:[-.][a-zA-Z0-9_]+)*)/.exec(src);
+        if (match) {
+          return {
+            type: "sectionRef",
+            raw: match[0],
+            sym: match[1],
+            section: match[2],
+          };
+        }
+      },
+      renderer(token) {
+        const sym = typeof token["sym"] === "string" ? token["sym"] : "§";
+        const sec = typeof token["section"] === "string" ? token["section"] : "";
+        return `<span class="md-section"><span class="md-section-sym">${escape(sym)}</span>${escape(sec)}</span>`;
+      },
+    },
+  ],
+});
+marked.use({
   gfm: true,
   // A chat message is not a document: a single newline in an answer is a line
   // break, not a space.

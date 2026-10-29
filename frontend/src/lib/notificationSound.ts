@@ -1,4 +1,4 @@
-import type { NotificationKind } from "../bridge";
+import { playSystemSound, type NotificationKind } from "../bridge";
 
 const STORAGE_KEY = "omp:notification-sound";
 
@@ -154,8 +154,15 @@ function playWavFallback(kind: SoundKind): void {
   }
 }
 
-/** Play a two-note notification chime using Web Audio, with an HTML5 Audio fallback. */
+/** Play a notification chime via native desktop sound, falling back to Web Audio. */
 export async function playNotificationSound(kind: SoundKind): Promise<void> {
+  try {
+    await playSystemSound(kind);
+    return;
+  } catch {
+    // In unit test or non-Tauri browser environments, fall through to Web Audio
+  }
+
   const ctx = getAudioContext();
   if (ctx) {
     if (ctx.state === "suspended") {

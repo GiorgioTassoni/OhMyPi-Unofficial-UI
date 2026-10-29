@@ -76,6 +76,26 @@ describe("dialogSelect helpers", () => {
       expect(parts.selectedBadge).toBe(null);
       expect(parts.text).toBe("Su quali prodotti devo tarare il livello?");
     });
+
+    it("extracts question batch progress from trailing (2/2)", () => {
+      const parts = titleParts("Does the comment ban cover stylesheets, or only executable code? (2/2)");
+      expect(parts.stepBadge).toBe("2 of 2");
+      expect(parts.text).toBe("Does the comment ban cover stylesheets, or only executable code?");
+    });
+
+    it("extracts question batch progress from leading [1/3]", () => {
+      const parts = titleParts("[1/3] Which deployment provider do you use?");
+      expect(parts.stepBadge).toBe("1 of 3");
+      expect(parts.text).toBe("Which deployment provider do you use?");
+    });
+
+    it("strips dumped CLI choices and detects custom response follow-up", () => {
+      const raw = "Does the comment ban cover stylesheets? (2/2)\n\n○ Executable code only\n○ Everything\n🔘 Other (type your own)";
+      const parts = titleParts(raw);
+      expect(parts.stepBadge).toBe("2 of 2");
+      expect(parts.isCustomResponse).toBe(true);
+      expect(parts.text).toBe("Does the comment ban cover stylesheets?");
+    });
   });
 
   describe("questionKey", () => {

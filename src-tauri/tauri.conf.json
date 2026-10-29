@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; img-src 'self' data: asset: http://asset.localhost; media-src 'self' data: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost"
     }
   },
   "bundle": {
@@ -59,7 +59,10 @@
       "deb": {
         "section": "devel"
       },
-      "rpm": {}
+      "rpm": {},
+      "appimage": {
+        "bundleMediaFramework": true
+      }
     },
     "windows": {
       "webviewInstallMode": {
