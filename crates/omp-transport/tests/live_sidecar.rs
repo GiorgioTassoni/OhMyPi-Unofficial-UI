@@ -120,27 +120,32 @@ async fn handshake_state_commands_and_the_correlation_gap() {
     );
     println!("advertised commands: {}", list.len());
 
-    // ---- the documented correlation gap ----------------------------------
-    // The engine answers an unknown command WITHOUT echoing the request id, so
-    // the response can never resolve our pending request. We must not hang
-    // silently: the timeout has to carry evidence of what arrived.
-    let error = client
+    // ---- error response / legacy correlation gap handling -----------------
+    // Modern engine versions echo the request id on unknown commands with success: false.
+    // Legacy engine versions answered without echoing request id, producing a Timeout with unmatched frames.
+    let response_result = client
         .request(
             serde_json::json!({ "type": "definitely_not_a_command" }),
             Some(Duration::from_secs(3)),
         )
-        .await
-        .expect_err("an uncorrelatable response cannot resolve the request");
+        .await;
 
-    match error {
-        ClientError::Timeout { unmatched, .. } => {
+    match response_result {
+        Ok(res) => {
+            assert!(
+                !protocol::is_success(&res),
+                "an unknown command must fail: {res:?}"
+            );
+            println!("engine correlated error response: {res:?}");
+        }
+        Err(ClientError::Timeout { unmatched, .. }) => {
             assert!(
                 !unmatched.is_empty(),
                 "the timeout must report the uncorrelated frames it observed"
             );
-            println!("uncorrelated frames: {unmatched:?}");
+            println!("legacy uncorrelated frames: {unmatched:?}");
         }
-        other => panic!("expected Timeout, got {other:?}"),
+        Err(other) => panic!("expected correlated error response or Timeout, got {other:?}"),
     }
 
     // ---- clean lifecycle --------------------------------------------------

@@ -112,17 +112,52 @@ Run context`;
     expect(anchor?.getAttribute("onclick")).toBeNull();
   });
 
-  test("shows a link the host would refuse as text instead", () => {
+  test("shows dangerous link schemes as text instead", () => {
     for (const url of [
       "javascript:alert(1)",
-      "file:///etc/passwd",
-      "vscode://file/etc/passwd",
+      "vbscript:msgbox(1)",
+      "data:text/html;base64,PHNjcmlwdD4=",
     ]) {
       const host = parse(renderMarkdown(`[click](${url})`));
 
       expect(host.querySelector("a")).toBeNull();
-      expect(host.textContent).toContain(url); // the destination stays visible
+      expect(host.textContent).toContain(url);
     }
+  });
+
+  test("renders file paths and file URIs as clickable links", () => {
+    for (const url of [
+      "/tmp/setty-terrain-confronto-tablet.png",
+      "file:///home/user/photo.jpg",
+      "./src/components/ThreadView.vue",
+      "skill://impeccable",
+    ]) {
+      const host = parse(renderMarkdown(`[open file](${url})`));
+      const anchor = host.querySelector("a");
+
+      expect(anchor).not.toBeNull();
+      expect(anchor?.getAttribute("data-href")).toBe(url);
+      expect(anchor?.hasAttribute("href")).toBe(false);
+      expect(anchor?.textContent).toBe("open file");
+    }
+  });
+
+  test("makes inline code containing file paths clickable", () => {
+    const host = parse(renderMarkdown("Check `/tmp/output.png` and `src/lib/markdown.ts`"));
+    const codeLinks = host.querySelectorAll("code.md-code-link");
+
+    expect(codeLinks.length).toBe(2);
+    expect(codeLinks[0]?.getAttribute("data-href")).toBe("/tmp/output.png");
+    expect(codeLinks[1]?.getAttribute("data-href")).toBe("src/lib/markdown.ts");
+  });
+
+  test("autolinks standalone file paths in text", () => {
+    const host = parse(renderMarkdown("Saved to /tmp/screenshot.png. Check it!"));
+    const anchor = host.querySelector("a");
+
+    expect(anchor).not.toBeNull();
+    expect(anchor?.getAttribute("data-href")).toBe("/tmp/screenshot.png");
+    expect(anchor?.textContent).toBe("/tmp/screenshot.png");
   });
 
   test("strips an href a model wrote as raw HTML", () => {

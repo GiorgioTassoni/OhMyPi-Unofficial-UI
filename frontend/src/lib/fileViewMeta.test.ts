@@ -5,7 +5,9 @@ import {
   isImageExtension,
   isMarkdownExtension,
   isSvgExtension,
+  isVideoExtension,
   mimeTypeForExtension,
+  normalizeFilePath,
   parseFilePath,
 } from "./fileViewMeta";
 
@@ -59,11 +61,23 @@ describe("fileViewMeta", () => {
     expect(cleanExtension("")).toBe("");
   });
 
-  test("image and markdown detection", () => {
+  test("normalizeFilePath strips file:// scheme while preserving absolute path", () => {
+    expect(normalizeFilePath("file:///tmp/image.png")).toBe("/tmp/image.png");
+    expect(normalizeFilePath("file://home/gio/code.ts")).toBe("/home/gio/code.ts");
+    expect(normalizeFilePath("file:C:/Users/file.txt")).toBe("C:/Users/file.txt");
+    expect(normalizeFilePath("/var/log/syslog")).toBe("/var/log/syslog");
+  });
+
+  test("image, video, and markdown detection", () => {
     expect(isImageExtension("png")).toBe(true);
     expect(isImageExtension("image.WEBP")).toBe(true);
     expect(isImageExtension("svg")).toBe(true);
     expect(isImageExtension("main.rs")).toBe(false);
+
+    expect(isVideoExtension("webm")).toBe(true);
+    expect(isVideoExtension("movie.MP4")).toBe(true);
+    expect(isVideoExtension("clip.mov:10")).toBe(true);
+    expect(isVideoExtension("image.png")).toBe(false);
 
     expect(isSvgExtension("svg")).toBe(true);
     expect(isSvgExtension("icon.SVG:10")).toBe(true);
@@ -78,6 +92,9 @@ describe("fileViewMeta", () => {
     expect(mimeTypeForExtension("png")).toBe("image/png");
     expect(mimeTypeForExtension("svg")).toBe("image/svg+xml");
     expect(mimeTypeForExtension("webp")).toBe("image/webp");
+    expect(mimeTypeForExtension("webm")).toBe("video/webm");
+    expect(mimeTypeForExtension("mp4")).toBe("video/mp4");
+    expect(mimeTypeForExtension("mov")).toBe("video/quicktime");
     expect(mimeTypeForExtension("jpg")).toBe("image/jpeg");
     expect(mimeTypeForExtension("unknown")).toBe("image/png");
   });

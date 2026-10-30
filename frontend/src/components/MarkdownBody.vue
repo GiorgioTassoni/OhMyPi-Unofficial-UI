@@ -11,11 +11,15 @@
  * instead of pulling in a typography plugin for one view.
  */
 import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { openExternal } from "../bridge";
+import { openExternal, openPath } from "../bridge";
 import { renderMarkdown } from "../lib/markdown";
+import { normalizeFilePath } from "../lib/fileViewMeta";
 
 const props = defineProps<{ text: string }>();
-const emit = defineEmits<{ (event: "failed", message: string): void }>();
+const emit = defineEmits<{
+  (event: "failed", message: string): void;
+  (event: "openFile", file: { path: string }): void;
+}>();
 
 const root = ref<HTMLElement | null>(null);
 const html = computed(() => renderMarkdown(props.text));
@@ -93,16 +97,52 @@ async function onClick(event: MouseEvent): Promise<void> {
   }
 
   event.preventDefault();
-  try {
-    await openExternal(url);
-  } catch (cause) {
-    emit("failed", String(cause));
+  await handleLinkNavigation(url, event);
+}
+
+const WEB_URL_RE = /^(https?|mailto):/i;
+
+async function handleLinkNavigation(url: string, event: MouseEvent): Promise<void> {
+  const trimmed = url.trim();
+  if (WEB_URL_RE.test(trimmed)) {
+    try {
+      await openExternal(trimmed);
+    } catch (cause) {
+      emit("failed", String(cause));
+    }
+    return;
+  }
+
+  const cleanPath = normalizeFilePath(trimmed);
+
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    try {
+      await openPath(cleanPath);
+    } catch (cause) {
+      emit("failed", String(cause));
+    }
+    return;
+  }
+
+  emit("openFile", { path: cleanPath });
+}
+
+function onKeyDown(event: KeyboardEvent): void {
+  if (event.key === "Enter" || event.key === " ") {
+    const target = event.target;
+    if (target instanceof Element) {
+      const url = target.closest("[data-href]")?.getAttribute("data-href");
+      if (url) {
+        event.preventDefault();
+        void handleLinkNavigation(url, event as unknown as MouseEvent);
+      }
+    }
   }
 }
 </script>
 
 <template>
-  <div ref="root" class="md select-text" v-html="html" @click="onClick" />
+  <div ref="root" class="md select-text" v-html="html" @click="onClick" @keydown="onKeyDown" />
 </template>
 
 <style scoped>
@@ -316,13 +356,36 @@ async function onClick(event: MouseEvent): Promise<void> {
 }
 
 /* Links */
+.md :deep(a.md-link),
+.md :deep(a.md-link *),
+.md :deep([data-href]),
+.md :deep([data-href] *),
+.md :deep(.md-code-link),
+.md :deep(.md-code-link *) {
+  cursor: pointer !important;
+}
+
 .md :deep(.md-link) {
   color: var(--color-accent);
   text-underline-offset: 3px;
   transition: color 120ms ease;
 }
+.md :deep(a.md-link) {
+  text-decoration: underline;
+}
 .md :deep(.md-link:hover) {
   color: var(--color-accent-bright);
+}
+.md :deep(.md-code-link) {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  text-underline-offset: 2px;
+  transition: color 120ms ease, text-decoration-color 120ms ease, background-color 120ms ease;
+}
+.md :deep(.md-code-link:hover) {
+  color: var(--color-accent);
+  background-color: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  text-decoration-color: var(--color-accent);
 }
 .md :deep(.md-url) {
   color: var(--color-faint);

@@ -18,6 +18,7 @@ import {
   isImageExtension,
   isMarkdownExtension,
   isSvgExtension,
+  isVideoExtension,
   mimeTypeForExtension,
   parseFilePath,
 } from "../lib/fileViewMeta";
@@ -60,6 +61,7 @@ const directory = computed(() => meta.value.directory);
 const extension = computed(() => meta.value.extension);
 
 const isImage = computed(() => isImageExtension(extension.value));
+const isVideo = computed(() => isVideoExtension(extension.value));
 const isSvg = computed(() => isSvgExtension(extension.value));
 const isHtml = computed(() => extension.value === "html" || extension.value === "htm");
 const frontmatter = computed(() => parseFrontmatter(content.value));
@@ -85,8 +87,8 @@ async function load(): Promise<void> {
   content.value = props.file.content ?? "";
 
   try {
-    if (isImage.value) {
-      // Binary images must always be read from disk as base64 (tool.output is summary text, not image bytes)
+    if (isImage.value || isVideo.value) {
+      // Binary images/videos must always be read from disk as base64 (tool.output is summary text, not media bytes)
       const b64 = await readFileBase64(props.workspace ?? null, cleanPath.value);
       const mime = mimeTypeForExtension(extension.value);
       imageDataUrl.value = `data:${mime};base64,${b64}`;
@@ -495,7 +497,7 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
       <div class="flex items-center gap-2 truncate">
         <span class="flex items-center gap-1 text-accent/90 font-medium">
           <span class="h-1.5 w-1.5 rounded-full bg-accent" />
-          {{ isImage && (!isSvg || mode === 'preview') ? 'Image preview' : (isHtml && mode === 'preview' ? 'HTML preview' : (isMarkdown && mode === 'preview' ? (isSkill ? 'Skill preview' : 'Markdown preview') : 'Read-only view')) }}
+          {{ isVideo ? 'Video preview' : (isImage && (!isSvg || mode === 'preview') ? 'Image preview' : (isHtml && mode === 'preview' ? 'HTML preview' : (isMarkdown && mode === 'preview' ? (isSkill ? 'Skill preview' : 'Markdown preview') : 'Read-only view'))) }}
         </span>
         <span>·</span>
         <span class="truncate font-mono text-faint/80">{{ props.file.path }}</span>
@@ -528,6 +530,20 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
         >
           Open in native editor instead
         </button>
+      </div>
+
+      <!-- Video View -->
+      <div
+        v-else-if="isVideo"
+        class="flex h-full w-full items-center justify-center p-4 select-none bg-canvas"
+      >
+        <video
+          v-if="imageDataUrl"
+          :src="imageDataUrl"
+          controls
+          autoplay
+          class="max-h-full max-w-full rounded-[6px] shadow-md ring-1 ring-line/50"
+        />
       </div>
 
       <!-- Image View (Raster images or SVG Preview) -->

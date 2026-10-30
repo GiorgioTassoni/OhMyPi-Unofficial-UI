@@ -285,13 +285,16 @@ pub struct Allowlist {
     /// directory a session was ever worked in" is the statement about the user's whole
     /// disk this allowlist exists to refuse.
     workspaces: Vec<PathBuf>,
-    /// Directories the app is showing: every session the sidebar lists — the directory it
-    /// was worked in, and the bucket its file sits in.
-    ///
-    /// Equality only, deliberately. "The app is showing this directory" is a statement
-    /// about a directory, and widening it to "anything under a project the user ever
-    /// opened" would make the allowlist a statement about the user's whole disk.
     shown: Vec<PathBuf>,
+    temp: Option<PathBuf>,
+}
+
+pub fn clean_path_input(path: &str) -> &str {
+    let trimmed = path.trim();
+    trimmed
+        .strip_prefix("file://")
+        .or_else(|| trimmed.strip_prefix("file:"))
+        .unwrap_or(trimmed)
 }
 
 impl Allowlist {
@@ -317,10 +320,16 @@ impl Allowlist {
             }
         }
 
+        let temp = std::env::temp_dir()
+            .canonicalize()
+            .ok()
+            .or_else(|| Some(PathBuf::from("/tmp")));
+
         Self {
             exports,
             workspaces,
             shown,
+            temp,
         }
     }
 
@@ -329,12 +338,9 @@ impl Allowlist {
     /// Split from [`Allowlist::open`] so the decision can be asserted without a desktop: a
     /// check that had to launch `xdg-open` to run is a check nobody runs.
     pub fn permit(&self, path: &str) -> Result<PathBuf, String> {
-        let requested = Path::new(path.trim());
+        let cleaned = clean_path_input(path);
+        let requested = Path::new(cleaned);
 
-        // A scheme is not a path. `file:///etc/passwd` is refused here for the same reason
-        // `external` refuses it: this command opens a filesystem location, and the URL
-        // form is how such a thing arrives from somewhere it should not. (Being absolute
-        // is the test — `file:///x` is not.)
         if !requested.is_absolute() {
             return Err(format!(
                 "`{}` is not an absolute path, so the app will not open it",
@@ -342,10 +348,6 @@ impl Allowlist {
             ));
         }
 
-        // Resolved before it is judged: `..` segments and symlinks are exactly how a path
-        // that reads as allowed reaches somewhere else, so the comparison is made on what
-        // the filesystem says the path *is*. Absent paths are refused here too, which is
-        // the other half of the same rule — nothing can be opened that is not there.
         let resolved = requested
             .canonicalize()
             .map_err(|error| format!("`{}` cannot be opened: {error}", requested.display()))?;
@@ -358,10 +360,6 @@ impl Allowlist {
             return Ok(resolved);
         }
 
-        // Inside the workspace of a thread that is open: the Tree view's own rule, and
-        // the reason a file row can be clicked at all. Both sides are resolved before they
-        // are compared, so `..` and a symlink out of the workspace land on the refusal
-        // below just as they do for the other two.
         if self
             .workspaces
             .iter()
@@ -374,6 +372,14 @@ impl Allowlist {
             .shown
             .iter()
             .any(|directory| same_directory(directory, &resolved))
+        {
+            return Ok(resolved);
+        }
+
+        if self
+            .temp
+            .as_ref()
+            .is_some_and(|temp| resolved.starts_with(temp))
         {
             return Ok(resolved);
         }
@@ -566,6 +572,7 @@ mod tests {
             exports: Some(exports.clone()),
             workspaces: Vec::new(),
             shown: vec![project.clone()],
+            temp: None,
         };
 
         // Inside the app's own export directory, at any depth.
@@ -622,6 +629,7 @@ mod tests {
             exports: None,
             workspaces: vec![project.clone()],
             shown: Vec::new(),
+            temp: None,
         };
 
         // The workspace itself, and anything under it, at any depth.
@@ -656,10 +664,27 @@ mod tests {
             exports: None,
             workspaces: Vec::new(),
             shown: vec![project.clone()],
+            temp: None,
         };
 
         assert!(allowlist.permit(&project.display().to_string()).is_ok());
         assert!(allowlist.permit(&sibling.display().to_string()).is_err());
+    }
+
+    #[test]
+    fn temp_files_may_be_opened_when_enabled() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file = tmp.path().join("artifact.png");
+        std::fs::write(&file, "image").expect("write");
+
+        let allowlist = Allowlist {
+            exports: None,
+            workspaces: Vec::new(),
+            shown: Vec::new(),
+            temp: tmp.path().canonicalize().ok(),
+        };
+
+        assert!(allowlist.permit(&file.display().to_string()).is_ok());
     }
 
     /// The export path is the app's, and it is inside the directory the allowlist admits.

@@ -31,7 +31,10 @@ const props = withDefaults(
   },
 );
 /** A link the host refused to open, for the window's error banner. */
-const emit = defineEmits<{ (event: "failed", message: string): void }>();
+const emit = defineEmits<{
+  (event: "failed", message: string): void;
+  (event: "openFile", file: { path: string }): void;
+}>();
 
 const isSystemReminder = computed(() => checkSystemReminder(props.row.text));
 const isNotice = computed(() => props.row.role.startsWith("notice:"));
@@ -181,7 +184,7 @@ const skillPrompt = computed(() => parseSkillPrompt(props.row));
           </button>
         </div>
         <div v-if="showSkillDetails" class="max-h-80 overflow-auto border-t border-line/30 p-3 text-[12px] leading-relaxed text-dim select-text">
-          <MarkdownBody :text="row.text" @failed="emit('failed', $event)" />
+          <MarkdownBody :text="row.text" @failed="emit('failed', $event)" @open-file="emit('openFile', $event)" />
         </div>
       </div>
     </template>
@@ -247,7 +250,7 @@ const skillPrompt = computed(() => parseSkillPrompt(props.row));
 
     <div v-if="row.text" class="group/message flex flex-col gap-1.5">
       <div class="text-[13.5px] leading-relaxed text-fg select-text">
-        <MarkdownBody :text="row.text" @failed="emit('failed', $event)" />
+        <MarkdownBody :text="row.text" @failed="emit('failed', $event)" @open-file="emit('openFile', $event)" />
       </div>
       <button
         v-if="!row.streaming && !hideCopy"

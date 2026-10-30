@@ -819,7 +819,7 @@ defineExpose({
             :class="flashed === turn.user.index ? 'bg-accent/10 ring-1 ring-accent' : ''"
             :data-row-index="turn.user.index"
           >
-            <ConversationRow :row="turn.user.row" @failed="emit('failed', $event)" />
+            <ConversationRow :row="turn.user.row" @failed="emit('failed', $event)" @open-file="emit('openFile', $event)" />
           </div>
           <TurnActivity
             :turn="turn"
@@ -854,7 +854,7 @@ defineExpose({
             :class="flashed === turn.answer.index ? 'bg-accent/10 ring-1 ring-accent' : ''"
             :data-row-index="turn.answer.index"
           >
-            <ConversationRow :row="turn.answer.row" @failed="emit('failed', $event)" />
+            <ConversationRow :row="turn.answer.row" @failed="emit('failed', $event)" @open-file="emit('openFile', $event)" />
           </div>
           <TurnFiles
             v-if="!turn.working && fileSummaries.get(turn.end)"

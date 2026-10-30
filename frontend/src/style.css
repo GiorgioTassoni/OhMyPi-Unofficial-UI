@@ -414,6 +414,16 @@ samp {
   -webkit-user-select: text !important;
 }
 
+/* Interactive links and clickable paths inside selectable text containers must show pointer */
+[data-href],
+[data-href] *,
+a.md-link,
+a.md-link *,
+.md-code-link,
+.md-code-link * {
+  cursor: pointer !important;
+}
+
 /* Collapse the right column itself so the conversation reclaims its space smoothly. */
 .right-panel-column {
   width: var(--right-panel-width);

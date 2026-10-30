@@ -97,7 +97,7 @@ const ALLOWED_TAGS = [
  * must not be able to produce a navigable anchor, and our own `data-href` is the
  * only URL carrier the sanitizer lets survive.
  */
-const ALLOWED_ATTR = ["class", "title", "data-href", "open", "style", "aria-hidden", "encoding", "xmlns"];
+const ALLOWED_ATTR = ["class", "title", "data-href", "open", "style", "aria-hidden", "encoding", "xmlns", "role", "tabindex"];
 
 // Restrict inline `style` strictly to KaTeX math elements to prevent CSS injection/redressing.
 if (typeof DOMPurify.addHook === "function") {
@@ -142,45 +142,91 @@ marked.use({
         return `<span class="md-section"><span class="md-section-sym">${escape(sym)}</span>${escape(sec)}</span>`;
       },
     },
+    {
+      name: "rawPath",
+      level: "inline",
+      start(src: string) {
+        const match = /(?:file:\/\/|(?:\/(?:tmp|home|var|usr|opt|etc)|~\/)[a-zA-Z0-9_./@~-]+)/.exec(src);
+        return match ? match.index : -1;
+      },
+      tokenizer(src: string) {
+        const match = /^(?:file:\/\/\S+|(?:(?:\/(?:tmp|home|var|usr|opt|etc)|~\/)[a-zA-Z0-9_./@~-]+(?:\.[a-zA-Z0-9]+)?))/.exec(src);
+        if (match) {
+          let raw = match[0];
+          while (/[.,;:!?)\]'"]$/.test(raw)) {
+            raw = raw.slice(0, -1);
+          }
+          if (raw.length > 2) {
+            return {
+              type: "rawPath",
+              raw,
+              href: raw,
+              text: raw,
+            };
+          }
+        }
+      },
+      renderer(token) {
+        const href = typeof token["href"] === "string" ? token["href"] : "";
+        const text = typeof token["text"] === "string" ? token["text"] : href;
+        const attribute = escape(href);
+        return `<a class="md-link" data-href="${attribute}" title="${attribute}" role="link" tabindex="0">${escape(text)}</a>`;
+      },
+    },
   ],
 });
 marked.use({
   gfm: true,
-  // A chat message is not a document: a single newline in an answer is a line
-  // break, not a space.
   breaks: true,
   renderer: {
     link({ href, text }) {
       return reference(href, text);
     },
-    // An image is shown as its reference for the same reason it is not allowed
-    // as an element: fetching one is a request the model asked the app to make.
     image({ href, text }) {
       return reference(href, text || "image");
+    },
+    codespan({ text }: { text: string }) {
+      const trimmed = text.trim();
+      if (isPathLike(trimmed)) {
+        const attribute = escape(trimmed);
+        return `<code class="md-code-link" data-href="${attribute}" title="${attribute}" role="link" tabindex="0">${escape(text)}</code>`;
+      }
+      return `<code>${escape(text)}</code>`;
     },
   },
 });
 
-/**
- * A link: clickable when the host would open it, plain text when it would not.
- *
- * The URL is escaped before it reaches an attribute. That is not decoration —
- * DOMPurify would strip an injected `onclick`, but a URL crafted to close the
- * `data-href` attribute and open an *allowed* one (`title`, another `data-href`)
- * would survive it, and the click handler would then open the attacker's URL.
- */
+export function isPathLike(text: string): boolean {
+  if (!text) return false;
+  const trimmed = text.trim();
+  if (/^file:\/\/\S+/i.test(trimmed)) return true;
+  if (/^skills?:\/\/\S+/i.test(trimmed)) return true;
+  if (/^~[/\\]\S+/.test(trimmed)) return true;
+  if (/^[a-zA-Z]:[/\\]\S+/.test(trimmed)) return true;
+  if (/^\.\.?[/\\]\S+/.test(trimmed)) return true;
+  if (/^\/(?:tmp|home|var|usr|etc|opt|dev)\/\S+/.test(trimmed)) return true;
+  if (/^[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)+\.[a-zA-Z0-9]+(?::\d+(?:-\d+)?)?$/.test(trimmed)) return true;
+  return false;
+}
+
 function reference(href: string, text: string): string {
   const url = href.trim();
-  if (OPENABLE.test(url)) {
+  if (isSafeUrl(url)) {
     const attribute = escape(url);
-    return `<a class="md-link" data-href="${attribute}" title="${attribute}">${text}</a>`;
+    return `<a class="md-link" data-href="${attribute}" title="${attribute}" role="link" tabindex="0">${text}</a>`;
   }
 
   return `<span class="md-link">${text} <span class="md-url">${escape(url)}</span></span>`;
 }
 
-/** The schemes the host opens (`external.rs`); anything else renders as text. */
-const OPENABLE = /^(https?|mailto):/i;
+const DANGEROUS_SCHEME = /^(javascript|vbscript|data):/i;
+
+function isSafeUrl(url: string): boolean {
+  if (!url) return false;
+  const trimmed = url.trim();
+  if (DANGEROUS_SCHEME.test(trimmed)) return false;
+  return true;
+}
 
 function escape(text: string): string {
   return text

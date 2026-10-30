@@ -16,6 +16,15 @@ export const IMAGE_EXTENSIONS = new Set([
   "tif",
 ]);
 
+export const VIDEO_EXTENSIONS = new Set([
+  "webm",
+  "mp4",
+  "mov",
+  "mkv",
+  "ogg",
+  "avi",
+]);
+
 const MARKDOWN_EXTENSIONS = new Set(["md", "markdown", "mdown", "mkd"]);
 
 export interface FilePathMeta {
@@ -36,6 +45,21 @@ export function cleanExtension(ext: string): string {
   return lastDot >= 0 ? stripped.slice(lastDot + 1) : stripped;
 }
 
+export function normalizeFilePath(rawPath: string): string {
+  const trimmed = rawPath.trim();
+  if (/^file:\/\/\//i.test(trimmed)) {
+    return trimmed.slice(7);
+  }
+  if (/^file:\/\//i.test(trimmed)) {
+    const after = trimmed.slice(7);
+    return after.startsWith("/") || /^[a-zA-Z]:/.test(after) ? after : "/" + after;
+  }
+  if (/^file:/i.test(trimmed)) {
+    return trimmed.slice(5);
+  }
+  return trimmed;
+}
+
 /**
  * Parses raw paths (which may include line range suffixes from tool outputs like `src/main.dart:239-245`).
  */
@@ -44,11 +68,13 @@ export function parseFilePath(rawPath: string): FilePathMeta {
     return { cleanPath: "", lineRange: null, basename: "", directory: null, extension: "" };
   }
 
+  const normalized = normalizeFilePath(rawPath);
+
   // Strip line number or hash ranges (e.g. `:239-245` or `#L10-L20`)
-  const lineMatch = rawPath.match(/(?::(\d+(?:-\d+)?)|#L?(\d+(?:-L?\d+)?))$/);
+  const lineMatch = normalized.match(/(?::(\d+(?:-\d+)?)|#L?(\d+(?:-L?\d+)?))$/);
   const rawRange = lineMatch ? (lineMatch[1] || lineMatch[2]) : null;
   const lineRange = rawRange ? rawRange.replace(/L/g, "") : null;
-  const cleanPath = lineMatch ? rawPath.slice(0, lineMatch.index) : rawPath;
+  const cleanPath = lineMatch ? normalized.slice(0, lineMatch.index) : normalized;
 
   // Handle skill URIs (e.g. "skill://impeccable", "skills://impeccable", "skill:impeccable")
   if (/^skills?:/i.test(cleanPath)) {
@@ -83,6 +109,10 @@ export function isImageExtension(ext: string): boolean {
   return IMAGE_EXTENSIONS.has(cleanExtension(ext));
 }
 
+export function isVideoExtension(ext: string): boolean {
+  return VIDEO_EXTENSIONS.has(cleanExtension(ext));
+}
+
 export function isSvgExtension(ext: string): boolean {
   return cleanExtension(ext) === "svg";
 }
@@ -102,6 +132,11 @@ export function mimeTypeForExtension(ext: string): string {
     case "bmp": return "image/bmp";
     case "ico": return "image/x-icon";
     case "avif": return "image/avif";
+    case "webm": return "video/webm";
+    case "mp4": return "video/mp4";
+    case "mov": return "video/quicktime";
+    case "ogg": return "video/ogg";
+    case "mkv": return "video/x-matroska";
     default: return "image/png";
   }
 }
