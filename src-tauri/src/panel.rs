@@ -34,8 +34,8 @@ use omp_session::TodoPhase;
 use serde_json::{json, Value};
 
 use crate::dto::{
-    ArtifactSnapshot, TodoPhaseInput, TodoPhaseSnapshot, TodoTaskSnapshot,
-    WorkspaceEntry, WorkspaceFileMatch,
+    ArtifactSnapshot, TodoPhaseInput, TodoPhaseSnapshot, TodoTaskSnapshot, WorkspaceEntry,
+    WorkspaceFileMatch,
 };
 
 /// The most entries one level of the tree answers with.
@@ -775,7 +775,8 @@ mod tests {
         assert_eq!(matches[0].path, "src/components/ThreadView.vue");
 
         // Target and .git must be ignored
-        let target_matches = search_workspace_files(root.to_str().unwrap(), "app", 10).expect("search");
+        let target_matches =
+            search_workspace_files(root.to_str().unwrap(), "app", 10).expect("search");
         assert!(target_matches.is_empty());
     }
 }

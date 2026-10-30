@@ -34,6 +34,7 @@ import {
 } from "../lib/approval";
 import {
   cleanOptionLabel,
+  dialogSummaryTitle,
   isDoneOption,
   isMultiSelectDialog,
   isOptionSelected,
@@ -73,6 +74,19 @@ const selectedOptionsByQuestion = ref<Record<string, Set<string>>>(
     Object.entries(loadSelectedOptions()).map(([k, arr]) => [k, new Set(arr)]),
   ),
 );
+
+/** Dialog IDs that the user collapsed into the compact reference bar. */
+const collapsedIds = ref<Set<string>>(new Set());
+
+function toggleCollapse(dialogId: string): void {
+  const next = new Set(collapsedIds.value);
+  if (next.has(dialogId)) {
+    next.delete(dialogId);
+  } else {
+    next.add(dialogId);
+  }
+  collapsedIds.value = next;
+}
 
 async function refreshCandidates(): Promise<void> {
   const read = ++candidateRead;
@@ -125,6 +139,9 @@ watch(
     );
     answering.value = Object.fromEntries(
       Object.entries(answering.value).filter(([id]) => live.has(id)),
+    );
+    collapsedIds.value = new Set(
+      [...collapsedIds.value].filter((id) => live.has(id)),
     );
 
     for (const dialog of dialogs) {
@@ -253,14 +270,26 @@ function selectViewModel(dialog: UiRequestSnapshot): DialogSelectViewModel {
  * them here keeps the template from re-reading the same prompt once per line it
  * renders.
  */
-const cards = computed(() =>
-  props.dialogs.map((dialog) => {
+const cards = computed(() => {
+  const total = props.dialogs.length;
+  return props.dialogs.map((dialog, index) => {
     const left = remainingMs(dialog.timeoutMs, seenAt.value[dialog.id] ?? now.value, now.value);
     const approval = approvalOf(dialog);
     const command = approval?.fields.find((field) => field.label === "Command")?.value ?? null;
+    const title = titleParts(dialog.title);
+    const stepBadge = title.stepBadge ?? (total > 1 ? `${index + 1} of ${total}` : null);
     return {
       dialog,
-      title: titleParts(dialog.title),
+      title,
+      stepBadge,
+      summaryTitle: dialogSummaryTitle({
+        titleText: title.text,
+        message: dialog.message,
+        kind: dialog.kind,
+        approvalTool: approval?.tool,
+        command,
+      }),
+      isCollapsed: collapsedIds.value.has(dialog.id),
       approval,
       command,
       program: candidatePrograms.value[dialog.id] ?? null,
@@ -268,8 +297,8 @@ const cards = computed(() =>
       busy: answering.value[dialog.id] === true,
       select: dialog.kind === "select" ? selectViewModel(dialog) : null,
     };
-  }),
-);
+  });
+});
 
 function isCommandApproval(tool: string): boolean {
   return tool === "bash" || tool === "bash_interactive";
@@ -377,47 +406,101 @@ function describe(cause: unknown): string {
 
 <template>
   <div v-if="cards.length > 0" class="flex flex-col gap-3 select-text" data-dialog-panel>
-    <section
-      v-for="(card, index) in cards"
-      :key="card.dialog.id"
-      class="rounded-[10px] border p-3.5"
-      :class="card.approval
-        ? (isCommandApproval(card.approval.tool) ? 'border-line-strong/70 bg-selected/60' : 'border-warn/40 bg-warn/5')
-        : 'border-line-strong/70 bg-raised/50 shadow-sm'"
-    >
-      <header class="mb-3 flex items-center gap-2">
-        <span
-          class="h-1.5 w-1.5 shrink-0 rounded-full"
-          :class="card.approval ? 'bg-warn' : 'bg-accent'"
-        />
-        <span v-if="card.command && card.approval && isCommandApproval(card.approval.tool)" class="text-[12.5px] font-medium text-fg">
-          The agent wants to run
-        </span>
-        <template v-else-if="card.approval">
-          <span class="text-[11px] font-medium text-warn">Needs approval</span>
-          <span class="text-[12.5px] font-medium text-fg">{{ card.approval.tool }}</span>
-        </template>
-        <template v-else>
-          <span class="text-[12.5px] font-medium text-fg">
-            {{ card.dialog.kind === 'confirm' ? 'Confirmation' : 'Question' }}
+    <template v-for="card in cards" :key="card.dialog.id">
+      <!-- Collapsed view: compact sleek bar matching reference -->
+      <button
+        v-if="card.isCollapsed"
+        type="button"
+        class="group flex w-full items-center justify-between gap-2.5 rounded-[8px] border border-line-strong/60 bg-surface/80 px-3 py-2 text-left transition-colors hover:border-line-strong hover:bg-raised/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        :aria-expanded="false"
+        :aria-label="`Expand: ${card.summaryTitle}`"
+        @click="toggleCollapse(card.dialog.id)"
+      >
+        <div class="flex items-center gap-2 min-w-0">
+          <Icon
+            :name="card.approval ? 'alert' : 'message'"
+            size="h-3.5 w-3.5"
+            class="shrink-0"
+            :class="card.approval ? 'text-warn' : 'text-accent'"
+          />
+          <span class="truncate text-[12px] font-medium text-fg">
+            {{ card.summaryTitle }}
           </span>
           <span
-            v-if="card.title.isCustomResponse"
-            class="text-[11px] text-faint"
+            v-if="card.title.selectedBadge"
+            class="shrink-0 rounded-[4px] bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent"
           >
-            · Custom response
+            {{ card.title.selectedBadge }}
           </span>
-        </template>
-        <span
-          v-if="card.title.stepBadge"
-          class="ml-auto font-mono text-[11px] text-faint"
-        >
-          {{ card.title.stepBadge }}
-        </span>
-        <span v-else-if="cards.length > 1" class="ml-auto font-mono text-[11px] text-faint">
-          {{ index + 1 }} of {{ cards.length }}
-        </span>
-      </header>
+          <span
+            v-if="card.stepBadge"
+            class="shrink-0 font-mono text-[10.5px] text-faint"
+          >
+            {{ card.stepBadge }}
+          </span>
+        </div>
+        <Icon
+          name="chevron-right"
+          size="h-3.5 w-3.5"
+          class="shrink-0 text-faint transition-transform group-hover:text-dim"
+        />
+      </button>
+
+      <!-- Expanded view: full dialog card with interactive collapsible header -->
+      <section
+        v-else
+        class="rounded-[10px] border p-3.5"
+        :class="card.approval
+          ? (isCommandApproval(card.approval.tool) ? 'border-line-strong/70 bg-selected/60' : 'border-warn/40 bg-warn/5')
+          : 'border-line-strong/70 bg-raised/50 shadow-sm'"
+      >
+        <header class="mb-3">
+          <button
+            type="button"
+            class="group/header flex w-full items-center justify-between gap-2 text-left select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent rounded-[4px]"
+            :aria-expanded="true"
+            title="Click to collapse"
+            @click="toggleCollapse(card.dialog.id)"
+          >
+            <div class="flex items-center gap-2 min-w-0">
+              <span
+                class="h-1.5 w-1.5 shrink-0 rounded-full"
+                :class="card.approval ? 'bg-warn' : 'bg-accent'"
+              />
+              <span v-if="card.command && card.approval && isCommandApproval(card.approval.tool)" class="truncate text-[12.5px] font-medium text-fg">
+                The agent wants to run
+              </span>
+              <template v-else-if="card.approval">
+                <span class="text-[11px] font-medium text-warn shrink-0">Needs approval</span>
+                <span class="truncate text-[12.5px] font-medium text-fg">{{ card.approval.tool }}</span>
+              </template>
+              <template v-else>
+                <span class="truncate text-[12.5px] font-medium text-fg">
+                  {{ card.dialog.kind === 'confirm' ? 'Confirmation' : 'Question' }}
+                </span>
+                <span
+                  v-if="card.title.isCustomResponse"
+                  class="shrink-0 text-[11px] text-faint"
+                >
+                  · Custom response
+                </span>
+              </template>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <span
+                v-if="card.stepBadge"
+                class="font-mono text-[11px] text-faint"
+              >
+                {{ card.stepBadge }}
+              </span>
+              <Icon
+                name="chevron-down"
+                size="h-3.5 w-3.5"
+                class="text-faint transition-transform group-hover/header:text-dim"
+              />
+            </div>
+          </button>
+        </header>
 
       <!-- An approval, as the engine laid it out. -->
       <template v-if="card.approval">
@@ -700,6 +783,6 @@ function describe(cause: unknown): string {
         {{ card.deadline }}
       </p>
     </section>
-
-  </div>
+  </template>
+</div>
 </template>

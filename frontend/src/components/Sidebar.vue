@@ -7,10 +7,17 @@
  * grouping and ordering are computed in `lib/threads.ts` — this is the rendering, plus the
  * one piece of state the sidebar owns: which group is collapsed.
  */
-import { computed, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 
 import { pickDirectory } from "../bridge";
-import { reorderItems, type ProjectGroup, type ThreadRow } from "../lib/threads";
+import {
+  formatFriendlyTime,
+  formatFullDate,
+  projectName,
+  reorderItems,
+  type ProjectGroup,
+  type ThreadRow,
+} from "../lib/threads";
 import logo from "../assets/ohmypi-logo.svg";
 import ProjectMenu from "./ProjectMenu.vue";
 import Icon from "./ui/Icon.vue";
@@ -60,7 +67,11 @@ const emit = defineEmits<{
   collapse: [];
 }>();
 
-const collapsed = ref(new Set<string>());
+/**
+ * Projects currently expanded in the sidebar.
+ * Initialized empty so every project starts minimized on launch to keep the workspace clean.
+ */
+const openProjects = ref(new Set<string>());
 
 /**
  * The "open a directory" row, which is where a path is typed now.
@@ -77,7 +88,10 @@ function submitDirectory(): void {
   const path = typed.value.trim();
   adding.value = false;
   typed.value = "";
-  if (path !== "") emit("open", path);
+  if (path !== "") {
+    openProjects.value.add(path);
+    emit("open", path);
+  }
 }
 
 async function chooseDirectory(preferredPath?: string | Event): Promise<void> {
@@ -88,6 +102,7 @@ async function chooseDirectory(preferredPath?: string | Event): Promise<void> {
     if (path) {
       adding.value = false;
       typed.value = "";
+      openProjects.value.add(path);
       emit("open", path);
     }
   } catch {
@@ -111,6 +126,19 @@ watch(
   { immediate: true },
 );
 
+// When a thread is active, ensure its parent project folder is expanded
+watch(
+  () => props.activeId,
+  (activeId) => {
+    if (!activeId) return;
+    const parent = props.groups.find((group) => group.threads.some((t) => t.id === activeId));
+    if (parent?.path) {
+      openProjects.value.add(parent.path);
+    }
+  },
+  { immediate: true },
+);
+
 function commitRename(id: string): void {
   const name = draft.value.trim();
   // An empty title is refused by the engine with prose and no code, so it is refused here
@@ -124,6 +152,7 @@ function commitRename(id: string): void {
 
 function onContext(event: MouseEvent, row: ThreadRow): void {
   event.preventDefault();
+  onRowMouseLeave();
   emit("context", row.id, { x: event.clientX, y: event.clientY });
 }
 
@@ -135,15 +164,34 @@ function onProjectContext(event: MouseEvent, group: ProjectGroup): void {
 }
 
 function toggle(path: string): void {
-  const next = new Set(collapsed.value);
+  const next = new Set(openProjects.value);
   if (next.has(path)) next.delete(path);
   else next.add(path);
-  collapsed.value = next;
+  openProjects.value = next;
 }
 
 function isOpen(path: string): boolean {
-  return !collapsed.value.has(path);
+  return openProjects.value.has(path);
 }
+
+/** Static WorkBuddy-style LED visual configurations. */
+const LED_CONFIG = {
+  streaming: {
+    color: "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]",
+    title: "Running...",
+    animated: true,
+  },
+  attention: {
+    color: "bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.5)]",
+    title: "Action required",
+    animated: false,
+  },
+  error: {
+    color: "bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.5)]",
+    title: "Failed in this session",
+    animated: false,
+  },
+} as const;
 
 /** Threads that need the user, so their group can say so while collapsed. */
 function attention(rows: ThreadRow[]): number {
@@ -209,6 +257,37 @@ function onDragEnd(): void {
   dropTargetIndex.value = null;
   dropPosition.value = null;
 }
+
+const hoveredRow = ref<ThreadRow | null>(null);
+const hoverPosition = ref<{ top: number; left: number }>({ top: 0, left: 0 });
+let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+
+function onRowMouseEnter(event: MouseEvent, row: ThreadRow): void {
+  if (props.renameId === row.id) return;
+  if (hoverTimer) clearTimeout(hoverTimer);
+  const target = event.currentTarget as HTMLElement | null;
+  if (!target) return;
+  const rect = target.getBoundingClientRect();
+  const top = Math.min(window.innerHeight - 180, Math.max(12, rect.top - 6));
+  const left = rect.right + 10;
+
+  hoverTimer = setTimeout(() => {
+    hoverPosition.value = { top, left };
+    hoveredRow.value = row;
+  }, 220);
+}
+
+function onRowMouseLeave(): void {
+  if (hoverTimer) {
+    clearTimeout(hoverTimer);
+    hoverTimer = null;
+  }
+  hoveredRow.value = null;
+}
+
+onUnmounted(() => {
+  if (hoverTimer) clearTimeout(hoverTimer);
+});
 
 const total = computed(() => props.groups.reduce((count, group) => count + group.threads.length, 0));
 
@@ -376,9 +455,13 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
           >
             <Icon
               :name="isOpen(group.path) ? 'chevron-down' : 'chevron-right'"
-              class="h-3.5 w-3.5 shrink-0 text-faint"
+              class="h-3.5 w-3.5 shrink-0 text-faint group-hover:text-dim"
             />
-            <span class="truncate text-[12.5px] text-dim">{{ group.name }}</span>
+            <Icon
+              :name="isOpen(group.path) ? 'folder-open' : 'folder'"
+              class="h-3.5 w-3.5 shrink-0 text-accent/80"
+            />
+            <span class="truncate text-[12.5px] font-medium text-dim group-hover:text-fg">{{ group.name }}</span>
           </button>
           <span
             v-if="!isOpen(group.path) && attention(group.threads) > 0"
@@ -390,7 +473,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
             :disabled="props.busy || group.path === ''"
             class="grid h-5 w-5 shrink-0 place-items-center rounded-[5px] text-faint opacity-0 hover:bg-surface hover:text-fg group-hover:opacity-100 disabled:opacity-0"
             aria-label="new thread here"
-            @click.stop="emit('open', group.path)"
+            @click.stop="openProjects.add(group.path); emit('open', group.path)"
           >
             <Icon name="plus" class="h-3.5 w-3.5" />
           </button>
@@ -404,43 +487,21 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
           </button>
         </div>
 
-        <ul v-if="isOpen(group.path)" class="flex flex-col gap-px">
+        <ul v-if="isOpen(group.path)" class="my-0.5 flex flex-col gap-0.5">
           <li v-for="row in group.threads" :key="row.id">
             <button
-              class="group/row relative flex w-full items-center gap-2 rounded-[6px] py-1.5 pr-1.5 text-left transition-colors"
+              class="group/row relative flex w-full items-center justify-between gap-2 rounded-[6px] py-1.5 pr-2.5 text-left transition-colors"
               :class="
                 row.id === props.activeId
                   ? 'bg-selected text-fg font-medium'
                   : 'text-dim hover:bg-raised hover:text-fg'
               "
-              :style="{ paddingLeft: `${row.depth === 0 ? 0.75 : 1.5}rem` }"
-              @click="emit('select', row.id)"
+              :style="{ paddingLeft: `${row.depth === 0 ? 1.875 : 2.625}rem` }"
+              @mouseenter="onRowMouseEnter($event, row)"
+              @mouseleave="onRowMouseLeave"
+              @click="onRowMouseLeave(); emit('select', row.id)"
               @contextmenu="onContext($event, row)"
             >
-              <!--
-                Active indicator bar on the left edge for instant scanability
-              -->
-              <span
-                v-if="row.id === props.activeId"
-                class="absolute left-1 top-2 bottom-2 w-0.5 rounded-full bg-accent"
-                aria-hidden="true"
-              />
-              <!--
-                One dot per thread (`docs/12` §2.2), driven by the sidecar: hollow for no
-                process, pulsing while a turn streams, amber when the agent is waiting on an
-                answer, red after a failed turn. The ring is app-owned — the engine has no
-                read/unread concept.
-              -->
-              <span
-                class="size-2 shrink-0 rounded-full transition-all"
-                :class="{
-                  'border border-line-strong': row.dot === 'cold',
-                  'bg-faint/60': row.dot === 'idle',
-                  'animate-pulse bg-accent streaming-dot': row.dot === 'streaming',
-                  'bg-warn': row.dot === 'attention',
-                  'bg-err': row.dot === 'error',
-                }"
-              />
               <!--
                 The rename box replaces the title rather than opening a dialog: `docs/12`
                 §1.8 asks for an inline rename, and the engine rewrites the title slot in
@@ -464,38 +525,28 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
               >
                 {{ row.title }}
               </span>
-              <!--
-                One slot, and "suspended" takes it: the row is one line, and "where is my
-                process" is the fresher question than "how did the last turn go" — which the
-                tooltip still carries. A hole in the dot alone is too quiet to say the app
-                released a 200 MB process on purpose.
-              -->
-              <span
-                v-if="row.suspended"
-                class="shrink-0 rounded bg-raised/80 px-1.5 py-0.5 font-mono text-[9.5px] text-faint"
-                data-suspended
-              >
-                suspended
-              </span>
-              <span v-else-if="row.note" class="shrink-0 rounded bg-raised/80 px-1.5 py-0.5 font-mono text-[9.5px] text-faint">
-                {{ row.note }}
-              </span>
-              <span
-                v-if="row.unread"
-                class="size-1.5 shrink-0 rounded-full bg-accent-bright shadow-[0_0_4px_var(--color-accent)]"
-              />
-              <Icon
-                v-if="row.pinned"
-                name="pin"
-                class="h-3 w-3 shrink-0 text-faint"
-              />
-              <span
-                class="grid h-5 w-5 shrink-0 place-items-center rounded-[5px] text-faint opacity-0 hover:bg-surface hover:text-err group-hover/row:opacity-100"
-                aria-label="delete conversation"
-                @click.stop="emit('delete', row.id)"
-              >
-                <Icon name="trash" class="h-3 w-3" />
-              </span>
+
+              <!-- Right-hand status / meta area: LED dot and delete action -->
+              <div class="flex items-center gap-1.5 shrink-0">
+                <Icon
+                  v-if="row.pinned"
+                  name="pin"
+                  class="h-3 w-3 text-faint"
+                />
+                <span
+                  v-if="row.led"
+                  class="size-2 rounded-full shrink-0"
+                  :class="[LED_CONFIG[row.led].color, LED_CONFIG[row.led].animated ? 'animate-led-bounce' : '']"
+                  :title="LED_CONFIG[row.led].title"
+                />
+                <span
+                  class="grid h-5 w-5 place-items-center rounded-[5px] text-faint opacity-0 hover:bg-surface hover:text-err group-hover/row:opacity-100 transition-opacity"
+                  aria-label="delete conversation"
+                  @click.stop="emit('delete', row.id)"
+                >
+                  <Icon name="trash" class="h-3 w-3" />
+                </span>
+              </div>
             </button>
           </li>
         </ul>
@@ -543,5 +594,92 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
       @open="emit('open', $event)"
       @delete="emit('deleteProject', $event)"
     />
+
+    <!--
+      Hover Preview Card:
+      Floating context card showing thread title, prompt snippet, lifecycle status,
+      turn count, and last interaction timestamp without cluttering the compact row.
+    -->
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition duration-150 ease-out"
+        enter-from-class="opacity-0 translate-x-[-4px] scale-[0.98]"
+        enter-to-class="opacity-100 translate-x-0 scale-100"
+        leave-active-class="transition duration-100 ease-in"
+        leave-from-class="opacity-100 translate-x-0 scale-100"
+        leave-to-class="opacity-0 translate-x-[-4px] scale-[0.98]"
+      >
+        <div
+          v-if="hoveredRow"
+          class="fixed z-50 pointer-events-none w-72 max-w-[calc(100vw-280px)] rounded-xl border border-line/70 bg-surface/95 p-3 text-left shadow-2xl backdrop-blur-md"
+          :style="{ top: `${hoverPosition.top}px`, left: `${hoverPosition.left}px` }"
+        >
+          <!-- Card header: icon + full title -->
+          <div class="flex items-start gap-2">
+            <Icon name="message" class="h-3.5 w-3.5 shrink-0 text-accent/80 mt-0.5" />
+            <div class="min-w-0 flex-1">
+              <h4 class="text-[12.5px] font-medium leading-snug text-fg line-clamp-2">
+                {{ hoveredRow.title }}
+              </h4>
+              <p
+                v-if="hoveredRow.firstMessage && hoveredRow.firstMessage !== hoveredRow.title"
+                class="mt-1 text-[11px] leading-relaxed text-faint line-clamp-2 italic"
+              >
+                "{{ hoveredRow.firstMessage }}"
+              </p>
+            </div>
+          </div>
+
+          <!-- Card separator -->
+          <div class="my-2.5 h-px bg-line/40" />
+
+          <!-- Metadata list: status, turns, timestamp, workspace -->
+          <div class="flex flex-col gap-1.5 text-[11px]">
+            <!-- Live status / session lifecycle -->
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-1.5 text-dim">
+                <span
+                  v-if="hoveredRow.led"
+                  class="size-2 rounded-full shrink-0"
+                  :class="LED_CONFIG[hoveredRow.led].color"
+                />
+                <Icon
+                  v-else
+                  :name="hoveredRow.live ? 'activity' : 'layers'"
+                  class="h-3 w-3 shrink-0 text-faint"
+                />
+                <span>
+                  {{
+                    hoveredRow.led
+                      ? LED_CONFIG[hoveredRow.led].title
+                      : (hoveredRow.live ? 'Active session' : (hoveredRow.suspended ? 'Suspended' : 'Completed session'))
+                  }}
+                </span>
+              </div>
+              <span class="rounded bg-raised/80 px-1.5 py-0.5 font-mono text-[10px] text-faint border border-line/40 shrink-0">
+                {{ hoveredRow.messageCount }} {{ hoveredRow.messageCount === 1 ? 'turn' : 'turns' }}
+              </span>
+            </div>
+
+            <!-- Last updated timestamp -->
+            <div class="flex items-center gap-1.5 text-dim">
+              <Icon name="clock" class="h-3 w-3 shrink-0 text-faint" />
+              <span class="text-faint">{{ formatFriendlyTime(hoveredRow.modifiedAt) }}</span>
+              <span v-if="hoveredRow.modifiedAt" class="font-mono text-[10px] text-faint/70">
+                · {{ formatFullDate(hoveredRow.modifiedAt) }}
+              </span>
+            </div>
+
+            <!-- Project path segment -->
+            <div v-if="hoveredRow.project" class="flex items-center gap-1.5 text-dim truncate">
+              <Icon name="folder" class="h-3 w-3 shrink-0 text-faint" />
+              <span class="truncate font-mono text-[10.5px] text-faint">
+                {{ projectName(hoveredRow.project) }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </aside>
 </template>

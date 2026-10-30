@@ -11,7 +11,11 @@ import { describe, expect, test } from "bun:test";
 import {
   displayName,
   dotFor,
+  formatFriendlyTime,
+  formatFullDate,
+  formatRelativeTime,
   isNoLiveThreadError,
+  ledFor,
   loadProjectOrder,
   projectName,
   reorderItems,
@@ -68,6 +72,26 @@ describe("the dot", () => {
 
   test("a failure outranks a live process that is otherwise quiet", () => {
     expect(dotFor(live("a", { error: "turn failed" }))).toBe("error");
+  });
+});
+
+describe("the minimal status led", () => {
+  test("streaming thread shows streaming led", () => {
+    expect(ledFor("streaming", true)).toBe("streaming");
+  });
+
+  test("attention thread shows attention led", () => {
+    expect(ledFor("attention", true)).toBe("attention");
+  });
+
+  test("in-session failure shows error led only when thread is live", () => {
+    expect(ledFor("error", true)).toBe("error");
+    expect(ledFor("error", false)).toBeNull();
+  });
+
+  test("cold or idle threads show no led (invisible)", () => {
+    expect(ledFor("cold", false)).toBeNull();
+    expect(ledFor("idle", true)).toBeNull();
   });
 });
 
@@ -403,6 +427,49 @@ describe("loadProjectOrder and saveProjectOrder", () => {
 
     const badStorage = makeMockStorage({ "omp:projects-order": "not valid json {" });
     expect(loadProjectOrder(badStorage)).toEqual([]);
+  });
+
+  describe("formatRelativeTime", () => {
+    const baseNow = 1_700_000_000_000;
+
+    test("formats seconds as now", () => {
+      expect(formatRelativeTime(baseNow - 20_000, baseNow)).toBe("now");
+      expect(formatRelativeTime(baseNow, baseNow)).toBe("now");
+    });
+
+    test("formats minutes and hours", () => {
+      expect(formatRelativeTime(baseNow - 5 * 60_000, baseNow)).toBe("5m");
+      expect(formatRelativeTime(baseNow - 3 * 3600_000, baseNow)).toBe("3h");
+    });
+
+    test("formats days and months", () => {
+      expect(formatRelativeTime(baseNow - 2 * 86400_000, baseNow)).toBe("2d");
+      expect(formatRelativeTime(baseNow - 65 * 86400_000, baseNow)).toBe("2mo");
+    });
+
+    test("handles empty or zero gracefully", () => {
+      expect(formatRelativeTime(0, baseNow)).toBe("");
+    });
+  });
+
+  describe("formatFriendlyTime & formatFullDate", () => {
+    const baseNow = 1_700_000_000_000;
+
+    test("formats friendly relative times", () => {
+      expect(formatFriendlyTime(baseNow - 20_000, baseNow)).toBe("Just now");
+      expect(formatFriendlyTime(baseNow - 60_000, baseNow)).toBe("1 min ago");
+      expect(formatFriendlyTime(baseNow - 15 * 60_000, baseNow)).toBe("15m ago");
+      expect(formatFriendlyTime(baseNow - 3600_000, baseNow)).toBe("1 hour ago");
+      expect(formatFriendlyTime(baseNow - 4 * 3600_000, baseNow)).toBe("4h ago");
+      expect(formatFriendlyTime(baseNow - 86400_000, baseNow)).toBe("Yesterday");
+      expect(formatFriendlyTime(baseNow - 3 * 86400_000, baseNow)).toBe("3d ago");
+      expect(formatFriendlyTime(0, baseNow)).toBe("");
+    });
+
+    test("formats full date string", () => {
+      expect(formatFullDate(0)).toBe("");
+      expect(formatFullDate(baseNow)).not.toBe("");
+    });
   });
 });
 

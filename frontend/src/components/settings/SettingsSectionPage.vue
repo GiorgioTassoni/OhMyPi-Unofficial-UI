@@ -80,6 +80,7 @@ async function loadProviders(): Promise<void> {
     ]);
     configuredProviders.value = conf;
     catalogProviders.value = cat;
+    void refreshModels().catch(() => {});
   } catch {
     // best-effort
   } finally {

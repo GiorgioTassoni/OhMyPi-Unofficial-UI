@@ -202,6 +202,35 @@ function closeAgentTab(thread: string, id: string): void {
   agentTabs.value = agentTabs.value.filter((tab) => agentKey(tab.thread, tab.id) !== key);
   if (activeAgentKey.value === key) activeAgentKey.value = null;
 }
+
+const openThreadTabs = ref<string[]>([]);
+
+watch(
+  activeId,
+  (id) => {
+    if (id && !openThreadTabs.value.includes(id)) {
+      openThreadTabs.value.push(id);
+    }
+  },
+  { immediate: true },
+);
+
+function closeThreadTab(id: string): void {
+  const index = openThreadTabs.value.indexOf(id);
+  if (index !== -1) {
+    openThreadTabs.value.splice(index, 1);
+    if (activeId.value === id) {
+      activeId.value = openThreadTabs.value[index] ?? openThreadTabs.value[index - 1] ?? null;
+      activeAgentKey.value = null;
+    }
+  }
+}
+
+function threadTabTitle(id: string): string {
+  const row = rows.value.find((r) => r.id === id);
+  return row?.title || "Conversation";
+}
+
 const unread = ref<Set<string>>(new Set());
 
 /**
@@ -1121,6 +1150,7 @@ async function onForked(forked: ThreadSnapshot): Promise<void> {
 function onDeleted(id: string): void {
   if (activeAgentTab.value?.thread === id) activeAgentKey.value = null;
   agentTabs.value = agentTabs.value.filter((tab) => tab.thread !== id);
+  openThreadTabs.value = openThreadTabs.value.filter((tid) => tid !== id);
   if (activeId.value === id) activeId.value = null;
   unread.value = new Set([...unread.value].filter((entry) => entry !== id));
   for (const entry of notices.value) {
@@ -1483,10 +1513,50 @@ function describe(cause: unknown): string {
           <button class="shrink-0 text-err/70 hover:text-err select-none" @click="error = null">dismiss</button>
         </p>
 
-        <nav v-if="agentTabs.length > 0 && activeId" class="flex shrink-0 items-center gap-0.5 overflow-x-auto border-b border-line/50 px-2 pt-1" aria-label="Conversation and agent tabs">
-          <button type="button" class="max-w-48 shrink-0 truncate rounded-t-[6px] px-3 py-1.5 text-[12px]" :class="activeAgentTab === null ? 'bg-raised text-fg' : 'text-dim hover:bg-raised/60 hover:text-fg'" :aria-current="activeAgentTab === null ? 'page' : undefined" @click="activeAgentKey = null">
-            {{ activeRow?.title || 'Conversation' }}
+        <nav v-if="(openThreadTabs.length > 1 || agentTabs.length > 0) && activeId" class="flex shrink-0 items-center gap-0.5 overflow-x-auto border-b border-line/50 px-2 pt-1 select-none" aria-label="Conversation and agent tabs">
+          <!-- Conversation tabs when multiple threads are open -->
+          <div
+            v-for="tid in openThreadTabs"
+            :key="tid"
+            class="group/tab flex shrink-0 items-center rounded-t-[6px] transition-colors"
+            :class="tid === activeId && activeAgentTab === null ? 'bg-raised text-fg' : 'text-dim hover:bg-raised/60 hover:text-fg'"
+          >
+            <button
+              type="button"
+              class="max-w-48 truncate py-1.5 pl-3 pr-1 text-[12px] font-medium"
+              :aria-current="tid === activeId && activeAgentTab === null ? 'page' : undefined"
+              @click="activeId = tid; activeAgentKey = null"
+            >
+              {{ threadTabTitle(tid) }}
+            </button>
+            <button
+              v-if="openThreadTabs.length > 1"
+              type="button"
+              class="px-1.5 py-1 text-faint hover:text-fg rounded transition-opacity"
+              :class="tid === activeId ? 'opacity-100' : 'opacity-0 group-hover/tab:opacity-100'"
+              :aria-label="`Close ${threadTabTitle(tid)} tab`"
+              @click.stop="closeThreadTab(tid)"
+            >
+              ×
+            </button>
+          </div>
+
+          <!-- New thread plus button -->
+          <button
+            v-if="workspace !== null"
+            type="button"
+            class="grid h-6 w-6 shrink-0 place-items-center rounded-[5px] text-faint hover:bg-raised hover:text-fg transition-colors mx-1"
+            aria-label="New thread"
+            title="New thread in current project"
+            @click="open(workspace)"
+          >
+            <Icon name="plus" class="h-3 w-3" />
           </button>
+
+          <!-- Separator if both thread tabs and agent tabs exist -->
+          <span v-if="openThreadTabs.length > 0 && agentTabs.length > 0" class="h-3.5 w-px bg-line/60 mx-1 shrink-0" />
+
+          <!-- Agent tabs -->
           <div v-for="tab in agentTabs" :key="agentKey(tab.thread, tab.id)" class="flex shrink-0 items-center rounded-t-[6px]" :class="activeAgentKey === agentKey(tab.thread, tab.id) ? 'bg-raised text-fg' : 'text-dim hover:bg-raised/60'">
             <button type="button" class="max-w-44 truncate py-1.5 pl-3 pr-1 text-[12px]" :aria-current="activeAgentKey === agentKey(tab.thread, tab.id) ? 'page' : undefined" @click="activeId = tab.thread; activeAgentKey = agentKey(tab.thread, tab.id)">
               {{ tabAgentLabel(tab.thread, tab.id) }}

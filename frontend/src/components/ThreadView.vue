@@ -779,7 +779,7 @@ defineExpose({
     -->
     <div
       ref="conversationRef"
-      class="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden px-4"
+      class="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden pl-4 pr-6 sm:pr-8"
       data-conversation
       @scroll="onScroll"
     >

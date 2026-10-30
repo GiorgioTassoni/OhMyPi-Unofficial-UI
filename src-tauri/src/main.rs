@@ -13,7 +13,8 @@ fn sanitize_appimage_env() {
     // When child processes (omp sidecar, bash, subagents, python3) inherit these variables,
     // Python searches for standard libraries in /tmp/.mount_.../usr/lib/... and immediately crashes:
     // "ModuleNotFoundError: No module named 'encodings'".
-    let is_appimage = std::env::var_os("APPIMAGE").is_some() || std::env::var_os("APPDIR").is_some();
+    let is_appimage =
+        std::env::var_os("APPIMAGE").is_some() || std::env::var_os("APPDIR").is_some();
     for var in ["PYTHONHOME", "PYTHONPATH", "PERLLIB"] {
         if let Ok(val) = std::env::var(var) {
             if is_appimage || val.contains(".mount_") {

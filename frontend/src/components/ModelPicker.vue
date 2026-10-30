@@ -123,8 +123,10 @@ const sections = computed<Section[]>(() => {
   }
 
   for (const group of visible.groups) {
+    const providerLabel =
+      group.provider === "openai-codex" ? "OpenAI Codex (ChatGPT)" : group.provider;
     sections.push({
-      header: `${providerGlyph(group.provider)} ${group.provider}`,
+      header: `${providerGlyph(group.provider)} ${providerLabel}`,
       favourite: false,
       rows: group.models.map((model) => ({ model, key: modelKey(model), index: index++ })),
     });

@@ -1613,6 +1613,19 @@ export async function removeCustomProvider(providerId: string): Promise<void> {
   return invoke<void>("remove_custom_provider", { providerId });
 }
 
+export interface ProviderTestResultDto {
+  ok: boolean;
+  latencyMs: number;
+  modelCount: number;
+  sampleModels: string[];
+  message: string;
+}
+
+/** Test connectivity and authentication for a provider via OMP runner. */
+export async function testProviderConnection(provider: string): Promise<ProviderTestResultDto> {
+  return invoke<ProviderTestResultDto>("test_provider_connection", { provider });
+}
+
 export interface SkillInfoDto {
   name: string;
   description: string;

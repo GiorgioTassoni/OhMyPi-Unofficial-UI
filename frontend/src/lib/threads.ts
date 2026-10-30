@@ -25,13 +25,29 @@ import type { SessionSummary, ThreadSnapshot } from "../bridge";
 /** What the row's single status dot means (`docs/12` §2.2). */
 export type ThreadDot = "cold" | "idle" | "streaming" | "attention" | "error";
 
+/** WorkBuddy-style minimal LED kind for session-active statuses. */
+export type ThreadLedKind = "streaming" | "attention" | "error";
+
+export function ledFor(dot: ThreadDot, live: boolean): ThreadLedKind | null {
+  if (dot === "streaming") return "streaming";
+  if (dot === "attention") return "attention";
+  if (live && dot === "error") return "error";
+  return null;
+}
+
 export interface ThreadRow {
   id: string;
   /** The name to show: the engine's title, else the first message, else a placeholder. */
   title: string;
+  /** Initial prompt text or excerpt when available. */
+  firstMessage?: string;
+  /** Lifecycle status reported by the session store, if any. */
+  status?: string;
   /** Whether a sidecar is running for this thread. */
   live: boolean;
   dot: ThreadDot;
+  /** WorkBuddy-style minimal LED status (green bounce for streaming, orange for attention, red for in-session error, else null). */
+  led: ThreadLedKind | null;
   /** App-owned: a turn finished while the user was looking elsewhere. */
   unread: boolean;
   /**
@@ -158,6 +174,7 @@ export function sidebarModel(input: SidebarInput): ProjectGroup[] {
 
   const rows: ThreadRow[] = input.sessions.map((session) => {
     const thread = liveById.get(session.id);
+    const dot = dotFor(thread);
     return {
       id: session.id,
       // A live RPC session can announce a generated title before the next disk catalogue
@@ -169,7 +186,8 @@ export function sidebarModel(input: SidebarInput): ProjectGroup[] {
         session.createdAt,
       ),
       live: thread !== undefined,
-      dot: dotFor(thread),
+      dot,
+      led: ledFor(dot, thread !== undefined),
       unread: unread.has(session.id),
       note: noteFor(session.status, thread !== undefined),
       suspended: session.suspended && thread === undefined,
@@ -179,6 +197,8 @@ export function sidebarModel(input: SidebarInput): ProjectGroup[] {
       messageCount: session.messageCount,
       pinned: session.pinned,
       project: session.cwd,
+      firstMessage: session.firstMessage,
+      status: session.status,
     };
   });
 
@@ -187,11 +207,13 @@ export function sidebarModel(input: SidebarInput): ProjectGroup[] {
   const known = new Set(rows.map((row) => row.id));
   for (const thread of input.live) {
     if (known.has(thread.id)) continue;
+    const dot = dotFor(thread);
     rows.push({
       id: thread.id,
       title: displayName(thread.title, "", input.now, null),
       live: true,
-      dot: dotFor(thread),
+      dot,
+      led: ledFor(dot, true),
       unread: unread.has(thread.id),
       note: null,
       // A session the engine has not written to disk yet has never been released by anything.
@@ -202,6 +224,8 @@ export function sidebarModel(input: SidebarInput): ProjectGroup[] {
       messageCount: 0,
       pinned: false,
       project: thread.workspace,
+      firstMessage: "",
+      status: thread.error ? "error" : "live",
     });
   }
 
@@ -358,5 +382,51 @@ export function isNoLiveThreadError(cause: unknown): boolean {
     return cause.message.includes("no live thread");
   }
   return String(cause).includes("no live thread");
+}
+
+/** Format modified epoch milliseconds as concise relative time (e.g. 'now', '5m', '2h', '3d'). */
+export function formatRelativeTime(modifiedAt: number, now = Date.now()): string {
+  if (!modifiedAt || modifiedAt <= 0) return "";
+  const diffSec = Math.max(0, Math.floor((now - modifiedAt) / 1000));
+  if (diffSec < 60) return "now";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour}h`;
+  const diffDay = Math.floor(diffHour / 24);
+  if (diffDay < 30) return `${diffDay}d`;
+  return `${Math.floor(diffDay / 30)}mo`;
+}
+
+/** Format modified timestamp as friendly descriptive relative time for hover cards. */
+export function formatFriendlyTime(modifiedAt: number, now = Date.now()): string {
+  if (!modifiedAt || modifiedAt <= 0) return "";
+  const diffSec = Math.max(0, Math.floor((now - modifiedAt) / 1000));
+  if (diffSec < 45) return "Just now";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin === 1) return "1 min ago";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour === 1) return "1 hour ago";
+  if (diffHour < 24) return `${diffHour}h ago`;
+  const diffDay = Math.floor(diffHour / 24);
+  if (diffDay === 1) return "Yesterday";
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return new Date(modifiedAt).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+/** Format timestamp into precise human readable string (e.g. 'Oct 29, 23:45'). */
+export function formatFullDate(timestamp: number): string {
+  if (!timestamp || timestamp <= 0) return "";
+  const date = new Date(timestamp);
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 

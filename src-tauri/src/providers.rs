@@ -13,7 +13,7 @@ use serde_json::json;
 use crate::dto::{CatalogProviderDto, CustomProviderInput, ProviderAccountDto};
 
 /// Return the agent directory path.
-fn resolve_agent_dir() -> Result<PathBuf, String> {
+pub(crate) fn resolve_agent_dir() -> Result<PathBuf, String> {
     omp_store::paths::agent_dir()
         .ok_or_else(|| "could not resolve the agent directory (~/.omp/agent)".to_string())
 }
@@ -58,10 +58,10 @@ pub fn get_catalog_providers() -> Vec<CatalogProviderDto> {
         },
         CatalogProviderDto {
             id: "openai-codex".into(),
-            name: "OpenAI Codex".into(),
+            name: "OpenAI Codex (ChatGPT)".into(),
             auth_type: "oauth".into(),
             env_var: None,
-            description: Some("ChatGPT Plus/Team/Pro subscription via OAuth".into()),
+            description: Some("ChatGPT Plus / Team / Pro subscription via OAuth".into()),
         },
         CatalogProviderDto {
             id: "google".into(),
@@ -166,10 +166,43 @@ pub fn get_catalog_providers() -> Vec<CatalogProviderDto> {
 /// Retrieve all configured providers:
 /// 1. Stored credentials from `agent.db` (`auth_credentials` table).
 /// 2. Custom providers from `models.yml`.
+/// Populates available models from `models.db` cache whenever present.
 #[tauri::command]
 pub async fn get_configured_providers() -> Result<Vec<ProviderAccountDto>, String> {
     let agent_dir = resolve_agent_dir()?;
     let mut results: Vec<ProviderAccountDto> = Vec::new();
+
+    // Read model_cache from models.db to enrich configured accounts with their available models
+    let mut cached_models_by_provider: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let models_db_path = agent_dir.join("models.db");
+    if models_db_path.is_file() {
+        if let Ok(mconn) = Connection::open(&models_db_path) {
+            if let Ok(mut mstmt) = mconn.prepare("SELECT provider_id, models FROM model_cache") {
+                if let Ok(rows) = mstmt.query_map([], |r| {
+                    let pid: String = r.get(0)?;
+                    let json_str: String = r.get(1)?;
+                    Ok((pid, json_str))
+                }) {
+                    for (pid, json_str) in rows.flatten() {
+                        if let Ok(serde_json::Value::Array(arr)) =
+                            serde_json::from_str::<serde_json::Value>(&json_str)
+                        {
+                            let mut ids = Vec::new();
+                            for item in arr {
+                                if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                                    ids.push(id.to_string());
+                                }
+                            }
+                            if !ids.is_empty() {
+                                cached_models_by_provider.insert(pid, ids);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // 1. Read SQLite agent.db
     let db_path = agent_db_path(&agent_dir);
@@ -188,13 +221,17 @@ pub async fn get_configured_providers() -> Result<Vec<ProviderAccountDto>, Strin
                     let credential_type: String = row.get(2)?;
                     let created_at: Option<i64> = row.get(3)?;
                     let _disabled: Option<String> = row.get(4)?;
+                    let models = cached_models_by_provider
+                        .get(&provider)
+                        .cloned()
+                        .unwrap_or_default();
                     Ok(ProviderAccountDto {
                         id: Some(id),
                         provider,
                         credential_type,
                         is_custom: false,
                         base_url: None,
-                        models: Vec::new(),
+                        models,
                         created_at,
                     })
                 })
@@ -206,50 +243,49 @@ pub async fn get_configured_providers() -> Result<Vec<ProviderAccountDto>, Strin
         }
     }
 
-    // 2. Read models.yml
-    let yml_path = models_yml_path(&agent_dir);
-    if yml_path.is_file() {
-        if let Ok(contents) = fs::read_to_string(&yml_path) {
-            if let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(&contents) {
-                if let Some(providers_map) = val.get("providers").and_then(|p| p.as_mapping()) {
-                    for (k, v) in providers_map {
-                        if let Some(provider_id) = k.as_str() {
-                            let base_url = v
-                                .get("baseUrl")
-                                .and_then(|u| u.as_str())
-                                .map(|s| s.to_string());
-
-                            let mut models = Vec::new();
-                            if let Some(models_seq) = v.get("models").and_then(|m| m.as_sequence())
-                            {
-                                for m in models_seq {
-                                    if let Some(mid) = m.get("id").and_then(|id| id.as_str()) {
-                                        models.push(mid.to_string());
-                                    }
-                                }
-                            }
-
-                            // A provider entry in models.yml with no baseUrl and no custom models
-                            // is an override for a standard provider (such as modelOverrides),
-                            // not a custom provider endpoint.
-                            if base_url.is_none() && models.is_empty() {
-                                continue;
-                            }
-
-                            results.push(ProviderAccountDto {
-                                id: None,
-                                provider: provider_id.to_string(),
-                                credential_type: "custom".to_string(),
-                                is_custom: true,
-                                base_url,
-                                models,
-                                created_at: None,
-                            });
-                        }
-                    }
-                }
+    // 2. Read models.yml using shared typed helper
+    let custom_providers = crate::provider_probe::read_custom_providers_config(&agent_dir);
+    for (provider_id, cfg) in custom_providers {
+        let mut models = Vec::new();
+        for m in &cfg.models {
+            if let Some(mid) = m.get("id").and_then(|id| id.as_str()) {
+                models.push(mid.to_string());
             }
         }
+
+        // If this provider is already present in results from auth_credentials (like openai-codex),
+        // merge the extra models into the existing entry!
+        if let Some(existing) = results.iter_mut().find(|r| r.provider == provider_id) {
+            for m in models {
+                if !existing.models.contains(&m) {
+                    existing.models.push(m);
+                }
+            }
+            continue;
+        }
+
+        if models.is_empty() {
+            if let Some(cached) = cached_models_by_provider.get(&provider_id) {
+                models = cached.clone();
+            }
+        }
+
+        // A provider entry in models.yml with no baseUrl and no custom models
+        // is an override for a standard provider (such as modelOverrides),
+        // not a custom provider endpoint.
+        if cfg.base_url.is_none() && models.is_empty() {
+            continue;
+        }
+
+        results.push(ProviderAccountDto {
+            id: None,
+            provider: provider_id,
+            credential_type: "custom".to_string(),
+            is_custom: true,
+            base_url: cfg.base_url,
+            models,
+            created_at: None,
+        });
     }
 
     Ok(results)

@@ -1128,6 +1128,17 @@ pub struct ProviderAccountDto {
     pub created_at: Option<i64>,
 }
 
+/// Result of testing connection to a provider.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderTestResultDto {
+    pub ok: bool,
+    pub latency_ms: u64,
+    pub model_count: usize,
+    pub sample_models: Vec<String>,
+    pub message: String,
+}
+
 /// A catalog provider definition for the "Add Provider" modal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

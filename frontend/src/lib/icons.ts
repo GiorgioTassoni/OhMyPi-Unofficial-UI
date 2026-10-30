@@ -1,6 +1,8 @@
 import {
+  Activity,
   ArrowLeft,
   ArrowUp,
+  Asterisk,
   Bell,
   Bot,
   Brain,
@@ -81,6 +83,7 @@ export const ICONS = {
   minus: Minus,
   close: X,
   check: Check,
+  activity: Activity,
   "chevron-down": ChevronDown,
   "chevron-right": ChevronRight,
   "chevron-up": ChevronUp,
@@ -117,6 +120,8 @@ export const ICONS = {
   steer: CornerDownRight,
   zap: Zap,
   "rotate-ccw": RotateCcw,
+  asterisk: Asterisk,
+  spinner: Asterisk,
 } as const satisfies Record<string, LucideIcon>;
 
 /** Every glyph this window can draw. */

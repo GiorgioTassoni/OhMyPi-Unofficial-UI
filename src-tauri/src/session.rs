@@ -1868,10 +1868,7 @@ fn filter_completed_todos(phases: &[TodoPhase]) -> (bool, Vec<Value>) {
 
 /// Auto-clear completed or abandoned tasks at the end of a turn,
 /// updating the in-memory plan in the engine without requiring user action.
-async fn auto_clear_completed_todos(
-    client: &OmpClient,
-    control: &Mutex<SessionControl>,
-) {
+async fn auto_clear_completed_todos(client: &OmpClient, control: &Mutex<SessionControl>) {
     let (has_completed, remaining_phases) = {
         let Ok(ctrl) = control.lock() else { return };
         filter_completed_todos(&ctrl.todo_phases)

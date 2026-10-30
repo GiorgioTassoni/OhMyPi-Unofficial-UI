@@ -102,11 +102,20 @@ function normalizeSearchText(text: string): string {
  * - Multi-word / token search (e.g. `openrouter gpt 6.1`, `claude sonnet`)
  * - Alphanumeric stripped search (e.g. `gpt6.1` matching `GPT-6.1`)
  */
+const PROVIDER_ALIASES: Record<string, string[]> = {
+  "openai-codex": ["chatgpt", "chat-gpt", "chat gpt", "openai", "codex", "plus", "pro"],
+  openai: ["chatgpt", "chat-gpt", "chat gpt", "gpt", "openai"],
+  "google-antigravity": ["gemini", "google", "antigravity"],
+  anthropic: ["claude", "anthropic"],
+  "github-copilot": ["copilot", "github"],
+};
+
 export function matchesModelQuery(model: ModelOption, query: string): boolean {
   const needle = query.trim().toLowerCase();
   if (needle === "") return true;
 
-  const rawFields = [model.name, model.id, model.provider].map((f) => f.toLowerCase());
+  const aliases = PROVIDER_ALIASES[model.provider.toLowerCase()] ?? [];
+  const rawFields = [model.name, model.id, model.provider, ...aliases].map((f) => f.toLowerCase());
   const combinedRaw = rawFields.join(" ");
 
   if (combinedRaw.includes(needle)) {

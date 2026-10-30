@@ -61,15 +61,16 @@ const extension = computed(() => meta.value.extension);
 
 const isImage = computed(() => isImageExtension(extension.value));
 const isSvg = computed(() => isSvgExtension(extension.value));
+const isHtml = computed(() => extension.value === "html" || extension.value === "htm");
 const frontmatter = computed(() => parseFrontmatter(content.value));
 const isSkill = computed(() => cleanPath.value.startsWith("skill:") || cleanPath.value.startsWith("skill://") || cleanPath.value.endsWith("SKILL.md") || (frontmatter.value.hasFrontmatter && !!frontmatter.value.attributes.name));
 const isMarkdown = computed(() => isMarkdownExtension(extension.value) || frontmatter.value.hasFrontmatter || isSkill.value);
 
-/** Segmented view toggle for markdown & SVG documents: formatted Preview vs raw line-numbered source. */
-const mode = ref<"preview" | "raw">(isMarkdown.value || isSvg.value ? "preview" : "raw");
+/** Segmented view toggle for markdown, SVG & HTML documents: formatted Preview vs raw line-numbered source. */
+const mode = ref<"preview" | "raw">(isMarkdown.value || isSvg.value || isHtml.value ? "preview" : "raw");
 
-watch([extension, isMarkdown], () => {
-  if (isMarkdown.value || isSvg.value) {
+watch([extension, isMarkdown, isHtml], () => {
+  if (isMarkdown.value || isSvg.value || isHtml.value) {
     mode.value = "preview";
   } else {
     mode.value = "raw";
@@ -340,8 +341,8 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
 
       <!-- Actions & Controls -->
       <div class="flex items-center gap-2 shrink-0">
-        <!-- Markdown & SVG Preview vs Raw Toggle -->
-        <div v-if="isMarkdown || isSvg" class="flex items-center rounded-[5px] border border-line/60 bg-raised/50 p-0.5 text-[11px]">
+        <!-- Markdown, SVG & HTML Preview vs Raw Toggle -->
+        <div v-if="isMarkdown || isSvg || isHtml" class="flex items-center rounded-[5px] border border-line/60 bg-raised/50 p-0.5 text-[11px]">
           <button
             type="button"
             class="rounded-[4px] px-2 py-0.5 font-medium transition-colors"
@@ -494,7 +495,7 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
       <div class="flex items-center gap-2 truncate">
         <span class="flex items-center gap-1 text-accent/90 font-medium">
           <span class="h-1.5 w-1.5 rounded-full bg-accent" />
-          {{ isImage && (!isSvg || mode === 'preview') ? 'Image preview' : (isMarkdown && mode === 'preview' ? (isSkill ? 'Skill preview' : 'Markdown preview') : 'Read-only view') }}
+          {{ isImage && (!isSvg || mode === 'preview') ? 'Image preview' : (isHtml && mode === 'preview' ? 'HTML preview' : (isMarkdown && mode === 'preview' ? (isSkill ? 'Skill preview' : 'Markdown preview') : 'Read-only view')) }}
         </span>
         <span>·</span>
         <span class="truncate font-mono text-faint/80">{{ props.file.path }}</span>
@@ -590,6 +591,19 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
         </div>
 
         <MarkdownBody :text="frontmatter.body" @failed="emit('failed', $event)" />
+      </div>
+
+      <!-- HTML Sandbox Preview View -->
+      <div
+        v-else-if="isHtml && mode === 'preview'"
+        class="h-full w-full overflow-hidden bg-white"
+      >
+        <iframe
+          :srcdoc="content"
+          sandbox="allow-scripts"
+          class="h-full w-full border-0"
+          title="HTML Document Preview"
+        />
       </div>
 
       <!-- Code & Raw Text Lockstep Line-Numbered View -->

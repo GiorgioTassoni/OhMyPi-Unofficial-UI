@@ -497,7 +497,7 @@ pub fn subagent_file_changes(
     }
 
     // Sort newest modified first and limit scan to top recent subagents.
-    parked_agents.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
+    parked_agents.sort_by_key(|a| std::cmp::Reverse(a.modified_ms));
     for agent in parked_agents
         .into_iter()
         .filter(|a| !a.advisor)

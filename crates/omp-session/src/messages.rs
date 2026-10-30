@@ -173,16 +173,13 @@ impl Message {
         } else {
             raw
         };
-        let role = raw
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or_else(|| {
-                if raw.get("customType").and_then(Value::as_str) == Some("skill-prompt") {
-                    "user"
-                } else {
-                    ""
-                }
-            });
+        let role = raw.get("role").and_then(Value::as_str).unwrap_or_else(|| {
+            if raw.get("customType").and_then(Value::as_str) == Some("skill-prompt") {
+                "user"
+            } else {
+                ""
+            }
+        });
         let kind = decode_kind(role, raw);
 
         Self {

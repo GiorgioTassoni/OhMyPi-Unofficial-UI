@@ -48,6 +48,7 @@ pub mod notify;
 pub mod palette;
 pub mod panel;
 pub mod policy;
+pub mod provider_probe;
 pub mod providers;
 pub mod pty;
 pub mod search;
@@ -242,6 +243,7 @@ pub fn run() {
             providers::remove_provider_credential,
             providers::add_custom_provider,
             providers::remove_custom_provider,
+            provider_probe::test_provider_connection,
             skills::list_skills,
             skills::create_custom_skill,
             skills::inspect_remote_skill,

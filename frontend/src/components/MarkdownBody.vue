@@ -118,9 +118,9 @@ async function onClick(event: MouseEvent): Promise<void> {
 .md :deep(h4),
 .md :deep(h5),
 .md :deep(h6) {
-  font-weight: 600;
-  line-height: 1.3;
-  letter-spacing: -0.015em;
+  font-weight: 550;
+  line-height: 1.35;
+  letter-spacing: -0.012em;
   color: var(--color-fg);
 }
 

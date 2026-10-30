@@ -336,35 +336,33 @@ textarea:focus-visible,
   outline: none;
 }
 
-/* Modern sleek scrollbars: thin, centered, subtle until hovered, without track borders */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--color-line-strong) 65%, transparent) transparent;
-}
-
+/* Modern sleek scrollbars: borderless, transparent track, subtle floating thumb */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-  background: transparent;
-  border: none;
+  width: 5px;
+  height: 5px;
+  background-color: transparent;
 }
 
 ::-webkit-scrollbar-track,
 ::-webkit-scrollbar-track-piece {
-  background: transparent;
-  border: none;
-  box-shadow: none;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
 }
 
 ::-webkit-scrollbar-thumb {
-  background-color: color-mix(in srgb, var(--color-line-strong) 55%, transparent);
-  border: none;
+  background-color: color-mix(in srgb, var(--color-line-strong) 40%, transparent);
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
   border-radius: 9999px;
+  background-clip: padding-box;
   transition: background-color 150ms ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: color-mix(in srgb, var(--color-faint) 80%, transparent);
+  background-color: color-mix(in srgb, var(--color-faint) 65%, transparent);
 }
 
 ::-webkit-scrollbar-thumb:active {
@@ -372,8 +370,8 @@ textarea:focus-visible,
 }
 
 ::-webkit-scrollbar-corner {
-  background: transparent;
-  border: none;
+  background-color: transparent !important;
+  border: none !important;
 }
 
 /* The virtualizer preserves the reader's position when measured turn heights change.
@@ -466,7 +464,33 @@ samp {
   transition: transform 180ms ease;
 }
 
+/* 5s interval bounce for working/streaming indicator */
+@keyframes led-bounce-5s {
+  0%, 82%, 100% {
+    transform: translateY(0);
+  }
+  86% {
+    transform: translateY(-3.5px);
+  }
+  90% {
+    transform: translateY(0);
+  }
+  93% {
+    transform: translateY(-1.5px);
+  }
+  96% {
+    transform: translateY(0);
+  }
+}
+
+.animate-led-bounce {
+  animation: led-bounce-5s 5s cubic-bezier(0.25, 1, 0.5, 1) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .animate-led-bounce {
+    animation: none;
+  }
   .right-panel-column:not(.right-panel-dragging),
   .right-panel-enter-active,
   .right-panel-leave-active,

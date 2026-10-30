@@ -10,6 +10,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   type ModelOption,
+  matchesModelQuery,
   modelKey,
   moveFavourite,
   parseKey,
@@ -164,6 +165,14 @@ describe("visibleGroups", () => {
     expect(visibleGroups(testCatalogue, "gpt6.1", []).groups).toEqual([
       { provider: "openrouter", models: [gptSol] },
     ]);
+  });
+
+  test("matches queries against provider aliases (e.g. chatgpt for openai-codex)", () => {
+    const codexLuna = model("openai-codex", "gpt-5.6-luna", "GPT-5.6-Luna");
+    expect(matchesModelQuery(codexLuna, "chatgpt")).toBe(true);
+    expect(matchesModelQuery(codexLuna, "chat gpt")).toBe(true);
+    expect(matchesModelQuery(codexLuna, "codex")).toBe(true);
+    expect(matchesModelQuery(codexLuna, "openai")).toBe(true);
   });
 
   test("trims the query, and whitespace alone is no query", () => {

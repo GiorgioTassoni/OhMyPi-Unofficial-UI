@@ -115,6 +115,40 @@ export function titleParts(title: string): ParsedDialogTitle {
 }
 
 /**
+ * Normalizes and truncates a question title or dialog prompt for collapsed presentation.
+ * Replaces newlines/multiple spaces with a single space and caps at `maxChars`.
+ */
+export function formatCollapsibleTitle(text: string, maxChars = 65): string {
+  const single = text.replace(/\s+/g, " ").trim();
+  if (single.length <= maxChars) {
+    return single;
+  }
+  return single.slice(0, maxChars).trimEnd() + "…";
+}
+
+export interface DialogSummaryParams {
+  titleText: string;
+  message?: string | null | undefined;
+  kind?: string | null | undefined;
+  approvalTool?: string | null | undefined;
+  command?: string | null | undefined;
+}
+
+/**
+ * Derives a concise, one-line summary title for a dialog or approval request.
+ */
+export function dialogSummaryTitle(params: DialogSummaryParams, maxChars = 65): string {
+  if (params.approvalTool) {
+    if (params.command) {
+      return formatCollapsibleTitle(`Run: ${params.command}`, maxChars);
+    }
+    return formatCollapsibleTitle(`Approval: ${params.approvalTool}`, maxChars);
+  }
+  const base = params.titleText || params.message || (params.kind === "confirm" ? "Confirmation" : "Question");
+  return formatCollapsibleTitle(base, maxChars);
+}
+
+/**
  * Stable key across round-trips of the same multi-choice question.
  */
 export function questionKey(thread: string, title: string): string {

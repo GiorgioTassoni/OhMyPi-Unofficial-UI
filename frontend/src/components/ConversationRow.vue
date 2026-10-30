@@ -149,7 +149,7 @@ const skillPrompt = computed(() => parseSkillPrompt(props.row));
         class="group/message flex max-w-[80%] min-w-0 flex-col items-end gap-1.5"
       >
         <p
-          class="whitespace-pre-wrap break-words rounded-[16px] bg-raised/95 border border-line/60 border-t-line-strong/40 px-4 py-2.5 text-[13px] leading-relaxed text-fg shadow-sm select-text"
+          class="whitespace-pre-wrap break-words rounded-[14px] bg-raised/75 border border-line/50 px-3.5 py-2.5 text-[13px] leading-relaxed text-fg select-text"
         >
           {{ skillPrompt.args }}
         </p>
@@ -190,7 +190,7 @@ const skillPrompt = computed(() => parseSkillPrompt(props.row));
     <div v-else-if="row.text" class="group/message flex max-w-[80%] min-w-0 flex-col items-end gap-1.5">
       <p
         v-if="userMessage.text"
-        class="whitespace-pre-wrap break-words rounded-[16px] bg-raised/95 border border-line/60 border-t-line-strong/40 px-4 py-2.5 text-[13px] leading-relaxed text-fg shadow-sm select-text"
+        class="whitespace-pre-wrap break-words rounded-[14px] bg-raised/75 border border-line/50 px-3.5 py-2.5 text-[13px] leading-relaxed text-fg select-text"
       >
         {{ userMessage.text }}
       </p>

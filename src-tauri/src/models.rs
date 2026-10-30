@@ -25,7 +25,7 @@
 //! [`LiveSession::reread_control`] exists and why every sender below ends with it.
 
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -220,6 +220,14 @@ impl Catalogue {
                 path.display()
             ),
         }
+
+        if cache.options.is_empty() {
+            if let Some(agent_dir) = omp_store::paths::agent_dir() {
+                if let Ok(db_options) = fetch_from_models_db(&agent_dir) {
+                    cache.options = db_options;
+                }
+            }
+        }
     }
 
     /// Write the cache for the next launch.
@@ -308,6 +316,71 @@ pub async fn fetch(client: &OmpClient) -> Result<Vec<ModelOption>, String> {
     }
 
     parse(&response)
+}
+
+/// Fetch the catalogue from the engine's local SQLite cache in `~/.omp/agent/models.db`.
+///
+/// Used as an authoritative out-of-band source when no live session client is available,
+/// or when restoring providers directly after auth login.
+pub fn fetch_from_models_db(agent_dir: &Path) -> Result<Vec<ModelOption>, String> {
+    let db_path = agent_dir.join("models.db");
+    if !db_path.is_file() {
+        return Err("models.db not found".to_string());
+    }
+
+    let conn = rusqlite::Connection::open(&db_path)
+        .map_err(|e| format!("failed to open models.db: {e}"))?;
+
+    let mut stmt = conn
+        .prepare("SELECT provider_id, models FROM model_cache")
+        .map_err(|e| format!("failed to prepare statement on models.db: {e}"))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            let pid: String = row.get(0)?;
+            let json_str: String = row.get(1)?;
+            Ok((pid, json_str))
+        })
+        .map_err(|e| format!("failed to read model_cache: {e}"))?;
+
+    let mut options = Vec::new();
+    for row in rows.flatten() {
+        let (_pid, json_str) = row;
+        if let Ok(Value::Array(arr)) = serde_json::from_str::<Value>(&json_str) {
+            for m in arr {
+                if let Some(opt) = option(&m) {
+                    options.push(opt);
+                }
+            }
+        }
+    }
+
+    // Also read any models defined in models.yml so custom/extended models (like gpt-6.1-sol) appear
+    let custom_providers = crate::provider_probe::read_custom_providers_config(agent_dir);
+    for (provider_id, config) in custom_providers {
+        for mut json_val in config.models {
+            if let Some(obj) = json_val.as_object_mut() {
+                obj.insert(
+                    "provider".into(),
+                    serde_json::Value::String(provider_id.clone()),
+                );
+            }
+            if let Some(opt) = option(&json_val) {
+                if !options
+                    .iter()
+                    .any(|existing| existing.provider == opt.provider && existing.id == opt.id)
+                {
+                    options.push(opt);
+                }
+            }
+        }
+    }
+
+    if options.is_empty() {
+        return Err("no models found in models.db".to_string());
+    }
+
+    Ok(options)
 }
 
 /// Every row of a `get_available_models` response, as picker rows.

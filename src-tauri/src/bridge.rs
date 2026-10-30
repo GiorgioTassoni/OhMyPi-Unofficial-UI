@@ -31,8 +31,7 @@ use crate::dto::{
     CommandSnapshot, ImageIn, IndexStatus, LaunchContext, ModelCatalogue, ParkedAgent,
     ProjectSnapshot, RowSnapshot, SearchHit, SessionStatus, SessionSummaryDto, SidebarSnapshot,
     SubagentFileChange, TerminalSnapshot, ThreadAgents, ThreadSnapshot, TodoPhaseInput,
-    TodoPhaseSnapshot, UiAnswer, UiRequestSnapshot, WorkspaceEntry,
-    WorkspaceFileMatch,
+    TodoPhaseSnapshot, UiAnswer, UiRequestSnapshot, WorkspaceEntry, WorkspaceFileMatch,
 };
 use crate::favourites::Favourites;
 use crate::flows;
@@ -635,15 +634,23 @@ pub fn models(state: State<'_, AppState>) -> Result<ModelCatalogue, String> {
 /// takes a thread.
 #[tauri::command]
 pub async fn refresh_models(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let live = any_thread(&state)?;
-    let client = live
-        .client()
-        .ok_or_else(|| "the session is shutting down".to_string())?;
+    let client = any_thread(&state).ok().and_then(|live| live.client());
 
-    state
-        .models
-        .refresh(&app, crate::models::fetch(&client))
-        .await
+    if let Some(client) = client {
+        state
+            .models
+            .refresh(&app, crate::models::fetch(&client))
+            .await
+    } else if let Some(agent_dir) = omp_store::paths::agent_dir() {
+        state
+            .models
+            .refresh(&app, async {
+                crate::models::fetch_from_models_db(&agent_dir)
+            })
+            .await
+    } else {
+        Err("no live session or agent storage available to refresh models".to_string())
+    }
 }
 
 /// Make `provider/id` the thread's model (`docs/12` §7.1).
