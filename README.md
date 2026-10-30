@@ -14,7 +14,7 @@ the `--mode rpc-ui` NDJSON protocol over stdio, the `omp` CLI, and the engine's 
 and session files — so upstream can move without our code changing, and no OMP internals
 are imported or patched.
 
-It ships the pinned engine binary inside the installers (OMP **v18.2.6**), so no separate
+It ships the pinned engine binary inside the installers (OMP **v18.14.0**), so no separate
 `omp` install is needed. The Rust host lives in `src-tauri/` and `crates/`; the window is
 Vue 3 + TypeScript + Tailwind in `frontend/`.
 
@@ -104,7 +104,7 @@ the panels on either side are resizable by dragging their edge (double-click res
 ## Status and scope
 
 Version 0.1.0 — first usable version; expect rough edges. The wrapper targets the wire
-protocol of OMP v18.2.6 and is verified against a real engine on Linux. There is no
+protocol of OMP v18.14.0 and is verified against a real engine on Linux. There is no
 auto-updater, and macOS/Windows installers are built but have not been exercised on those
 platforms yet.
 

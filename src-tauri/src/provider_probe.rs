@@ -182,77 +182,6 @@ async fn probe_custom_endpoint(
     }
 }
 
-/// Probes an OAuth-authenticated provider session (e.g. OpenAI Codex / ChatGPT).
-async fn probe_oauth_session(
-    omp_bin: &Path,
-    start: Instant,
-) -> Result<ProviderTestResultDto, String> {
-    let token_res = tokio::time::timeout(
-        std::time::Duration::from_secs(6),
-        tokio::process::Command::new(omp_bin)
-            .args(["token", "openai-codex"])
-            .output(),
-    )
-    .await;
-
-    let latency_ms = start.elapsed().as_millis() as u64;
-    match token_res {
-        Ok(Ok(out)) if out.status.success() => {
-            let token = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if token.is_empty() || token == "none" {
-                return Ok(ProviderTestResultDto {
-                    ok: false,
-                    latency_ms,
-                    model_count: 0,
-                    sample_models: Vec::new(),
-                    message: "OAuth token missing or expired: please log in again".into(),
-                });
-            }
-
-            let sample_models: Vec<String> = vec![
-                "gpt-5.6-luna".into(),
-                "gpt-5.6-sol".into(),
-                "gpt-5.6-terra".into(),
-                "gpt-6-astra".into(),
-                "gpt-6.1-sol".into(),
-                "gpt-6.1-terra".into(),
-            ];
-            let count = sample_models.len();
-
-            Ok(ProviderTestResultDto {
-                ok: true,
-                latency_ms,
-                model_count: count,
-                sample_models,
-                message: format!(
-                    "Connected (ChatGPT OAuth session active, {count} models available)"
-                ),
-            })
-        }
-        Ok(Ok(out)) => {
-            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            Ok(ProviderTestResultDto {
-                ok: false,
-                latency_ms,
-                model_count: 0,
-                sample_models: Vec::new(),
-                message: if !err.is_empty() {
-                    err
-                } else {
-                    "ChatGPT OAuth token invalid or expired".into()
-                },
-            })
-        }
-        _ => Ok(ProviderTestResultDto {
-            ok: false,
-            latency_ms: 6000,
-            model_count: 0,
-            sample_models: Vec::new(),
-            message: "Connection timed out checking ChatGPT OAuth token".into(),
-        }),
-    }
-}
-
 /// Fallback probe for catalog providers: verify credentials and model listing via `omp` CLI.
 async fn probe_omp_models(
     omp_bin: &Path,
@@ -381,12 +310,7 @@ pub async fn test_provider_connection(provider: String) -> Result<ProviderTestRe
 
     let omp_bin = omp_transport::resolve_omp_binary();
 
-    // 2. OAuth provider: OpenAI Codex (ChatGPT)
-    if provider == "openai-codex" {
-        return probe_oauth_session(&omp_bin, start).await;
-    }
-
-    // 3. Fallback for catalog providers: verify token and models via omp CLI
+    // 2. Query provider models dynamically via omp CLI (works for OAuth & API keys)
     probe_omp_models(&omp_bin, &provider, start).await
 }
 

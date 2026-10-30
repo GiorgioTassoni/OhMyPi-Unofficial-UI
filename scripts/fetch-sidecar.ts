@@ -22,7 +22,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
 /** Pinned upstream release. Never a floating `latest`. */
-const RELEASE_TAG = "v18.2.6";
+const RELEASE_TAG = "v18.14.0";
 const REPO = "can1357/oh-my-pi";
 const RELEASE_BASE = `https://github.com/${REPO}/releases/download/${RELEASE_TAG}`;
 
@@ -41,57 +41,57 @@ interface Target {
 /**
  * Every prebuilt asset published for the pinned release.
  *
- * Sizes and digests were read from the GitHub release API for `v18.2.6`; the
+ * Sizes and digests were read from the GitHub release API for `v18.14.0`; the
  * `--audit` mode re-verifies them against the release's SHA256SUMS.txt.
  */
 const TARGETS: Record<string, Target> = {
 	"darwin-arm64": {
 		asset: "omp-darwin-arm64",
 		triple: "aarch64-apple-darwin",
-		sha256: "d498da40d577e1ffa681ca8632c2ea40a9f722a08b880412011d37dffee9513a",
-		bytes: 187226128,
+		sha256: "608843959ab34295d52460dd09dd7d548b6c903c08a83c67954c2d4c36fd1f5a",
+		bytes: 214816912,
 	},
 	"darwin-x64": {
 		asset: "omp-darwin-x64",
 		triple: "x86_64-apple-darwin",
-		sha256: "d558800fa326abc68ae3cbbb3e536322ec643bdcfddc71e6a988857dbe1a94a3",
-		bytes: 195634096,
+		sha256: "fc119dff47f99569e32b0a2b10c25db9733ac6faef6ca005539b6e6f610e5984",
+		bytes: 226728400,
 	},
 	"linux-x64": {
 		asset: "omp-linux-x64",
 		triple: "x86_64-unknown-linux-gnu",
-		sha256: "0f38598c91e823d8cce07f151ec3999d51f213fb2cc3e07d89f1af8eef9247a2",
-		bytes: 252405216,
+		sha256: "e7dd2b606c4ebe9d1a7bcfad1b8820db968cd6b05409fed1c6bc8db0b6a95a8f",
+		bytes: 276244656,
 	},
 	"linux-arm64": {
 		asset: "omp-linux-arm64",
 		triple: "aarch64-unknown-linux-gnu",
-		sha256: "07245cbe050c3999ab5cea9babfe84e7e8819d2f4d5e49bef47c0aacb6b957e4",
-		bytes: 208390440,
+		sha256: "dba8d170499709bc87359e02e677821aa76a6ef998ca0254578fe4ea07aff5bc",
+		bytes: 236047352,
 	},
 	"linux-musl-x64": {
 		asset: "omp-linux-musl-x64",
 		triple: "x86_64-unknown-linux-musl",
-		sha256: "d73333024279d876c45cfbfe5257e4b388aad130a346a92e522aad6c875c99be",
-		bytes: 204260912,
+		sha256: "794b2db4baf1d37bc11ba8ddcdf39d5bd4a9743849f9c5beee835efeb62949d6",
+		bytes: 231409064,
 	},
 	"linux-musl-arm64": {
 		asset: "omp-linux-musl-arm64",
 		triple: "aarch64-unknown-linux-musl",
-		sha256: "f53c2f6d9c4aaa93ede2e01bbbdcfec943ae9157a3ba54fbcfc290d6157b8629",
-		bytes: 201460944,
+		sha256: "5b464a4a882c4c9f3576f7ef126756bd878f8e220f0340a9720bea3ed7b931dc",
+		bytes: 228334696,
 	},
 	"windows-x64": {
 		asset: "omp-windows-x64.exe",
 		triple: "x86_64-pc-windows-msvc",
-		sha256: "1fbff31df4bba1ec8a48d74b392e4b4c8c12de0a7f53cf62c6e5436fdfebda28",
-		bytes: 212434944,
+		sha256: "620a5935cdb6a9ed52d8b0c93892d6b5bb84155244a98f3be82af0455177bf29",
+		bytes: 242797056,
 	},
 	"windows-arm64": {
 		asset: "omp-windows-arm64.exe",
 		triple: "aarch64-pc-windows-msvc",
-		sha256: "b69350534219c067f284bac8079077c404df4b8100bff333ae9ab839e8beaeef",
-		bytes: 201697792,
+		sha256: "759336455917ec0ed6c0d1da0e8bf13a69577fd3828e1a4c968fa068b3e73c1f",
+		bytes: 225334784,
 	},
 };
 
@@ -281,7 +281,15 @@ async function verifyStaged(keys: string[]): Promise<void> {
 /** Fetch the upstream attribution file we must ship with the binary. */
 async function stageNotices(): Promise<void> {
 	const response = await fetch(`${RELEASE_BASE}/THIRD-PARTY-NOTICES.txt`, { redirect: "follow" });
-	if (!response.ok) fail(`could not fetch THIRD-PARTY-NOTICES.txt (HTTP ${response.status})`);
+	if (!response.ok) {
+		const licenseResp = await fetch(`${RELEASE_BASE}/LICENSE`, { redirect: "follow" });
+		if (licenseResp.ok) {
+			await Bun.write(NOTICES_PATH, await licenseResp.text());
+			process.stdout.write(`✓ staged ${NOTICES_PATH} (from LICENSE)\n`);
+			return;
+		}
+		fail(`could not fetch THIRD-PARTY-NOTICES.txt or LICENSE (HTTP ${response.status})`);
+	}
 	await Bun.write(NOTICES_PATH, await response.text());
 	process.stdout.write(`✓ staged ${NOTICES_PATH}\n`);
 }
