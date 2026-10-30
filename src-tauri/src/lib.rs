@@ -243,6 +243,7 @@ pub fn run() {
             providers::remove_provider_credential,
             providers::add_custom_provider,
             providers::remove_custom_provider,
+            providers::get_oauth_usage_limits,
             provider_probe::test_provider_connection,
             skills::list_skills,
             skills::create_custom_skill,

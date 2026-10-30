@@ -1161,3 +1161,24 @@ pub struct CustomProviderInput {
     pub model_id: String,
     pub model_name: Option<String>,
 }
+
+/// A quota window limit for an OAuth provider (e.g. 5h primary or weekly secondary).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthWindowLimitDto {
+    pub label: String,
+    pub used_percent: f64,
+    pub reset_at: Option<i64>,
+    pub reset_after_seconds: Option<i64>,
+}
+
+/// Usage and rate limits for an authenticated OAuth provider.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthUsageLimitDto {
+    pub provider: String,
+    pub display_name: String,
+    pub plan_type: Option<String>,
+    pub email: Option<String>,
+    pub windows: Vec<OAuthWindowLimitDto>,
+}

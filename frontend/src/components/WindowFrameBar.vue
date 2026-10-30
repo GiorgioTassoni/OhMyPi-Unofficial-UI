@@ -1,9 +1,4 @@
 <script setup lang="ts">
-/**
- * Custom integrated window frame bar for frameless mode (decorations: false).
- * Provides window title, workspace/project pill, window dragging (data-tauri-drag-region),
- * double-click to maximize, and custom minimize, maximize/restore, and close buttons.
- */
 import { onMounted, onUnmounted, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import logo from "../assets/ohmypi-logo.svg";
@@ -14,52 +9,105 @@ const props = defineProps<{
   title?: string | null;
 }>();
 
+const STORAGE_KEY = "omp_window_maximized";
 const isMaximized = ref(false);
 let unlistenResized: (() => void) | null = null;
+let lastToggleTime = 0;
+let lastClickTime = 0;
+let lastClickX = 0;
+let lastClickY = 0;
+
+function getStoredMaximized(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function setStoredMaximized(val: boolean) {
+  try {
+    localStorage.setItem(STORAGE_KEY, val ? "true" : "false");
+  } catch {}
+}
 
 async function checkMaximized() {
   try {
-    isMaximized.value = await getCurrentWindow().isMaximized();
-  } catch {
-    // Non-desktop web fallback
-  }
+    const max = await getCurrentWindow().isMaximized();
+    isMaximized.value = max;
+    setStoredMaximized(max);
+  } catch {}
 }
 
 async function handleMinimize() {
   try {
     await getCurrentWindow().minimize();
-  } catch {
-    // Non-desktop web fallback
-  }
+  } catch {}
 }
 
 async function handleToggleMaximize() {
+  const now = Date.now();
+  if (now - lastToggleTime < 300) return;
+  lastToggleTime = now;
+
   try {
-    await getCurrentWindow().toggleMaximize();
-    await checkMaximized();
-  } catch {
-    // Non-desktop web fallback
+    const win = getCurrentWindow();
+    await win.toggleMaximize();
+    const max = await win.isMaximized();
+    isMaximized.value = max;
+    setStoredMaximized(max);
+  } catch {}
+}
+
+function handleHeaderMouseDown(e: MouseEvent) {
+  if (e.button !== 0) return;
+  if ((e.target as HTMLElement)?.closest("button")) return;
+
+  const now = Date.now();
+  const dt = now - lastClickTime;
+  const dx = Math.abs(e.clientX - lastClickX);
+  const dy = Math.abs(e.clientY - lastClickY);
+
+  if (dt < 350 && dx < 10 && dy < 10) {
+    lastClickTime = 0;
+    e.preventDefault();
+    e.stopPropagation();
+    void handleToggleMaximize();
+  } else {
+    lastClickTime = now;
+    lastClickX = e.clientX;
+    lastClickY = e.clientY;
   }
 }
 
 async function handleClose() {
   try {
     await getCurrentWindow().close();
-  } catch {
-    // Non-desktop web fallback
-  }
+  } catch {}
 }
 
 onMounted(async () => {
+  try {
+    const win = getCurrentWindow();
+    if (getStoredMaximized()) {
+      await win.maximize();
+    }
+  } catch {}
+
   await checkMaximized();
+
   try {
     const win = getCurrentWindow();
     unlistenResized = await win.onResized(async () => {
-      await checkMaximized();
+      try {
+        const isMin = await win.isMinimized();
+        if (isMin) return;
+        const max = await win.isMaximized();
+        isMaximized.value = max;
+        setStoredMaximized(max);
+      } catch {}
     });
-  } catch {
-    // Non-desktop web fallback
-  }
+  } catch {}
 });
 
 onUnmounted(() => {
@@ -74,6 +122,7 @@ onUnmounted(() => {
   <header
     class="flex h-8 w-full shrink-0 items-center justify-between border-b border-line/40 bg-surface/90 px-2.5 text-dim backdrop-blur-md select-none z-40"
     data-tauri-drag-region
+    @mousedown.capture="handleHeaderMouseDown"
     @dblclick="handleToggleMaximize"
   >
     <!-- Left: App brand -->

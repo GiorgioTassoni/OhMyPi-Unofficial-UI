@@ -99,6 +99,7 @@ import TerminalPanel from "./components/TerminalPanel.vue";
 import ThreadView from "./components/ThreadView.vue";
 import TitleBar from "./components/TitleBar.vue";
 import WindowFrameBar from "./components/WindowFrameBar.vue";
+import ClosingOverlay from "./components/ClosingOverlay.vue";
 
 /**
  * What a `ThreadView` exposes to the shell.
@@ -887,9 +888,21 @@ const menuContext = computed<ThreadContext>(() => {
 /** A live thread that can carry another session's engine commands (`/pin`). */
 const dispatcher = computed(() => live.value[0]?.id ?? null);
 
+const isClosing = ref(false);
+let unlistenClose: UnlistenFn | null = null;
 let cleanupAudio: (() => void) | null = null;
 
 onMounted(async () => {
+  try {
+    const win = getCurrentWindow();
+    unlistenClose = await win.onCloseRequested(async () => {
+      isClosing.value = true;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    });
+  } catch {
+    // Non-desktop web fallback
+  }
+
   cleanupAudio = setupAudioUnlock();
   window.addEventListener("keydown", onShortcut);
 
@@ -995,6 +1008,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  unlistenClose?.();
   cleanupAudio?.();
   for (const off of unlisten) off();
   for (const timer of noticeTimers.values()) clearTimeout(timer);
@@ -1856,5 +1870,8 @@ function describe(cause: unknown): string {
         </div>
       </div>
     </TransitionGroup>
+
+    <!-- Closing & Shutdown visual feedback overlay -->
+    <ClosingOverlay :active="isClosing" />
   </div>
 </template>

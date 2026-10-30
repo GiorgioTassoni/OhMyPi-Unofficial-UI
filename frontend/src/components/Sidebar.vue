@@ -20,6 +20,7 @@ import {
 } from "../lib/threads";
 import logo from "../assets/ohmypi-logo.svg";
 import ProjectMenu from "./ProjectMenu.vue";
+import OAuthUsageSidebarWidget from "./OAuthUsageSidebarWidget.vue";
 import Icon from "./ui/Icon.vue";
 
 const props = defineProps<{
@@ -201,10 +202,61 @@ function attention(rows: ThreadRow[]): number {
 const draggingIndex = ref<number | null>(null);
 const dropTargetIndex = ref<number | null>(null);
 const dropPosition = ref<"above" | "below" | null>(null);
+const longPressArmed = ref(false);
+const longPressIndex = ref<number | null>(null);
+let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+let dragStartPos = { x: 0, y: 0 };
+
+function cancelLongPress(): void {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+  longPressArmed.value = false;
+  longPressIndex.value = null;
+}
+
+function onCardMouseDown(event: MouseEvent, index: number): void {
+  if (event.button !== 0) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("button")) return;
+
+  cancelLongPress();
+  longPressIndex.value = index;
+  dragStartPos = { x: event.clientX, y: event.clientY };
+
+  longPressTimer = setTimeout(() => {
+    longPressArmed.value = true;
+  }, 350);
+}
+
+function onCardMouseMove(event: MouseEvent): void {
+  if (!longPressTimer) return;
+  const dist = Math.hypot(event.clientX - dragStartPos.x, event.clientY - dragStartPos.y);
+  if (dist > 6 && !longPressArmed.value) {
+    cancelLongPress();
+  }
+}
+
+function onCardMouseUp(event: MouseEvent, path: string): void {
+  const wasArmed = longPressArmed.value;
+  const isDragging = draggingIndex.value !== null;
+  cancelLongPress();
+
+  const target = event.target as HTMLElement | null;
+  if (!wasArmed && !isDragging && !target?.closest("button")) {
+    toggle(path);
+  }
+}
+
+function onCardMouseLeave(): void {
+  if (draggingIndex.value === null) {
+    cancelLongPress();
+  }
+}
 
 function onDragStart(event: DragEvent, index: number): void {
-  const target = event.target as HTMLElement | null;
-  if (target?.closest("button")) {
+  if (!longPressArmed.value || longPressIndex.value !== index) {
     event.preventDefault();
     return;
   }
@@ -243,6 +295,7 @@ function onDrop(): void {
   const fromIndex = draggingIndex.value;
   const toIndex = dropTargetIndex.value;
   const position = dropPosition.value;
+  cancelLongPress();
   draggingIndex.value = null;
   dropTargetIndex.value = null;
   dropPosition.value = null;
@@ -253,6 +306,7 @@ function onDrop(): void {
 }
 
 function onDragEnd(): void {
+  cancelLongPress();
   draggingIndex.value = null;
   dropTargetIndex.value = null;
   dropPosition.value = null;
@@ -287,6 +341,7 @@ function onRowMouseLeave(): void {
 
 onUnmounted(() => {
   if (hoverTimer) clearTimeout(hoverTimer);
+  cancelLongPress();
 });
 
 const total = computed(() => props.groups.reduce((count, group) => count + group.threads.length, 0));
@@ -443,29 +498,36 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
         @drop.prevent="onDrop"
       >
         <div
-          class="group flex items-center gap-1 rounded-[6px] px-1.5 py-1.5 hover:bg-raised cursor-grab active:cursor-grabbing select-none"
-          draggable="true"
+          class="group flex items-center gap-1 rounded-[6px] px-1.5 py-1.5 hover:bg-raised select-none cursor-pointer transition-colors"
+          :class="{
+            'cursor-grab': longPressArmed && longPressIndex === index && draggingIndex === null,
+            'cursor-grabbing ring-1 ring-accent/60': draggingIndex === index,
+            'scale-[0.99] bg-raised/70': longPressArmed && longPressIndex === index,
+          }"
+          :draggable="longPressArmed && longPressIndex === index"
+          tabindex="0"
+          role="button"
+          :aria-expanded="isOpen(group.path)"
+          @keydown.enter="toggle(group.path)"
+          @keydown.space.prevent="toggle(group.path)"
+          @mousedown="onCardMouseDown($event, index)"
+          @mousemove="onCardMouseMove"
+          @mouseup="onCardMouseUp($event, group.path)"
+          @mouseleave="onCardMouseLeave"
           @dragstart="onDragStart($event, index)"
           @dragend="onDragEnd"
           @contextmenu.prevent="onProjectContext($event, group)"
         >
-          <button
-            class="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-            @click="toggle(group.path)"
-          >
-            <Icon
-              :name="isOpen(group.path) ? 'chevron-down' : 'chevron-right'"
-              class="h-3.5 w-3.5 shrink-0 text-faint group-hover:text-dim"
-            />
+          <div class="flex min-w-0 flex-1 items-center gap-1.5 text-left pointer-events-none">
             <Icon
               :name="isOpen(group.path) ? 'folder-open' : 'folder'"
               class="h-3.5 w-3.5 shrink-0 text-accent/80"
             />
             <span class="truncate text-[12.5px] font-medium text-dim group-hover:text-fg">{{ group.name }}</span>
-          </button>
+          </div>
           <span
             v-if="!isOpen(group.path) && attention(group.threads) > 0"
-            class="shrink-0 rounded-full bg-warn/15 px-1.5 font-mono text-[10px] text-warn"
+            class="shrink-0 rounded-full bg-warn/15 px-1.5 font-mono text-[10px] text-warn pointer-events-none"
           >
             {{ attention(group.threads) }}
           </span>
@@ -473,6 +535,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
             :disabled="props.busy || group.path === ''"
             class="grid h-5 w-5 shrink-0 place-items-center rounded-[5px] text-faint opacity-0 hover:bg-surface hover:text-fg group-hover:opacity-100 disabled:opacity-0"
             aria-label="new thread here"
+            @mousedown.stop
             @click.stop="openProjects.add(group.path); emit('open', group.path)"
           >
             <Icon name="plus" class="h-3.5 w-3.5" />
@@ -481,6 +544,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
             :disabled="props.busy"
             class="grid h-5 w-5 shrink-0 place-items-center rounded-[5px] text-faint opacity-0 hover:bg-surface hover:text-err group-hover:opacity-100 disabled:opacity-0"
             aria-label="delete project and its sessions"
+            @mousedown.stop
             @click.stop="emit('deleteProject', group)"
           >
             <Icon name="trash" class="h-3.5 w-3.5" />
@@ -552,6 +616,9 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
         </ul>
       </section>
     </nav>
+
+    <!-- Small collapsible OAuth quota & rate-limits widget (only visible if OAuth accounts exist) -->
+    <OAuthUsageSidebarWidget />
 
     <!--
       The identity row (`docs/12` §2.2). Who this window is running as, and how much is in it:

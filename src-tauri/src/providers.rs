@@ -533,6 +533,129 @@ pub async fn remove_custom_provider(provider_id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Fetch remaining quota and usage limits for configured OAuth providers.
+#[tauri::command]
+pub async fn get_oauth_usage_limits() -> Result<Vec<crate::dto::OAuthUsageLimitDto>, String> {
+    let agent_dir = resolve_agent_dir()?;
+    let db_path = agent_db_path(&agent_dir);
+    if !db_path.is_file() {
+        return Ok(Vec::new());
+    }
+
+    let records: Vec<(String, String)> = {
+        let conn = Connection::open(&db_path).map_err(|e| format!("cannot open agent.db: {e}"))?;
+        let mut stmt = conn
+            .prepare("SELECT provider, data FROM auth_credentials WHERE credential_type = 'oauth'")
+            .map_err(|e| format!("cannot query auth_credentials: {e}"))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let provider: String = row.get(0)?;
+                let data: String = row.get(1)?;
+                Ok((provider, data))
+            })
+            .map_err(|e| format!("query error: {e}"))?;
+
+        rows.flatten().collect()
+    };
+
+    let mut limits = Vec::new();
+
+    for (provider, data_str) in records {
+        let Ok(data_json) = serde_json::from_str::<serde_json::Value>(&data_str) else {
+            continue;
+        };
+
+        if provider == "openai-codex" {
+            let token = data_json.get("access").and_then(|v| v.as_str());
+            let account_id = data_json.get("accountId").and_then(|v| v.as_str());
+            let email = data_json
+                .get("email")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let plan_type = data_json
+                .get("orgName")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+
+            let Some(token) = token else { continue };
+
+            let mut args = vec![
+                "-s".to_string(),
+                "-m".to_string(),
+                "5".to_string(),
+                "-H".to_string(),
+                format!("Authorization: Bearer {token}"),
+                "-H".to_string(),
+                "User-Agent: Mozilla/5.0".to_string(),
+            ];
+            if let Some(acc) = account_id {
+                args.push("-H".to_string());
+                args.push(format!("ChatGPT-Account-Id: {acc}"));
+            }
+            args.push("https://chatgpt.com/backend-api/wham/usage".to_string());
+
+            let curl_res = tokio::time::timeout(
+                std::time::Duration::from_secs(6),
+                tokio::process::Command::new("curl").args(&args).output(),
+            )
+            .await;
+
+            if let Ok(Ok(out)) = curl_res {
+                if out.status.success() {
+                    if let Ok(resp) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                        let mut windows = Vec::new();
+                        if let Some(rate_limit) = resp.get("rate_limit") {
+                            if let Some(p) = rate_limit.get("primary_window") {
+                                windows.push(crate::dto::OAuthWindowLimitDto {
+                                    label: "5h Window".into(),
+                                    used_percent: p
+                                        .get("used_percent")
+                                        .and_then(|v| v.as_f64())
+                                        .unwrap_or(0.0),
+                                    reset_at: p.get("reset_at").and_then(|v| v.as_i64()),
+                                    reset_after_seconds: p
+                                        .get("reset_after_seconds")
+                                        .and_then(|v| v.as_i64()),
+                                });
+                            }
+                            if let Some(s) = rate_limit.get("secondary_window") {
+                                windows.push(crate::dto::OAuthWindowLimitDto {
+                                    label: "Weekly Window".into(),
+                                    used_percent: s
+                                        .get("used_percent")
+                                        .and_then(|v| v.as_f64())
+                                        .unwrap_or(0.0),
+                                    reset_at: s.get("reset_at").and_then(|v| v.as_i64()),
+                                    reset_after_seconds: s
+                                        .get("reset_after_seconds")
+                                        .and_then(|v| v.as_i64()),
+                                });
+                            }
+                        }
+
+                        let resolved_plan = resp
+                            .get("plan_type")
+                            .and_then(|v| v.as_str())
+                            .map(String::from)
+                            .or(plan_type);
+
+                        limits.push(crate::dto::OAuthUsageLimitDto {
+                            provider: "openai-codex".into(),
+                            display_name: "ChatGPT / Codex".into(),
+                            plan_type: resolved_plan,
+                            email,
+                            windows,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(limits)
+}
+
 /// Ensure known models with broken upstream reasoning metadata (e.g. Claude 4.5/5.5 on CommandCode)
 /// have explicit overrides in `~/.omp/agent/models.yml`.
 pub fn ensure_model_overrides() -> Result<(), String> {

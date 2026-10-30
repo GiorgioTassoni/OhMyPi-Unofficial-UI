@@ -1621,6 +1621,26 @@ export interface ProviderTestResultDto {
   message: string;
 }
 
+export interface OAuthWindowLimitDto {
+  label: string;
+  usedPercent: number;
+  resetAt: number | null;
+  resetAfterSeconds: number | null;
+}
+
+export interface OAuthUsageLimitDto {
+  provider: string;
+  displayName: string;
+  planType: string | null;
+  email: string | null;
+  windows: OAuthWindowLimitDto[];
+}
+
+/** Fetch quota and rate limits for configured OAuth providers. */
+export async function getOAuthUsageLimits(): Promise<OAuthUsageLimitDto[]> {
+  return invoke<OAuthUsageLimitDto[]>("get_oauth_usage_limits");
+}
+
 /** Test connectivity and authentication for a provider via OMP runner. */
 export async function testProviderConnection(provider: string): Promise<ProviderTestResultDto> {
   return invoke<ProviderTestResultDto>("test_provider_connection", { provider });
