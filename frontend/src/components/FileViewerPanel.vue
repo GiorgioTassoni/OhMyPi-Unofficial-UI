@@ -21,6 +21,7 @@ import {
   isVideoExtension,
   mimeTypeForExtension,
   parseFilePath,
+  stripToolOutputFormatting,
 } from "../lib/fileViewMeta";
 import { highlightCode } from "../lib/highlighter";
 import { parseFrontmatter } from "../lib/frontmatter";
@@ -87,8 +88,11 @@ async function load(): Promise<void> {
   content.value = props.file.content ?? "";
 
   try {
-    if (isImage.value || isVideo.value) {
-      // Binary images/videos must always be read from disk as base64 (tool.output is summary text, not media bytes)
+    if (isVideo.value) {
+      return;
+    }
+
+    if (isImage.value) {
       const b64 = await readFileBase64(props.workspace ?? null, cleanPath.value);
       const mime = mimeTypeForExtension(extension.value);
       imageDataUrl.value = `data:${mime};base64,${b64}`;
@@ -102,18 +106,33 @@ async function load(): Promise<void> {
       return;
     }
 
-    if (props.file.content !== undefined && props.file.content !== null) {
-      content.value = props.file.content;
+    if (props.file.artifactId) {
+      const art = await readArtifact(props.thread, props.file.artifactId);
+      content.value = stripToolOutputFormatting(art.text);
       return;
     }
 
-    if (props.file.artifactId) {
-      const art = await readArtifact(props.thread, props.file.artifactId);
-      content.value = art.text;
-    } else {
-      const text = await readFileContent(props.workspace ?? null, cleanPath.value);
-      content.value = text;
+    if (isRealFileSystemPath.value && cleanPath.value) {
+      try {
+        const text = await readFileContent(props.workspace ?? null, cleanPath.value);
+        content.value = text;
+        return;
+      } catch (diskErr) {
+        if (props.file.content !== undefined && props.file.content !== null) {
+          content.value = stripToolOutputFormatting(props.file.content);
+          return;
+        }
+        throw diskErr;
+      }
     }
+
+    if (props.file.content !== undefined && props.file.content !== null) {
+      content.value = stripToolOutputFormatting(props.file.content);
+      return;
+    }
+
+    const text = await readFileContent(props.workspace ?? null, cleanPath.value);
+    content.value = text;
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
@@ -328,7 +347,7 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
 
         <!-- File Identity -->
         <div class="flex items-center gap-1.5 min-w-0 truncate">
-          <Icon :name="isImage ? 'image' : 'file'" class="h-3.5 w-3.5 shrink-0 text-accent" />
+          <Icon :name="isVideo ? 'video' : (isImage ? 'image' : 'file')" class="h-3.5 w-3.5 shrink-0 text-accent" />
           <span class="truncate font-mono text-[12.5px] font-semibold text-fg">
             {{ basename }}
           </span>
@@ -392,19 +411,19 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
         <span v-if="isImage && imageDimensions" class="hidden sm:inline font-mono text-[11px] text-faint">
           {{ imageDimensions.width }} × {{ imageDimensions.height }}
         </span>
-        <span v-else-if="!isImage && !loading && !error" class="hidden sm:inline font-mono text-[11px] text-faint">
+        <span v-else-if="!isImage && !isVideo && !loading && !error" class="hidden sm:inline font-mono text-[11px] text-faint">
           {{ lines.length }} {{ lines.length === 1 ? 'line' : 'lines' }}
         </span>
 
         <span class="h-3.5 w-px bg-line/60" />
 
-        <!-- Copy File / Image -->
+        <!-- Copy File / Image / Path -->
         <button
           type="button"
           class="flex items-center gap-1 rounded-[5px] border border-line/50 bg-raised/40 px-2 py-1 text-[11.5px] text-dim transition-colors hover:border-line-strong hover:bg-raised hover:text-fg"
-          :aria-label="isImage && (!isSvg || mode === 'preview') ? 'Copy image' : 'Copy file contents'"
+          :aria-label="isVideo ? 'Copy path' : (isImage && (!isSvg || mode === 'preview') ? 'Copy image' : 'Copy file contents')"
           :disabled="loading || Boolean(error)"
-          @click="isImage && (!isSvg || mode === 'preview') ? copyImage() : copyContent()"
+          @click="isVideo ? copyFullPath() : (isImage && (!isSvg || mode === 'preview') ? copyImage() : copyContent())"
         >
           <Icon :name="copied ? 'check' : 'copy'" class="h-3.5 w-3.5 shrink-0" :class="copied ? 'text-ok' : ''" />
           <span :class="copied ? 'text-ok font-medium' : ''">{{ copied ? 'Copied' : 'Copy' }}</span>
@@ -497,7 +516,7 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
       <div class="flex items-center gap-2 truncate">
         <span class="flex items-center gap-1 text-accent/90 font-medium">
           <span class="h-1.5 w-1.5 rounded-full bg-accent" />
-          {{ isVideo ? 'Video preview' : (isImage && (!isSvg || mode === 'preview') ? 'Image preview' : (isHtml && mode === 'preview' ? 'HTML preview' : (isMarkdown && mode === 'preview' ? (isSkill ? 'Skill preview' : 'Markdown preview') : 'Read-only view'))) }}
+          {{ isVideo ? 'Video' : (isImage && (!isSvg || mode === 'preview') ? 'Image preview' : (isHtml && mode === 'preview' ? 'HTML preview' : (isMarkdown && mode === 'preview' ? (isSkill ? 'Skill preview' : 'Markdown preview') : 'Read-only view'))) }}
         </span>
         <span>·</span>
         <span class="truncate font-mono text-faint/80">{{ props.file.path }}</span>
@@ -532,18 +551,40 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
         </button>
       </div>
 
-      <!-- Video View -->
+      <!-- Video / Unsupported Media View -->
       <div
         v-else-if="isVideo"
-        class="flex h-full w-full items-center justify-center p-4 select-none bg-canvas"
+        class="flex h-full w-full flex-col items-center justify-center p-6 select-none bg-canvas text-center"
       >
-        <video
-          v-if="imageDataUrl"
-          :src="imageDataUrl"
-          controls
-          autoplay
-          class="max-h-full max-w-full rounded-[6px] shadow-md ring-1 ring-line/50"
-        />
+        <div class="flex max-w-sm flex-col items-center justify-center">
+          <div class="mb-3.5 rounded-full bg-accent/10 p-3.5 text-accent">
+            <Icon name="video" class="h-6 w-6" />
+          </div>
+          <h4 class="text-[14px] font-semibold text-fg">Can't visualize that</h4>
+          <p class="mt-1 text-[12px] leading-relaxed text-dim">
+            Embedded video playback is not supported in the desktop webview. You can open {{ basename }} with your default application or in your file manager.
+          </p>
+          <div class="mt-4 flex flex-wrap items-center justify-center gap-2.5">
+            <button
+              type="button"
+              class="flex items-center gap-1.5 rounded-[6px] border border-accent/40 bg-accent/10 px-3.5 py-1.5 text-[12px] font-medium text-accent hover:bg-accent/20 transition-colors"
+              :disabled="!isRealFileSystemPath"
+              @click="openInDefaultApp"
+            >
+              <Icon name="external" class="h-3.5 w-3.5 shrink-0" />
+              <span>Open in default app</span>
+            </button>
+            <button
+              type="button"
+              class="flex items-center gap-1.5 rounded-[6px] border border-line bg-raised px-3.5 py-1.5 text-[12px] font-medium text-dim hover:bg-raised/80 hover:text-fg transition-colors"
+              :disabled="!isRealFileSystemPath"
+              @click="revealInFileManager"
+            >
+              <Icon name="folder-open" class="h-3.5 w-3.5 shrink-0" />
+              <span>Open in file manager</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Image View (Raster images or SVG Preview) -->

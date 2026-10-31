@@ -9,6 +9,7 @@ import {
   mimeTypeForExtension,
   normalizeFilePath,
   parseFilePath,
+  stripToolOutputFormatting,
 } from "./fileViewMeta";
 
 describe("fileViewMeta", () => {
@@ -105,5 +106,25 @@ describe("fileViewMeta", () => {
     expect(formatLanguageLabel("rs")).toBe("RUST");
     expect(formatLanguageLabel("")).toBe("TEXT");
     expect(formatLanguageLabel("xyz")).toBe("XYZ");
+  });
+
+  test("stripToolOutputFormatting removes tool headers and line numbers", () => {
+    const toolOutput = "[~/Projects/Websites_or_webapp/Assetty/AGENT.md#C1FA]\n1:# Instructions for Working on the Project\n2:\n3:This is the single source\n4:\n5:## Coding rules";
+    const expected = "# Instructions for Working on the Project\n\nThis is the single source\n\n## Coding rules";
+    expect(stripToolOutputFormatting(toolOutput)).toBe(expected);
+
+    const pipeOutput = " 1 | line one\n 2 | line two\n 3 | line three";
+    expect(stripToolOutputFormatting(pipeOutput)).toBe("line one\nline two\nline three");
+
+    const singleLineWithHeader = "[file.txt#1234]\n1:hello world";
+    expect(stripToolOutputFormatting(singleLineWithHeader)).toBe("hello world");
+
+    const markdownList = "# Title\n\n1. First item\n2. Second item\n3. Third item";
+    expect(stripToolOutputFormatting(markdownList)).toBe(markdownList);
+
+    const singleLineRatio = "1: 100";
+    expect(stripToolOutputFormatting(singleLineRatio)).toBe(singleLineRatio);
+
+    expect(stripToolOutputFormatting("")).toBe("");
   });
 });

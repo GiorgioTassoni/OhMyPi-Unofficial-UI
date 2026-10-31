@@ -597,7 +597,6 @@ async function stop(): Promise<void> {
   stopping.value = true;
   try {
     await stopTurn(props.thread);
-    emit("changed");
   } catch (cause) {
     const msg = String(cause);
     if (!msg.includes("no live thread")) {
@@ -605,6 +604,7 @@ async function stop(): Promise<void> {
     }
   } finally {
     stopping.value = false;
+    emit("changed");
   }
 }
 

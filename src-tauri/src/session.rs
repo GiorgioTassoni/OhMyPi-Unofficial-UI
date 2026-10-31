@@ -560,6 +560,12 @@ impl LiveSession {
             .unwrap_or(false)
     }
 
+    pub fn clear_streaming(&self) {
+        if let Ok(mut control) = self.control.lock() {
+            control.is_streaming = false;
+        }
+    }
+
     /// Refuse whatever the run is waiting on, then send the command that ends it.
     ///
     /// **Measured at v18.2.6: `abort` alone does not stop a parked run.** A turn

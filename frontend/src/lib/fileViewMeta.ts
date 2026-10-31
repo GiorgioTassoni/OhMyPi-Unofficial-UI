@@ -181,3 +181,29 @@ export function formatLanguageLabel(ext: string): string {
   if (!clean) return "TEXT";
   return LANGUAGE_LABELS[clean] ?? clean.toUpperCase();
 }
+
+export function stripToolOutputFormatting(text: string): string {
+  if (!text) return "";
+  let clean = text;
+  const hadHeader = /^\[[^\n\r]+(?:#[a-fA-F0-9]+)?\]\r?\n?/.test(clean);
+  clean = clean.replace(/^\[[^\n\r]+#[a-fA-F0-9]+\]\r?\n?/, "");
+  clean = clean.replace(/^\[[^\n\r]+\]\r?\n?/, "");
+
+  const lines = clean.split(/\r?\n/);
+  const nonEmptyLines = lines.filter((l) => l.trim().length > 0);
+  const numberedLines = lines.filter((l) => /^\s*\d+\s*[:|]\s?/.test(l));
+
+  if (hadHeader && numberedLines.length > 0) {
+    return lines.map((l) => l.replace(/^\s*\d+\s*[:|]\s?/, "")).join("\n");
+  }
+
+  if (
+    nonEmptyLines.length >= 2 &&
+    numberedLines.length >= 2 &&
+    numberedLines.length / nonEmptyLines.length > 0.6
+  ) {
+    return lines.map((l) => l.replace(/^\s*\d+\s*[:|]\s?/, "")).join("\n");
+  }
+
+  return clean;
+}

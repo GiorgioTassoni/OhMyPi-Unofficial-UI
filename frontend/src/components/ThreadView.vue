@@ -219,7 +219,8 @@ function replaceTranscript(next: RowSnapshot[]): void {
   }
   rows.value = next;
   projection.value = initialProjection(next, streaming.value);
-  measuredHeights.value = new Map();
+  const starts = new Set(projection.value.turns.map((t) => t.start));
+  measuredHeights.value = new Map([...measuredHeights.value].filter(([start]) => starts.has(start)));
   scheduleSubagentFileChanges(200);
 }
 
@@ -255,6 +256,9 @@ onMounted(async () => {
     onActivity((event) => {
       if (event.thread !== props.thread) return;
       activity.value = [...activity.value.slice(-(ACTIVITY_TAIL - 1)), event.payload];
+      if (event.payload.kind === "agent_end" && status.value?.control) {
+        status.value.control.isStreaming = false;
+      }
       void refreshStatus();
     }),
     onCommandsUpdated((event) => {
@@ -372,6 +376,8 @@ async function onChanged(): Promise<void> {
     replaceTranscript(combined);
     activity.value = [];
     void refreshArchivedInfo();
+    await nextTick();
+    scrollToLatest();
   } catch (cause) {
     if (!isNoLiveThread(cause)) {
       emit("failed", describe(cause));
@@ -478,8 +484,13 @@ async function reload(): Promise<void> {
     if (refreshed !== null) {
       activeRows.value = refreshed;
       const combined = archivedRows.value.length === 0 ? activeRows.value : [...archivedRows.value, ...activeRows.value];
+      const follow = isAtBottom();
       replaceTranscript(combined);
       void refreshArchivedInfo();
+      if (follow) {
+        await nextTick();
+        scrollToLatest();
+      }
     }
   } catch (cause) {
     if (!isNoLiveThread(cause)) {
@@ -689,7 +700,7 @@ watch(
 );
 
 /** A little tolerance absorbs fractional layout pixels without treating a reader as scrolled. */
-const BOTTOM_TOLERANCE = 2;
+const BOTTOM_TOLERANCE = 32;
 
 function isAtBottom(): boolean {
   const el = conversationRef.value;
@@ -736,8 +747,15 @@ function followAfterRender(): void {
 function scrollToBottom(): void {
   const el = conversationRef.value;
   if (!el) return;
+  isScrolledUp.value = false;
   viewportTop.value = Math.max(0, layout.value.total - viewportHeight.value);
-  el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  el.scrollTop = el.scrollHeight;
+  void nextTick(() => {
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+      viewportTop.value = el.scrollTop;
+    }
+  });
 }
 
 // Exposed for the shell's diagnostics drawer, for re-reading after a flow, for a search hit's

@@ -488,18 +488,14 @@ pub async fn stop_turn(
         Err(_) => return Ok(()),
     };
 
-    if live.abort_active_agents() {
-        let snapshots: Vec<AgentSnapshot> =
-            live.agents().await.iter().map(agent_snapshot).collect();
-        let _ = app.emit(
-            crate::dto::AGENTS_EVENT,
-            session::tagged(&thread, snapshots),
-        );
-    }
+    live.abort_active_agents();
+    let snapshots: Vec<AgentSnapshot> = live.agents().await.iter().map(agent_snapshot).collect();
+    let _ = app.emit(
+        crate::dto::AGENTS_EVENT,
+        session::tagged(&thread, snapshots),
+    );
 
     let stop_result = live.stop_turn().await;
-    stop_result?;
-    // Give the sidecar a brief window to settle and flip is_streaming
     let start = std::time::Instant::now();
     while start.elapsed() < Duration::from_millis(1500) {
         if let Ok(st) = live.status() {
@@ -510,6 +506,7 @@ pub async fn stop_turn(
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let _ = live.reread_control().await;
+    live.clear_streaming();
     let _ = app.emit(
         crate::dto::ACTIVITY_EVENT,
         session::tagged(
@@ -521,7 +518,7 @@ pub async fn stop_turn(
         ),
     );
 
-    Ok(())
+    stop_result
 }
 
 /// Stop the turn in flight and send a message in its place.
@@ -1019,6 +1016,18 @@ pub async fn read_file_content(workspace: Option<String>, path: String) -> Resul
 #[tauri::command]
 pub async fn read_file_base64(workspace: Option<String>, path: String) -> Result<String, String> {
     let resolved = resolve_file_path(workspace.as_deref(), &path);
+
+    let metadata = tokio::fs::metadata(&resolved)
+        .await
+        .map_err(|e| format!("failed to inspect {}: {e}", resolved.display()))?;
+
+    const MAX_BASE64_FILE_BYTES: u64 = 75 * 1024 * 1024;
+    if metadata.len() > MAX_BASE64_FILE_BYTES {
+        return Err(format!(
+            "file is too large to preview inline ({:.1} MB). Please open in system app.",
+            metadata.len() as f64 / (1024.0 * 1024.0)
+        ));
+    }
 
     let bytes = tokio::fs::read(&resolved)
         .await

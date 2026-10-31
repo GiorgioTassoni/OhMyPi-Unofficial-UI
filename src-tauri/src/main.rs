@@ -39,6 +39,9 @@ fn main() {
         if std::env::var_os("GTK_USE_PORTAL").is_none() {
             std::env::set_var("GTK_USE_PORTAL", "1");
         }
+        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
     }
     #[cfg(not(target_os = "linux"))]
     if options.prefer_x11 {

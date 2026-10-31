@@ -56,7 +56,6 @@ const icon = computed(() => {
 
 const isWholeFile = computed(() => !failed.value && action.value.isWholeFile);
 const filePath = computed(() => action.value.path || view.value.summary || "");
-const fileContent = computed(() => action.value.content ?? tool.value.output);
 const canOpenRead = computed(() => props.kind === "read" && !failed.value && Boolean(filePath.value));
 const isActionable = computed(() => canOpenRead.value || isWholeFile.value);
 
@@ -67,7 +66,9 @@ function openFileInSidebar(targetPath?: string): void {
     path: p,
     artifactId: view.value.artifact,
   };
-  const c = (targetPath && targetPath !== filePath.value) ? undefined : fileContent.value;
+  const c = (props.kind === "read" || (targetPath && targetPath !== filePath.value))
+    ? undefined
+    : action.value.content;
   if (c !== undefined && c !== null) {
     payload.content = c;
   }
