@@ -53,11 +53,9 @@ import UnexpectedResumeBanner from "./UnexpectedResumeBanner.vue";
 import Icon from "./ui/Icon.vue";
 import TurnFiles from "./TurnFiles.vue";
 import TurnActivity from "./TurnActivity.vue";
-import type { ConversationTurn } from "../lib/turnActivity";
-import MeasuredTurn from "./MeasuredTurn.vue";
 import { mergeSubagentFileSummaries, type TurnFileSummary } from "../lib/panel";
 import { initialProjection, projectTranscript, type TranscriptProjection } from "../lib/transcriptCache";
-import { estimatedTurnHeight, turnContainingRow, turnLayout, visibleTurns } from "../lib/virtualTurns";
+import { turnContainingRow } from "../lib/virtualTurns";
 import { createDisclosureMemory } from "../lib/disclosureMemory";
 
 const props = defineProps<{
@@ -120,7 +118,6 @@ const disclosureMemory = createDisclosureMemory();
 const dialogs = ref<UiRequestSnapshot[]>([]);
 const activity = ref<ActivitySnapshot[]>([]);
 const commands = ref<CommandEntry[]>([]);
-const measuredHeights = shallowRef<Map<number, number>>(new Map());
 
 async function refreshArchivedInfo(): Promise<void> {
   if (!props.thread) return;
@@ -148,18 +145,11 @@ async function loadEarlier(): Promise<void> {
       rows.value = combined;
       projection.value = initialProjection(combined, streaming.value);
 
-      const shifted = new Map<number, number>();
-      for (const [start, height] of measuredHeights.value) {
-        shifted.set(start + res.rows.length, height);
-      }
-      measuredHeights.value = shifted;
-
       await nextTick();
       if (el) {
         const newScrollHeight = el.scrollHeight;
         const delta = newScrollHeight - oldScrollHeight;
         el.scrollTop = oldScrollTop + delta;
-        viewportTop.value = el.scrollTop;
       }
     }
     remainingArchivedTurns.value = res.remainingArchivedTurns;
@@ -212,26 +202,16 @@ async function refreshSubagentFileChanges(): Promise<void> {
   }
 }
 
-/** A reset discards measurements; a patch retains the untouched turn prefix. */
 function replaceTranscript(next: RowSnapshot[]): void {
   if (next.length === 0 && rows.value.length > 0) {
     return;
   }
   rows.value = next;
   projection.value = initialProjection(next, streaming.value);
-  const starts = new Set(projection.value.turns.map((t) => t.start));
-  measuredHeights.value = new Map([...measuredHeights.value].filter(([start]) => starts.has(start)));
   scheduleSubagentFileChanges(200);
 }
 
 function patchTranscript(next: RowSnapshot[], from: number): void {
-  const previousTurns = projection.value.turns;
-  const affected = turnContainingRow(previousTurns, Math.min(from, Math.max(0, previousTurns.at(-1)?.end ?? 0)));
-  if (affected >= 0 && affected < previousTurns.length - 1) {
-    const cutoff = previousTurns[affected].start;
-    const stable = new Map([...measuredHeights.value].filter(([start]) => start < cutoff));
-    measuredHeights.value = stable;
-  }
   projection.value = projectTranscript(projection.value, next, streaming.value, from);
   triggerRef(rows);
 }
@@ -554,9 +534,6 @@ async function revealRow(at: number | null): Promise<void> {
   const turnIndex = turnContainingRow(turns.value, at);
   const el = conversationRef.value;
   if (turnIndex < 0 || !el) return;
-  viewportTop.value = layout.value.offsets[turnIndex];
-  el.scrollTop = viewportTop.value;
-  await nextTick();
   const turnRoot = el.querySelector<HTMLElement>(`[data-turn-start="${turns.value[turnIndex].start}"]`);
   if (!turnRoot) return;
   const activityItem = turns.value[turnIndex].items.find((item) =>
@@ -627,68 +604,7 @@ function setDraft(text: string): void {
 
 const conversationRef = ref<HTMLElement | null>(null);
 const isScrolledUp = ref(false);
-const viewportTop = ref(0);
-const viewportHeight = ref(800);
-const hasTurnSummary = (turn: ConversationTurn | undefined): boolean =>
-  !!turn && !turn.working && fileSummaries.value.has(turn.end);
-const layout = computed(() => turnLayout(turns.value, measuredHeights.value, (end) => {
-  const turn = turns.value.find((t) => t.end === end);
-  return hasTurnSummary(turn);
-}));
-const visible = computed(() => visibleTurns(layout.value, viewportTop.value, viewportHeight.value));
-const visibleTurnEntries = computed(() => turns.value.slice(visible.value.start, visible.value.end));
-let viewportObserver: ResizeObserver | null = null;
-let pendingHeightCorrection = 0;
-let heightCorrectionScheduled = false;
 
-onMounted(() => {
-  const el = conversationRef.value;
-  if (!el) return;
-  viewportHeight.value = el.clientHeight || viewportHeight.value;
-  if (typeof ResizeObserver !== "undefined") {
-    viewportObserver = new ResizeObserver(() => {
-      viewportHeight.value = el.clientHeight || viewportHeight.value;
-      viewportTop.value = el.scrollTop;
-    });
-    viewportObserver.observe(el);
-  }
-});
-onUnmounted(() => viewportObserver?.disconnect());
-
-function onTurnMeasured(start: number, height: number): void {
-  const index = turnContainingRow(turns.value, start);
-  if (index < 0) return;
-  const previous = measuredHeights.value.get(start)
-    ?? estimatedTurnHeight(turns.value[index], hasTurnSummary(turns.value[index]));
-  if (Math.abs(previous - height) < 0.5) return;
-  const above = layout.value.offsets[index + 1] <= viewportTop.value;
-  const next = new Map(measuredHeights.value);
-  next.set(start, height);
-  measuredHeights.value = next;
-  const el = conversationRef.value;
-  if (!el) return;
-  if (above && isScrolledUp.value) {
-    // The virtual spacer changes on Vue's next render. Correct after that render, so a
-    // growing spacer cannot clamp the scroll position against its old height first.
-    const correction = height - previous;
-    pendingHeightCorrection += correction;
-    viewportTop.value = Math.max(0, viewportTop.value + correction);
-    if (!heightCorrectionScheduled) {
-      heightCorrectionScheduled = true;
-      void nextTick(() => {
-        heightCorrectionScheduled = false;
-        const correction = pendingHeightCorrection;
-        pendingHeightCorrection = 0;
-        if (!isScrolledUp.value) return;
-        el.scrollTop += correction;
-        viewportTop.value = el.scrollTop;
-      });
-    }
-  } else if (!isScrolledUp.value) followAfterRender();
-}
-
-// Live views remain mounted while hidden. Returning to one should show its latest
-// message even if its old scroll position was somewhere in the history.
 watch(
   () => props.active,
   async (active) => {
@@ -699,7 +615,6 @@ watch(
   { flush: "post" },
 );
 
-/** A little tolerance absorbs fractional layout pixels without treating a reader as scrolled. */
 const BOTTOM_TOLERANCE = 32;
 
 function isAtBottom(): boolean {
@@ -709,37 +624,22 @@ function isAtBottom(): boolean {
 }
 
 function onScroll(): void {
-  const el = conversationRef.value;
-  if (el) {
-    viewportTop.value = el.scrollTop;
-    viewportHeight.value = el.clientHeight || viewportHeight.value;
-  }
   isScrolledUp.value = !isAtBottom();
 }
 
-/** Opening a conversation jumps immediately; the button below keeps its smooth scroll. */
 function scrollToLatest(): void {
   const el = conversationRef.value;
   if (!el) return;
-  viewportTop.value = Math.max(0, layout.value.total - viewportHeight.value);
-  void nextTick(() => {
-    el.scrollTop = el.scrollHeight;
-    viewportTop.value = el.scrollTop;
-  });
+  el.scrollTop = el.scrollHeight;
   isScrolledUp.value = false;
 }
 
-/** Keep a reader who was at the tail pinned there as streamed rows change height. */
 function followAfterRender(): void {
   void nextTick(() => {
     if (isScrolledUp.value) return;
     const el = conversationRef.value;
     if (el) {
-      viewportTop.value = Math.max(0, layout.value.total - viewportHeight.value);
-      void nextTick(() => {
-        el.scrollTop = el.scrollHeight;
-        viewportTop.value = el.scrollTop;
-      });
+      el.scrollTop = el.scrollHeight;
     }
   });
 }
@@ -748,12 +648,10 @@ function scrollToBottom(): void {
   const el = conversationRef.value;
   if (!el) return;
   isScrolledUp.value = false;
-  viewportTop.value = Math.max(0, layout.value.total - viewportHeight.value);
   el.scrollTop = el.scrollHeight;
   void nextTick(() => {
     if (el) {
       el.scrollTop = el.scrollHeight;
-      viewportTop.value = el.scrollTop;
     }
   });
 }
@@ -825,10 +723,11 @@ defineExpose({
           @load="loadEarlier"
         />
 
-        <div aria-hidden="true" :style="{ height: `${visible.before}px` }" />
-        <MeasuredTurn v-for="turn in visibleTurnEntries" :key="turn.start" :start="turn.start" @measured="onTurnMeasured">
         <article
-          class="flex min-w-0 flex-col gap-2 border-line/50"
+          v-for="turn in turns"
+          :key="turn.start"
+          :data-turn-start="turn.start"
+          class="turn-card flex min-w-0 flex-col gap-2 border-line/50 pb-4"
           :class="turn.start === turns[0]?.start ? '' : 'border-t pt-4'"
         >
           <div
@@ -882,8 +781,6 @@ defineExpose({
             @review="emit('review', $event)"
           />
         </article>
-        </MeasuredTurn>
-        <div aria-hidden="true" :style="{ height: `${visible.after}px` }" />
 
         <!-- Optimistic Steer indicator while awaiting engine interrupt -->
         <PendingSteerBadge v-if="pendingSteer" :text="pendingSteer.text" />
@@ -981,3 +878,10 @@ defineExpose({
     </div>
   </section>
 </template>
+
+<style scoped>
+.turn-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 500px;
+}
+</style>

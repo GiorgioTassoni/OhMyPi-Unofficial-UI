@@ -66,9 +66,9 @@ function openFileInSidebar(targetPath?: string): void {
     path: p,
     artifactId: view.value.artifact,
   };
-  const c = (props.kind === "read" || (targetPath && targetPath !== filePath.value))
+  const c = targetPath && targetPath !== filePath.value
     ? undefined
-    : action.value.content;
+    : (action.value.content ?? (props.kind === "read" ? tool.value.output : undefined));
   if (c !== undefined && c !== null) {
     payload.content = c;
   }

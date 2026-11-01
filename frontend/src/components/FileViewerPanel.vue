@@ -69,7 +69,25 @@ const frontmatter = computed(() => parseFrontmatter(content.value));
 const isSkill = computed(() => cleanPath.value.startsWith("skill:") || cleanPath.value.startsWith("skill://") || cleanPath.value.endsWith("SKILL.md") || (frontmatter.value.hasFrontmatter && !!frontmatter.value.attributes.name));
 const isMarkdown = computed(() => isMarkdownExtension(extension.value) || frontmatter.value.hasFrontmatter || isSkill.value);
 
-/** Segmented view toggle for markdown, SVG & HTML documents: formatted Preview vs raw line-numbered source. */
+const isRealFileSystemPath = computed(() => {
+  const p = cleanPath.value;
+  return !p.startsWith("artifact:") && !p.startsWith("skill:") && !p.startsWith("virtual:") && !p.includes("://");
+});
+
+const fullPath = computed(() => {
+  const targetPath = cleanPath.value;
+  if (!isRealFileSystemPath.value) return targetPath;
+  return props.workspace && !targetPath.startsWith("/")
+    ? `${props.workspace}/${targetPath}`
+    : targetPath;
+});
+
+const parentDirectory = computed(() => {
+  const p = fullPath.value.replace(/[/\\]+$/, "");
+  const cut = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  return cut <= 0 ? (p.startsWith("/") ? "/" : p) : p.slice(0, cut);
+});
+
 const mode = ref<"preview" | "raw">(isMarkdown.value || isSvg.value || isHtml.value ? "preview" : "raw");
 
 watch([extension, isMarkdown, isHtml], () => {
@@ -112,27 +130,20 @@ async function load(): Promise<void> {
       return;
     }
 
-    if (isRealFileSystemPath.value && cleanPath.value) {
-      try {
-        const text = await readFileContent(props.workspace ?? null, cleanPath.value);
-        content.value = text;
-        return;
-      } catch (diskErr) {
-        if (props.file.content !== undefined && props.file.content !== null) {
-          content.value = stripToolOutputFormatting(props.file.content);
-          return;
-        }
-        throw diskErr;
-      }
-    }
-
-    if (props.file.content !== undefined && props.file.content !== null) {
+    if (props.file.content !== undefined && props.file.content !== null && props.file.content !== "") {
       content.value = stripToolOutputFormatting(props.file.content);
       return;
     }
 
-    const text = await readFileContent(props.workspace ?? null, cleanPath.value);
-    content.value = text;
+    if (isRealFileSystemPath.value && cleanPath.value) {
+      const text = await readFileContent(props.workspace ?? null, cleanPath.value);
+      content.value = text;
+      return;
+    }
+
+    if (!isRealFileSystemPath.value) {
+      throw new Error(`Content not available for virtual URI: ${cleanPath.value}`);
+    }
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
@@ -226,24 +237,6 @@ function markCopied(): void {
     copied.value = false;
   }, 1800);
 }
-
-const fullPath = computed(() => {
-  const targetPath = cleanPath.value;
-  return props.workspace && !targetPath.startsWith("/")
-    ? `${props.workspace}/${targetPath}`
-    : targetPath;
-});
-
-const isRealFileSystemPath = computed(() => {
-  const p = fullPath.value;
-  return !p.startsWith("artifact:") && !p.startsWith("skill:") && !p.startsWith("virtual:");
-});
-
-const parentDirectory = computed(() => {
-  const p = fullPath.value.replace(/[/\\]+$/, "");
-  const cut = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-  return cut <= 0 ? (p.startsWith("/") ? "/" : p) : p.slice(0, cut);
-});
 
 const menuOpen = ref(false);
 
@@ -543,6 +536,7 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
         <h4 class="text-[13px] font-semibold text-fg">Unable to load file</h4>
         <p class="mt-1 max-w-sm text-[12px] text-dim whitespace-pre-wrap">{{ error }}</p>
         <button
+          v-if="isRealFileSystemPath"
           type="button"
           class="mt-3 rounded-[6px] border border-line bg-raised px-3 py-1.5 text-[12px] font-medium text-fg hover:bg-raised/80"
           @click="openInDefaultApp"
