@@ -101,6 +101,7 @@ const draft = ref("");
 /** One send at a time: two Enters must not become two prompts. */
 const sending = ref(false);
 const steeringPending = ref(false);
+const queueingPending = ref(false);
 const stopping = ref(false);
 const readingFiles = ref(false);
 const attachments = ref<Attachment[]>([]);
@@ -410,6 +411,7 @@ async function send(operation: Sendable): Promise<void> {
     steeringPending.value = true;
     emit("steering", { text });
   } else {
+    if (operation === "follow-up") queueingPending.value = true;
     draft.value = "";
     attachments.value = [];
   }
@@ -449,6 +451,7 @@ async function send(operation: Sendable): Promise<void> {
   } finally {
     sending.value = false;
     steeringPending.value = false;
+    queueingPending.value = false;
   }
 }
 
@@ -796,24 +799,45 @@ defineExpose({ setDraft, attachPaths, attachFiles, attachPastedText });
       />
 
       <button
-        v-if="hasInput || steeringPending"
-        :disabled="!canSend || steeringPending"
-        class="flex h-7 min-w-7 shrink-0 items-center justify-center rounded-[6px] bg-accent px-2.5 text-[12px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100 shadow-sm"
-        @click="send(props.streaming ? 'steer' : 'prompt')"
-      >
-        <span v-if="steeringPending" class="inline-flex items-center gap-1.5">
-          <Icon name="refresh" class="h-3 w-3 animate-spin text-canvas" />
-          <span>steer…</span>
-        </span>
-        <span v-else class="leading-none select-none">{{ props.streaming ? "steer" : "↵" }}</span>
-      </button>
-      <button
         v-if="props.streaming || props.hasActiveAgents"
         :disabled="stopping"
-        class="flex h-7 shrink-0 items-center justify-center rounded-[6px] border border-line px-2.5 text-[11.5px] text-dim transition-all hover:border-err/60 hover:text-err hover:bg-err/10 active:scale-95 disabled:opacity-50"
+        type="button"
+        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] border border-line text-dim transition-all hover:border-err/60 hover:text-err hover:bg-err/10 active:scale-95 disabled:opacity-50"
+        :title="stopping ? 'Stopping…' : 'Stop generation (Esc)'"
+        :aria-label="stopping ? 'Stopping generation' : 'Stop generation'"
         @click="stop"
       >
-        <span class="leading-none">{{ stopping ? "stopping…" : "stop" }}</span>
+        <Icon
+          :name="stopping ? 'refresh' : 'stop'"
+          class="h-3.5 w-3.5"
+          :class="stopping ? 'animate-spin text-err' : ''"
+        />
+      </button>
+
+      <button
+        v-if="props.streaming && (hasInput || queueingPending)"
+        :disabled="!canSend || queueingPending || steeringPending"
+        type="button"
+        class="flex h-7 shrink-0 items-center gap-1 rounded-[6px] border border-line-strong/60 bg-raised px-2 text-[11.5px] font-medium text-dim transition-all hover:border-line-strong hover:bg-surface hover:text-fg active:scale-95 disabled:opacity-40 shadow-sm"
+        title="Queue behind running turn (Alt+Enter)"
+        @click="send('follow-up')"
+      >
+        <Icon v-if="queueingPending" name="refresh" class="h-3 w-3 animate-spin text-accent" />
+        <Icon v-else name="clock" class="h-3 w-3 text-faint" />
+        <span>{{ queueingPending ? "queueing…" : "Queue" }}</span>
+      </button>
+
+      <button
+        v-if="hasInput || steeringPending"
+        :disabled="!canSend || steeringPending || queueingPending"
+        type="button"
+        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-accent text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100 shadow-sm"
+        :title="props.streaming ? 'Steer running turn (Enter)' : 'Send message (Enter)'"
+        :aria-label="props.streaming ? 'Steer' : 'Send'"
+        @click="send(props.streaming ? 'steer' : 'prompt')"
+      >
+        <Icon v-if="steeringPending" name="refresh" class="h-3.5 w-3.5 animate-spin text-canvas" />
+        <Icon v-else name="arrow-up" class="h-4 w-4 text-canvas" />
       </button>
     </div>
 

@@ -797,6 +797,11 @@ defineExpose({
     </div>
 
     <div class="relative mx-auto w-full max-w-[46rem] px-4 pb-4 shrink-0">
+      <div
+        class="pointer-events-none absolute -top-12 inset-x-0 h-12 z-10 select-none"
+        style="background: linear-gradient(to top, var(--color-canvas) 0%, var(--color-canvas) 28%, color-mix(in srgb, var(--color-canvas) 70%, transparent) 65%, transparent 100%)"
+        aria-hidden="true"
+      />
       <!-- Floating scroll-to-bottom button when reading history -->
       <Transition
         enter-active-class="transition duration-150 ease-out"
@@ -808,11 +813,11 @@ defineExpose({
       >
         <div
           v-if="isScrolledUp && rows.length > 0"
-          class="pointer-events-none absolute -top-10 right-6 z-20"
+          class="pointer-events-none absolute -top-11 left-1/2 -translate-x-1/2 z-20"
         >
           <button
             type="button"
-            class="pointer-events-auto flex h-7 w-7 items-center justify-center rounded-full border border-line-strong/60 bg-raised/90 text-dim backdrop-blur-md shadow-md shadow-black/20 transition-all hover:border-line-strong hover:bg-surface hover:text-fg hover:scale-105 active:scale-95"
+            class="pointer-events-auto flex h-7 w-7 items-center justify-center rounded-[8px] border border-line-strong/60 bg-raised/95 text-dim backdrop-blur-md shadow-md shadow-black/25 transition-all hover:border-line-strong hover:bg-surface hover:text-fg hover:scale-105 active:scale-95"
             aria-label="Scroll to bottom"
             @click="scrollToBottom"
           >
