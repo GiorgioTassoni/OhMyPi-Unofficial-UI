@@ -177,6 +177,7 @@ let lastStatusRead = 0;
 let trailing: ReturnType<typeof setTimeout> | null = null;
 
 let subagentDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let conversationResizeObserver: ResizeObserver | null = null;
 
 function scheduleSubagentFileChanges(delayMs = 1500): void {
   if (subagentDebounceTimer) {
@@ -278,12 +279,24 @@ onMounted(async () => {
       emit("failed", describe(cause));
     }
   }
+
+  const el = conversationRef.value;
+  if (el && typeof ResizeObserver !== "undefined") {
+    conversationResizeObserver = new ResizeObserver(() => {
+      if (!isScrolledUp.value) {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+    conversationResizeObserver.observe(el);
+  }
 });
 
 onUnmounted(() => {
   for (const off of unlisten) off();
   if (trailing) clearTimeout(trailing);
   if (subagentDebounceTimer) clearTimeout(subagentDebounceTimer);
+  conversationResizeObserver?.disconnect();
+  conversationResizeObserver = null;
 });
 
 /**
@@ -715,7 +728,7 @@ defineExpose({
         <p class="mt-2 text-[13px] text-faint">A fresh thread — nothing said yet.</p>
       </div>
 
-      <div v-else class="mx-auto w-full max-w-[46rem] py-4">
+      <div v-else class="mx-auto w-full max-w-[46rem] pt-4 pb-12">
         <!-- Archived history banner -->
         <ArchivedTurnsBanner
           :remaining="remainingArchivedTurns"
@@ -796,13 +809,25 @@ defineExpose({
       </div>
     </div>
 
-    <div class="relative mx-auto w-full max-w-[46rem] px-4 pb-4 shrink-0">
-      <div
-        class="pointer-events-none absolute -top-12 inset-x-0 h-12 z-10 select-none"
-        style="background: linear-gradient(to top, var(--color-canvas) 0%, var(--color-canvas) 28%, color-mix(in srgb, var(--color-canvas) 70%, transparent) 65%, transparent 100%)"
-        aria-hidden="true"
-      />
-      <!-- Floating scroll-to-bottom button when reading history -->
+    <div class="relative w-full shrink-0">
+      <Transition
+        enter-active-class="transition-opacity duration-200 ease-out"
+        enter-from-class="opacity-0"
+        enter-to-class="opacity-100"
+        leave-active-class="transition-opacity duration-150 ease-in"
+        leave-from-class="opacity-100"
+        leave-to-class="opacity-0"
+      >
+        <div
+          v-if="isScrolledUp && rows.length > 0"
+          class="pointer-events-none absolute -top-12 inset-x-0 h-12 z-10 select-none"
+          style="background: linear-gradient(to top, var(--color-canvas) 0%, var(--color-canvas) 28%, color-mix(in srgb, var(--color-canvas) 70%, transparent) 65%, transparent 100%)"
+          aria-hidden="true"
+        />
+      </Transition>
+
+      <div class="relative mx-auto w-full max-w-[46rem] px-4 pb-4">
+        <!-- Floating scroll-to-bottom button when reading history -->
       <Transition
         enter-active-class="transition duration-150 ease-out"
         enter-from-class="opacity-0 translate-y-1 scale-90"
@@ -880,6 +905,7 @@ defineExpose({
         @favourites="emit('favourites', $event)"
         @app-action="emit('app-action', $event)"
       />
+      </div>
     </div>
   </section>
 </template>

@@ -218,7 +218,7 @@ async function flip(phase: TodoPhaseSnapshot, content: string): Promise<void> {
               </button>
             </div>
             <p v-if="task.blocker" class="pl-8 pr-2 pb-1 text-[11px] text-warn">
-              waiting on {{ task.blocker }}
+              {{ task.blocker }}
             </p>
           </li>
         </ul>

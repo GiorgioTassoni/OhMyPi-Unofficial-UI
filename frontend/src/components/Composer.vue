@@ -789,7 +789,7 @@ defineExpose({ setDraft, attachPaths, attachFiles, attachPastedText });
         rows="1"
         spellcheck="false"
         placeholder="Type / for commands, @ for files"
-        class="max-h-60 min-h-[28px] flex-1 resize-none overflow-y-auto bg-transparent py-1 pl-1 pr-3.5 text-[13px] leading-5 text-fg outline-none placeholder:text-faint [scrollbar-gutter:stable]"
+        class="max-h-36 min-h-[28px] flex-1 resize-none overflow-y-auto bg-transparent py-1 pl-1 pr-3.5 text-[13px] leading-5 text-fg outline-none placeholder:text-faint [scrollbar-gutter:stable]"
         @input="onInput"
         @keydown="onKeydown"
         @keyup="caret = caretOf($event)"
