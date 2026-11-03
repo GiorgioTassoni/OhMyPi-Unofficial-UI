@@ -50,6 +50,7 @@ import DialogPanel from "./DialogPanel.vue";
 import DragDropOverlay from "./DragDropOverlay.vue";
 import PendingSteerBadge from "./PendingSteerBadge.vue";
 import UnexpectedResumeBanner from "./UnexpectedResumeBanner.vue";
+import SelectionQuotePopup from "./SelectionQuotePopup.vue";
 import Icon from "./ui/Icon.vue";
 import TurnFiles from "./TurnFiles.vue";
 import TurnActivity from "./TurnActivity.vue";
@@ -57,6 +58,7 @@ import { mergeSubagentFileSummaries, type TurnFileSummary } from "../lib/panel";
 import { initialProjection, projectTranscript, type TranscriptProjection } from "../lib/transcriptCache";
 import { turnContainingRow } from "../lib/virtualTurns";
 import { createDisclosureMemory } from "../lib/disclosureMemory";
+import { smoothWheel } from "../lib/smoothWheel";
 
 const props = defineProps<{
   thread: string;
@@ -178,6 +180,9 @@ let trailing: ReturnType<typeof setTimeout> | null = null;
 
 let subagentDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let conversationResizeObserver: ResizeObserver | null = null;
+let disconnectSmoothWheel: (() => void) | null = null;
+let lastClientHeight = 0;
+let isMouseDown = false;
 
 function scheduleSubagentFileChanges(delayMs = 1500): void {
   if (subagentDebounceTimer) {
@@ -281,14 +286,22 @@ onMounted(async () => {
   }
 
   const el = conversationRef.value;
-  if (el && typeof ResizeObserver !== "undefined") {
-    conversationResizeObserver = new ResizeObserver(() => {
-      if (!isScrolledUp.value) {
-        el.scrollTop = el.scrollHeight;
-      }
-    });
-    conversationResizeObserver.observe(el);
+  if (el) {
+    disconnectSmoothWheel = smoothWheel(el);
+    if (typeof ResizeObserver !== "undefined") {
+      lastClientHeight = el.clientHeight;
+      conversationResizeObserver = new ResizeObserver(([entry]) => {
+        if (!entry) return;
+        const decreased = lastClientHeight > 0 && entry.contentRect.height < lastClientHeight;
+        lastClientHeight = entry.contentRect.height;
+        if (decreased && !isScrolledUp.value && !isMouseDown) el.scrollTop = el.scrollHeight;
+      });
+      conversationResizeObserver.observe(el);
+    }
   }
+
+  window.addEventListener("mousedown", onMouseDown, { passive: true });
+  window.addEventListener("mouseup", onMouseUp);
 });
 
 onUnmounted(() => {
@@ -297,6 +310,9 @@ onUnmounted(() => {
   if (subagentDebounceTimer) clearTimeout(subagentDebounceTimer);
   conversationResizeObserver?.disconnect();
   conversationResizeObserver = null;
+  disconnectSmoothWheel?.();
+  window.removeEventListener("mousedown", onMouseDown);
+  window.removeEventListener("mouseup", onMouseUp);
 });
 
 /**
@@ -586,6 +602,7 @@ function openDetails(element: HTMLDetailsElement): void {
 /** The composer, for the operations that reach into it. */
 const composer = ref<{
   setDraft: (text: string) => void;
+  appendDraft: (text: string) => void;
   attachPaths: (paths: readonly string[]) => Promise<void>;
   attachFiles: (files: File[]) => Promise<void>;
   attachPastedText: (text: string) => void;
@@ -649,10 +666,8 @@ function scrollToLatest(): void {
 
 function followAfterRender(): void {
   void nextTick(() => {
-    if (isScrolledUp.value) return;
-    const el = conversationRef.value;
-    if (el) {
-      el.scrollTop = el.scrollHeight;
+    if (!isScrolledUp.value && conversationRef.value) {
+      conversationRef.value.scrollTop = conversationRef.value.scrollHeight;
     }
   });
 }
@@ -663,11 +678,13 @@ function scrollToBottom(): void {
   isScrolledUp.value = false;
   el.scrollTop = el.scrollHeight;
   void nextTick(() => {
-    if (el) {
-      el.scrollTop = el.scrollHeight;
-    }
+    if (el) el.scrollTop = el.scrollHeight;
   });
 }
+
+function onMouseDown(): void { isMouseDown = true; }
+function onMouseUp(): void { isMouseDown = false; }
+function onQuote(text: string): void { composer.value?.appendDraft(text); }
 
 // Exposed for the shell's diagnostics drawer, for re-reading after a flow, for a search hit's
 // jump, and for the one chrome op that writes the box. `defineExpose` unwraps refs, so the
@@ -697,6 +714,8 @@ defineExpose({
   >
     <!-- Drag & drop visual drop overlay -->
     <DragDropOverlay :active="isDraggingOver" />
+
+    <SelectionQuotePopup :container="conversationRef" :active="props.active" @quote="onQuote" />
     <!--
       The row kinds of `docs/12` §3.1, rendered from the patch stream. Each kind lives in
       `ConversationRow`: a user turn with its attachments, an assistant turn as sanitized
@@ -740,7 +759,7 @@ defineExpose({
           v-for="turn in turns"
           :key="turn.start"
           :data-turn-start="turn.start"
-          class="turn-card flex min-w-0 flex-col gap-2 border-line/50 pb-4"
+          class="flex min-w-0 flex-col gap-2 border-line/50 pb-4"
           :class="turn.start === turns[0]?.start ? '' : 'border-t pt-4'"
         >
           <div
@@ -910,9 +929,4 @@ defineExpose({
   </section>
 </template>
 
-<style scoped>
-.turn-card {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 500px;
-}
-</style>
+

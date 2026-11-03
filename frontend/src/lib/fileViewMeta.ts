@@ -46,16 +46,19 @@ export function cleanExtension(ext: string): string {
 }
 
 export function normalizeFilePath(rawPath: string): string {
-  const trimmed = rawPath.trim();
+  let trimmed = rawPath.trim();
   if (/^file:\/\/\//i.test(trimmed)) {
-    return trimmed.slice(7);
-  }
-  if (/^file:\/\//i.test(trimmed)) {
+    trimmed = trimmed.slice(7);
+  } else if (/^file:\/\//i.test(trimmed)) {
     const after = trimmed.slice(7);
-    return after.startsWith("/") || /^[a-zA-Z]:/.test(after) ? after : "/" + after;
+    trimmed = after.startsWith("/") || /^[a-zA-Z]:/.test(after) ? after : "/" + after;
+  } else if (/^file:/i.test(trimmed)) {
+    trimmed = trimmed.slice(5);
   }
-  if (/^file:/i.test(trimmed)) {
-    return trimmed.slice(5);
+  if (trimmed.includes("%")) {
+    try {
+      trimmed = decodeURIComponent(trimmed);
+    } catch {}
   }
   return trimmed;
 }

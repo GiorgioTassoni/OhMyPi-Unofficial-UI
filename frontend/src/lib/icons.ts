@@ -48,6 +48,7 @@ import {
   Square,
   Star,
   Terminal,
+  TextQuote,
   Trash2,
   TriangleAlert,
   User,
@@ -124,6 +125,7 @@ export const ICONS = {
   steer: CornerDownRight,
   zap: Zap,
   "rotate-ccw": RotateCcw,
+  "text-quote": TextQuote,
   asterisk: Asterisk,
   spinner: Asterisk,
 } as const satisfies Record<string, LucideIcon>;

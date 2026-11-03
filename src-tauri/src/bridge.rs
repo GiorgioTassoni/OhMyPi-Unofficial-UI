@@ -992,7 +992,7 @@ pub async fn read_artifact(
 
 fn resolve_file_path(workspace: Option<&str>, path: &str) -> PathBuf {
     let cleaned = flows::clean_path_input(path);
-    let p = Path::new(cleaned);
+    let p = Path::new(cleaned.as_ref());
     if p.is_absolute() {
         p.to_path_buf()
     } else if let Some(ws) = workspace {

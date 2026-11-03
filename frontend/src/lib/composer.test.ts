@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { operationFor } from "./composer";
+import { appendQuotedText, formatQuote, operationFor } from "./composer";
 
 const idle = { streaming: false, draft: "", attachments: 0, palette: false };
 const streaming = { streaming: true, draft: "", attachments: 0, palette: false };
@@ -133,5 +133,41 @@ describe("operationFor", () => {
     for (const key of ["a", "ArrowUp", "Tab", "Backspace", "Enterx"]) {
       expect(operationFor({ key }, { ...streaming, draft: "hello" })).toBe("none");
     }
+  });
+});
+
+describe("formatQuote", () => {
+  test("formats single line into markdown blockquote followed by two newlines", () => {
+    expect(formatQuote("hello world")).toBe("> hello world\n\n");
+  });
+
+  test("prefixes each line with quote marker and leaves blank line markers clean", () => {
+    expect(formatQuote("line one\n\nline two")).toBe("> line one\n>\n> line two\n\n");
+  });
+
+  test("returns empty string when input is whitespace or empty", () => {
+    expect(formatQuote("   \n\t  ")).toBe("");
+  });
+});
+
+describe("appendQuotedText", () => {
+  test("returns formatted quote directly when draft is empty", () => {
+    expect(appendQuotedText("", "important point")).toBe("> important point\n\n");
+  });
+
+  test("appends quote separated by double newlines when draft does not end with newline", () => {
+    expect(appendQuotedText("my comment", "target text")).toBe("my comment\n\n> target text\n\n");
+  });
+
+  test("appends quote separated cleanly when draft already ends with single newline", () => {
+    expect(appendQuotedText("my comment\n", "target text")).toBe("my comment\n\n> target text\n\n");
+  });
+
+  test("appends quote without adding redundant newlines when draft ends with double newline", () => {
+    expect(appendQuotedText("my comment\n\n", "target text")).toBe("my comment\n\n> target text\n\n");
+  });
+
+  test("returns existing draft unchanged when quoted text is empty", () => {
+    expect(appendQuotedText("my comment", "  ")).toBe("my comment");
   });
 });

@@ -289,12 +289,42 @@ pub struct Allowlist {
     temp: Option<PathBuf>,
 }
 
-pub fn clean_path_input(path: &str) -> &str {
+fn decode_percent(s: &str) -> Option<String> {
+    if !s.contains('%') {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let h1 = (bytes[i + 1] as char).to_digit(16);
+            let h2 = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h1), Some(h2)) = (h1, h2) {
+                out.push(((h1 << 4) | h2) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).ok()
+}
+
+pub fn clean_path_input(path: &str) -> std::borrow::Cow<'_, str> {
     let trimmed = path.trim();
-    trimmed
+    let stripped = trimmed
         .strip_prefix("file://")
         .or_else(|| trimmed.strip_prefix("file:"))
-        .unwrap_or(trimmed)
+        .unwrap_or(trimmed);
+
+    if stripped.contains('%') {
+        if let Some(decoded) = decode_percent(stripped) {
+            return std::borrow::Cow::Owned(decoded);
+        }
+    }
+    std::borrow::Cow::Borrowed(stripped)
 }
 
 impl Allowlist {
@@ -339,7 +369,7 @@ impl Allowlist {
     /// check that had to launch `xdg-open` to run is a check nobody runs.
     pub fn permit(&self, path: &str) -> Result<PathBuf, String> {
         let cleaned = clean_path_input(path);
-        let requested = Path::new(cleaned);
+        let requested = Path::new(cleaned.as_ref());
 
         if !requested.is_absolute() {
             return Err(format!(
@@ -685,6 +715,18 @@ mod tests {
         };
 
         assert!(allowlist.permit(&file.display().to_string()).is_ok());
+    }
+
+    #[test]
+    fn clean_path_input_decodes_percent_sequences() {
+        assert_eq!(
+            clean_path_input("file:///home/user/my%20file.txt"),
+            "/home/user/my file.txt"
+        );
+        assert_eq!(
+            clean_path_input("docs/UI%20Component%20Schema%20v1.0.txt"),
+            "docs/UI Component Schema v1.0.txt"
+        );
     }
 
     /// The export path is the app's, and it is inside the directory the allowlist admits.

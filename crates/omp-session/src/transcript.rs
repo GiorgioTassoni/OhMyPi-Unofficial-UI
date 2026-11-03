@@ -368,6 +368,7 @@ impl Transcript {
             | SessionEvent::AdvisorCostChanged
             | SessionEvent::AdvisorYielded
             | SessionEvent::TodoAutoClear
+            | SessionEvent::QueueUpdate(_)
             | SessionEvent::IrcMessage(_) => {}
 
             SessionEvent::TurnEnd(end) => {

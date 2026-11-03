@@ -44,8 +44,8 @@ export type Tone = "info" | "warn" | "error";
  * completion rule (`agent_end` with `isTerminal !== false`) does not have to guess, so the
  * derivation is gone rather than kept beside this.
  */
-export function marksUnread(event: NotificationEvent, activeId: string | null): boolean {
-  return event.kind === "turn-finished" && event.thread !== activeId;
+export function marksUnread(event: NotificationEvent, activeId: string | null, isFocused = true): boolean {
+  return event.kind === "turn-finished" && (event.thread !== activeId || !isFocused);
 }
 
 /** Whether this fact should raise an in-app notice. The thread on screen never does: it just

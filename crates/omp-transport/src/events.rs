@@ -43,7 +43,7 @@ use serde_json::Value;
 /// absent from it is an event type we have never seen. The test suite asserts
 /// that every listed kind decodes to its own variant, so the list cannot rot
 /// silently.
-pub const KNOWN_EVENT_KINDS: [&str; 28] = [
+pub const KNOWN_EVENT_KINDS: [&str; 29] = [
     "advisor_cost_changed",
     "advisor_yielded",
     "agent_end",
@@ -60,6 +60,7 @@ pub const KNOWN_EVENT_KINDS: [&str; 28] = [
     "message_update",
     "model_changed",
     "notice",
+    "queue_update",
     "retry_fallback_applied",
     "retry_fallback_succeeded",
     "thinking_level_changed",
@@ -148,6 +149,8 @@ pub enum SessionEvent {
     Notice(Notice),
     /// Goal-mode state changed.
     GoalUpdated(GoalUpdated),
+    /// Coalesced snapshot of the displayable steering/follow-up queue.
+    QueueUpdate(QueueUpdate),
 
     // ---- diagnostic fallbacks -------------------------------------------
     /// An event type this build does not know. Not an error: the frame is kept
@@ -223,6 +226,7 @@ impl SessionEvent {
             Self::IrcMessage(_) => "irc_message",
             Self::Notice(_) => "notice",
             Self::GoalUpdated(_) => "goal_updated",
+            Self::QueueUpdate(_) => "queue_update",
             Self::Unknown { kind, .. } | Self::Malformed { kind, .. } => kind,
         }
     }
@@ -544,6 +548,18 @@ pub struct GoalUpdated {
     pub goal: Option<Value>,
     /// Goal-mode state, passed through opaquely.
     pub state: Option<Value>,
+}
+
+/// Payload of [`SessionEvent::QueueUpdate`].
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueUpdate {
+    #[serde(default)]
+    pub steering: Vec<String>,
+    #[serde(default)]
+    pub follow_up: Vec<String>,
+    #[serde(default)]
+    pub live_steered: u64,
 }
 
 /// Every `assistantMessageEvent` type this build understands. See

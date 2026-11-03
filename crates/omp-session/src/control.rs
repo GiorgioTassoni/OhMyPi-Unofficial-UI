@@ -158,6 +158,9 @@ impl SessionControl {
                 self.todo_phases.clear();
                 return true;
             }
+            SessionEvent::QueueUpdate(update) => {
+                self.queued_message_count = (update.steering.len() + update.follow_up.len()) as u64;
+            }
             SessionEvent::ModelChanged | SessionEvent::ConfigWarningsChanged => return true,
             _ => {}
         }

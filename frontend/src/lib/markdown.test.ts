@@ -213,4 +213,17 @@ Run context`;
     expect(html).toContain('<span class="md-section"><span class="md-section-sym">§§</span>12-14</span>');
     expect(html).toContain('<span class="md-section"><span class="md-section-sym">§</span>AI-Created</span>');
   });
+
+  test("renders inline hex colors with color swatch chip", () => {
+    const html = renderMarkdown("accent is #5aa2f0 and alert is (#ef6b70)");
+    expect(html).toContain('style="background-color: #5aa2f0;"');
+    expect(html).toContain('class="color-swatch"');
+    expect(html).toContain('style="background-color: #ef6b70;"');
+  });
+
+  test("renders codespan with hex color and color swatch", () => {
+    const html = renderMarkdown("use `#5cb08c` background");
+    expect(html).toContain('class="md-code-color"');
+    expect(html).toContain('style="background-color: #5cb08c;"');
+  });
 });

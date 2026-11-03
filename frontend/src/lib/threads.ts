@@ -26,12 +26,13 @@ import type { SessionSummary, ThreadSnapshot } from "../bridge";
 export type ThreadDot = "cold" | "idle" | "streaming" | "attention" | "error";
 
 /** WorkBuddy-style minimal LED kind for session-active statuses. */
-export type ThreadLedKind = "streaming" | "attention" | "error";
+export type ThreadLedKind = "streaming" | "attention" | "error" | "unread";
 
-export function ledFor(dot: ThreadDot, live: boolean): ThreadLedKind | null {
+export function ledFor(dot: ThreadDot, live: boolean, unread = false): ThreadLedKind | null {
   if (dot === "streaming") return "streaming";
   if (dot === "attention") return "attention";
   if (live && dot === "error") return "error";
+  if (unread) return "unread";
   return null;
 }
 
@@ -187,7 +188,7 @@ export function sidebarModel(input: SidebarInput): ProjectGroup[] {
       ),
       live: thread !== undefined,
       dot,
-      led: ledFor(dot, thread !== undefined),
+      led: ledFor(dot, thread !== undefined, unread.has(session.id)),
       unread: unread.has(session.id),
       note: noteFor(session.status, thread !== undefined),
       suspended: session.suspended && thread === undefined,
@@ -213,7 +214,7 @@ export function sidebarModel(input: SidebarInput): ProjectGroup[] {
       title: displayName(thread.title, "", input.now, null),
       live: true,
       dot,
-      led: ledFor(dot, true),
+      led: ledFor(dot, true, unread.has(thread.id)),
       unread: unread.has(thread.id),
       note: null,
       // A session the engine has not written to disk yet has never been released by anything.
@@ -242,19 +243,22 @@ export function sidebarModel(input: SidebarInput): ProjectGroup[] {
     .filter(([path]) => !hidden.has(path))
     .map(([path, threads]) => ({ path, name: projectName(path), threads: nest(threads) }));
 
+  const latestOf = (group: { threads: readonly { modifiedAt: number }[] }): number =>
+    group.threads.reduce((max, t) => Math.max(max, t.modifiedAt), 0);
+
   if (input.projectOrder && input.projectOrder.length > 0) {
     const orderMap = new Map(input.projectOrder.map((path, idx) => [path, idx]));
     return unhidden.sort((a, b) => {
       const idxA = orderMap.get(a.path);
       const idxB = orderMap.get(b.path);
       if (idxA !== undefined && idxB !== undefined) return idxA - idxB;
-      if (idxA !== undefined) return -1;
-      if (idxB !== undefined) return 1;
-      return a.name.localeCompare(b.name);
+      if (idxA === undefined && idxB !== undefined) return -1;
+      if (idxA !== undefined && idxB === undefined) return 1;
+      return latestOf(b) - latestOf(a) || a.name.localeCompare(b.name);
     });
   }
 
-  return unhidden.sort((a, b) => a.name.localeCompare(b.name));
+  return unhidden.sort((a, b) => latestOf(b) - latestOf(a) || a.name.localeCompare(b.name));
 }
 
 /**

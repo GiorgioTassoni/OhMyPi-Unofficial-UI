@@ -42,6 +42,10 @@ describe("unread marks", () => {
     expect(marksUnread(event({ thread: "a" }), "a")).toBe(false);
   });
 
+  test("the thread on screen is marked unread when window is unfocused", () => {
+    expect(marksUnread(event({ thread: "a" }), "a", false)).toBe(true);
+  });
+
   test("the other three kinds are not completion", () => {
     for (const kind of ["needs-you", "failed", "job-finished"] as const) {
       expect(marksUnread(event({ kind }), "a")).toBe(false);

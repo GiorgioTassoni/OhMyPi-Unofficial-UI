@@ -93,6 +93,16 @@ describe("the minimal status led", () => {
     expect(ledFor("cold", false)).toBeNull();
     expect(ledFor("idle", true)).toBeNull();
   });
+
+  test("unread thread shows unread blue led when not streaming or attention", () => {
+    expect(ledFor("idle", true, true)).toBe("unread");
+    expect(ledFor("cold", false, true)).toBe("unread");
+  });
+
+  test("streaming or attention status takes precedence over unread", () => {
+    expect(ledFor("streaming", true, true)).toBe("streaming");
+    expect(ledFor("attention", true, true)).toBe("attention");
+  });
 });
 
 describe("the display name", () => {
@@ -151,6 +161,47 @@ describe("the model", () => {
       "/home/me/Projects/Beta",
       "/home/me/Projects/Gamma",
       "/home/me/Projects/Alpha",
+    ]);
+  });
+
+  test("newly added projects not yet in projectOrder appear first", () => {
+    const groups = sidebarModel({
+      sessions: [
+        session("a", { cwd: "/home/me/Projects/Alpha", modifiedAt: NOW - 10000 }),
+        session("b", { cwd: "/home/me/Projects/Beta", modifiedAt: NOW - 20000 }),
+        session("new", { cwd: "/home/me/Projects/NewProject", modifiedAt: NOW }),
+      ],
+      live: [],
+      unread: [],
+      hidden: [],
+      projectOrder: ["/home/me/Projects/Beta", "/home/me/Projects/Alpha"],
+      now: NOW,
+    });
+
+    expect(groups.map((g) => g.path)).toEqual([
+      "/home/me/Projects/NewProject",
+      "/home/me/Projects/Beta",
+      "/home/me/Projects/Alpha",
+    ]);
+  });
+
+  test("default order without projectOrder sorts latest added/active project first", () => {
+    const groups = sidebarModel({
+      sessions: [
+        session("a", { cwd: "/home/me/Projects/Alpha", modifiedAt: NOW }),
+        session("b", { cwd: "/home/me/Projects/Beta", modifiedAt: NOW - 10000 }),
+        session("c", { cwd: "/home/me/Projects/Gamma", modifiedAt: NOW - 5000 }),
+      ],
+      live: [],
+      unread: [],
+      hidden: [],
+      now: NOW,
+    });
+
+    expect(groups.map((g) => g.path)).toEqual([
+      "/home/me/Projects/Alpha",
+      "/home/me/Projects/Gamma",
+      "/home/me/Projects/Beta",
     ]);
   });
 

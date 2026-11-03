@@ -246,6 +246,7 @@ const unread = ref<Set<string>>(new Set());
 watch(activeId, (thread) => {
   void setFocusedThread(thread);
   if (thread) {
+    markRead(thread);
     void loadParkedAgents(thread);
   }
 }, { immediate: true });
@@ -905,6 +906,8 @@ onMounted(async () => {
 
   cleanupAudio = setupAudioUnlock();
   window.addEventListener("keydown", onShortcut);
+  window.addEventListener("focus", onWindowFocus);
+  window.addEventListener("contextmenu", onContextMenu);
 
   unlisten = await Promise.all([
     // The live set is replaced wholesale. Which thread *finished* is a fact the host reports as
@@ -1013,6 +1016,8 @@ onUnmounted(() => {
   for (const off of unlisten) off();
   for (const timer of noticeTimers.values()) clearTimeout(timer);
   window.removeEventListener("keydown", onShortcut);
+  window.removeEventListener("focus", onWindowFocus);
+  window.removeEventListener("contextmenu", onContextMenu);
 });
 
 /**
@@ -1079,6 +1084,10 @@ async function open(target: string, resume?: string): Promise<void> {
   try {
     const thread = await openThread(target, resume);
     recent.value = [target, ...recent.value.filter((path) => path !== target)];
+    if (!projectOrder.value.includes(target)) {
+      projectOrder.value = [target, ...projectOrder.value];
+      saveProjectOrder(projectOrder.value);
+    }
     if (!live.value.some((t) => t.id === thread.id)) {
       live.value = [...live.value, thread];
     }
@@ -1217,6 +1226,18 @@ function markRead(id: string): void {
   unread.value = next;
 }
 
+function onWindowFocus(): void {
+  if (activeId.value) markRead(activeId.value);
+}
+
+function onContextMenu(event: MouseEvent): void {
+  const target = event.target as HTMLElement | null;
+  const isInput = target?.closest("input, textarea, [contenteditable='true']");
+  if (!isInput) {
+    event.preventDefault();
+  }
+}
+
 /**
  * One fact the host reported, delivered the three ways `docs/12` §13 asks for: an unread ring
  * on the row, an in-app notice, and — when the window is in the background and this is not the
@@ -1241,7 +1262,8 @@ function onNotification(event: NotificationEvent): void {
   // and neither is a summary we invented. The body is always the host's sentence.
   const name = threadTitles.value[event.thread] ?? event.title;
 
-  if (marksUnread(event, activeId.value)) {
+  const isFocused = typeof document !== "undefined" ? document.hasFocus() : true;
+  if (marksUnread(event, activeId.value, isFocused)) {
     unread.value = new Set([...unread.value, event.thread]);
   }
   if (showsNotice(event.thread, activeId.value)) {

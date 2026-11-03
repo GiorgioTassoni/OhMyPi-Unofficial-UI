@@ -192,6 +192,11 @@ const LED_CONFIG = {
     title: "Failed in this session",
     animated: false,
   },
+  unread: {
+    color: "bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.6)]",
+    title: "Completed (unread)",
+    animated: false,
+  },
 } as const;
 
 /** Threads that need the user, so their group can say so while collapsed. */
@@ -227,7 +232,16 @@ function onCardMouseDown(event: MouseEvent, index: number): void {
 
   longPressTimer = setTimeout(() => {
     longPressArmed.value = true;
-  }, 350);
+  }, 220);
+}
+
+function onGripDragStart(event: DragEvent, index: number): void {
+  cancelLongPress();
+  draggingIndex.value = index;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(index));
+  }
 }
 
 function onCardMouseMove(event: MouseEvent): void {
@@ -498,11 +512,11 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
         @drop.prevent="onDrop"
       >
         <div
-          class="group flex items-center gap-1 rounded-[6px] px-1.5 py-1.5 hover:bg-raised select-none cursor-pointer transition-colors"
+          class="group flex items-center gap-1 rounded-[6px] px-1.5 py-1.5 hover:bg-raised select-none cursor-pointer transition-all duration-150"
           :class="{
             'cursor-grab': longPressArmed && longPressIndex === index && draggingIndex === null,
-            'cursor-grabbing ring-1 ring-accent/60': draggingIndex === index,
-            'scale-[0.99] bg-raised/70': longPressArmed && longPressIndex === index,
+            'cursor-grabbing ring-2 ring-accent bg-accent/15 shadow-md scale-[1.01] -translate-y-0.5': longPressArmed && longPressIndex === index && draggingIndex === null,
+            'cursor-grabbing ring-1 ring-accent/60 opacity-40': draggingIndex === index,
           }"
           :draggable="longPressArmed && longPressIndex === index"
           tabindex="0"
@@ -518,6 +532,18 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
           @dragend="onDragEnd"
           @contextmenu.prevent="onProjectContext($event, group)"
         >
+          <span
+            class="grid h-4 w-3.5 shrink-0 place-items-center text-faint opacity-0 group-hover:opacity-70 hover:!opacity-100 hover:text-accent cursor-grab active:cursor-grabbing transition-opacity"
+            :class="{ '!opacity-100 !text-accent': longPressArmed && longPressIndex === index }"
+            title="Drag to reorder"
+            aria-label="Drag to reorder"
+            draggable="true"
+            @mousedown.stop
+            @dragstart.stop="onGripDragStart($event, index)"
+            @dragend="onDragEnd"
+          >
+            <Icon name="grip" class="h-3 w-3" />
+          </span>
           <div class="flex min-w-0 flex-1 items-center gap-1.5 text-left pointer-events-none">
             <Icon
               :name="isOpen(group.path) ? 'folder-open' : 'folder'"

@@ -23,7 +23,7 @@ import {
   stopTurnAndSend,
   type WorkspaceFileMatch,
 } from "../bridge";
-import { operationFor } from "../lib/composer";
+import { appendQuotedText, operationFor } from "../lib/composer";
 import {
   dispatchOf,
   insertionOf,
@@ -722,7 +722,19 @@ function setDraft(text: string): void {
   caret.value = text.length;
 }
 
-defineExpose({ setDraft, attachPaths, attachFiles, attachPastedText });
+function appendDraft(text: string): void {
+  draft.value = appendQuotedText(draft.value, text);
+  caret.value = draft.value.length;
+  void nextTick(() => {
+    if (box.value) {
+      box.value.focus();
+      box.value.setSelectionRange(draft.value.length, draft.value.length);
+      box.value.scrollTop = box.value.scrollHeight;
+    }
+  });
+}
+
+defineExpose({ setDraft, appendDraft, attachPaths, attachFiles, attachPastedText });
 </script>
 
 <template>

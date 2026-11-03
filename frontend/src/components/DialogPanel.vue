@@ -18,6 +18,7 @@
  */
 import { computed, onUnmounted, ref, watch } from "vue";
 import Icon from "./ui/Icon.vue";
+import ColorText from "./ui/ColorText.vue";
 import {
   allowCommand as grantCommand,
   allowTool,
@@ -508,7 +509,7 @@ function describe(cause: unknown): string {
           v-if="card.dialog.message"
           class="text-[12.5px] whitespace-pre-wrap text-fg"
         >
-          {{ card.dialog.message }}
+          <ColorText :text="card.dialog.message" />
         </p>
 
         <!-- The engine's own argument field names, one readout per line. -->
@@ -607,14 +608,14 @@ function describe(cause: unknown): string {
             {{ card.title.selectedBadge }}
           </span>
           <p class="text-[12.5px] font-medium whitespace-pre-wrap text-fg">
-            {{ card.title.text }}
+            <ColorText :text="card.title.text" />
           </p>
         </div>
         <p
           v-if="card.dialog.message && !card.title.isCustomResponse"
           class="mt-2 text-[12.5px] leading-relaxed whitespace-pre-wrap text-dim"
         >
-          {{ card.dialog.message }}
+          <ColorText :text="card.dialog.message" />
         </p>
 
         <div v-if="card.dialog.kind === 'select' && card.select" class="mt-3 flex flex-col gap-1.5">
@@ -658,7 +659,7 @@ function describe(cause: unknown): string {
             <div class="flex min-w-0 flex-1 flex-col gap-0.5">
               <div class="flex items-center gap-2">
                 <span class="leading-snug" :class="opt.isSelected ? 'font-medium text-fg' : 'text-fg'">
-                  {{ opt.cleanLabel }}
+                  <ColorText :text="opt.cleanLabel" />
                 </span>
                 <span
                   v-if="opt.isSelected"

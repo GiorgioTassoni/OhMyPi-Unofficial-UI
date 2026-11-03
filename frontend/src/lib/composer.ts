@@ -134,3 +134,22 @@ export function operationFor(key: ComposerKey, state: ComposerState): ComposerOp
 
   return "none";
 }
+
+export function formatQuote(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  return (
+    trimmed
+      .split("\n")
+      .map((line) => (line.trim() ? `> ${line}` : ">"))
+      .join("\n") + "\n\n"
+  );
+}
+
+export function appendQuotedText(draft: string, text: string): string {
+  const quote = formatQuote(text);
+  if (!quote) return draft;
+  if (!draft) return quote;
+  const sep = draft.endsWith("\n\n") ? "" : draft.endsWith("\n") ? "\n" : "\n\n";
+  return draft + sep + quote;
+}

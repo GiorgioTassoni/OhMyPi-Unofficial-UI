@@ -180,6 +180,15 @@ fn event_samples() -> Vec<(&'static str, Value)> {
             "goal_updated",
             json!({ "type": "goal_updated", "goal": null, "state": { "active": false } }),
         ),
+        (
+            "queue_update",
+            json!({
+                "type": "queue_update",
+                "steering": ["steer one"],
+                "followUp": ["followup one"],
+                "liveSteered": 0,
+            }),
+        ),
     ]
 }
 

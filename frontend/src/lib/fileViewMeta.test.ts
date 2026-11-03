@@ -67,6 +67,14 @@ describe("fileViewMeta", () => {
     expect(normalizeFilePath("file://home/gio/code.ts")).toBe("/home/gio/code.ts");
     expect(normalizeFilePath("file:C:/Users/file.txt")).toBe("C:/Users/file.txt");
     expect(normalizeFilePath("/var/log/syslog")).toBe("/var/log/syslog");
+    expect(
+      normalizeFilePath(
+        "file:///home/user/docs/UI%20Component%20Schema%20v1.0.txt",
+      ),
+    ).toBe("/home/user/docs/UI Component Schema v1.0.txt");
+    expect(
+      normalizeFilePath("docs/UI%20Component%20Schema%20v1.0.txt"),
+    ).toBe("docs/UI Component Schema v1.0.txt");
   });
 
   test("image, video, and markdown detection", () => {

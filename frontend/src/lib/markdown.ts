@@ -30,6 +30,7 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import markedKatex from "marked-katex-extension";
+import { isHexColor } from "./colors";
 
 /**
  * The elements a conversation message is allowed to produce.
@@ -109,7 +110,11 @@ if (typeof DOMPurify.addHook === "function") {
         (typeof node.className === "string" && (node.className.includes("katex") || node.className.includes("vlist") || node.className.includes("strut")))
         || (typeof node.closest === "function" && Boolean(node.closest(".katex")))
       );
-      if (!isMathTag && !isKatexSpan) {
+      const isColorSwatch = tag === "span" && typeof node.className === "string" && node.className.includes("color-swatch");
+      if (!isMathTag && !isKatexSpan && !isColorSwatch) {
+        data.keepAttr = false;
+      }
+      if (isColorSwatch && !/^background-color:\s*#[0-9a-fA-F]{3,8};?$/i.test(data.attrValue)) {
         data.keepAttr = false;
       }
     }
@@ -173,6 +178,27 @@ marked.use({
         return `<a class="md-link" data-href="${attribute}" title="${attribute}" role="link" tabindex="0">${escape(text)}</a>`;
       },
     },
+    {
+      name: "hexColor",
+      level: "inline",
+      start(src: string) {
+        return src.indexOf("#");
+      },
+      tokenizer(src: string) {
+        const match = /^#([0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b/.exec(src);
+        if (match && isHexColor(match[0])) {
+          return {
+            type: "hexColor",
+            raw: match[0],
+            hex: match[0],
+          };
+        }
+      },
+      renderer(token) {
+        const hex = escape(typeof token["hex"] === "string" ? token["hex"] : "");
+        return `<span class="color-swatch-chip"><span class="color-swatch" style="background-color: ${hex};" aria-hidden="true"></span>${hex}</span>`;
+      },
+    },
   ],
 });
 marked.use({
@@ -190,6 +216,10 @@ marked.use({
       if (isPathLike(trimmed)) {
         const attribute = escape(trimmed);
         return `<code class="md-code-link" data-href="${attribute}" title="${attribute}" role="link" tabindex="0">${escape(text)}</code>`;
+      }
+      if (isHexColor(trimmed)) {
+        const attribute = escape(trimmed);
+        return `<code class="md-code-color"><span class="color-swatch" style="background-color: ${attribute};" aria-hidden="true"></span>${escape(text)}</code>`;
       }
       return `<code>${escape(text)}</code>`;
     },

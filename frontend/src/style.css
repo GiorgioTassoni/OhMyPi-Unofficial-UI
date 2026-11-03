@@ -414,6 +414,37 @@ samp {
   -webkit-user-select: text !important;
 }
 
+.color-swatch-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.color-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  vertical-align: middle;
+  border-radius: 2px;
+  margin-right: 3px;
+  margin-left: 1px;
+  margin-bottom: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+  flex-shrink: 0;
+}
+
+.md-code-color {
+  display: inline-flex;
+  align-items: center;
+}
+
+.md-code-color .color-swatch {
+  margin-right: 4px;
+  margin-left: 0;
+  margin-bottom: 0;
+}
+
 /* Interactive links and clickable paths inside selectable text containers must show pointer */
 [data-href],
 [data-href] *,
