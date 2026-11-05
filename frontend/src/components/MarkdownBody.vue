@@ -101,9 +101,14 @@ async function onClick(event: MouseEvent): Promise<void> {
 }
 
 const WEB_URL_RE = /^(https?|mailto):/i;
+const LOCAL_WEB_URL_RE = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?(?:\/.*)?$/i;
 
 async function handleLinkNavigation(url: string, event: MouseEvent): Promise<void> {
   const trimmed = url.trim();
+  if (LOCAL_WEB_URL_RE.test(trimmed) && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    emit("openFile", { path: trimmed });
+    return;
+  }
   if (WEB_URL_RE.test(trimmed)) {
     try {
       await openExternal(trimmed);

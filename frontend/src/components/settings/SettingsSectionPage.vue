@@ -26,6 +26,7 @@ import AddSkillModal from "./AddSkillModal.vue";
 import AppThemeSetting from "./AppThemeSetting.vue";
 import ConfiguredProvidersCard from "./ConfiguredProvidersCard.vue";
 import ConfiguredSkillsCard from "./ConfiguredSkillsCard.vue";
+import McpDesignChoiceSetting from "./McpDesignChoiceSetting.vue";
 import NotificationSoundSetting from "./NotificationSoundSetting.vue";
 import SettingsRow from "./SettingsRow.vue";
 
@@ -44,6 +45,7 @@ const props = defineProps<{
   notificationSoundEnabled: boolean;
   appTheme: AppTheme;
   workspace?: string | null | undefined;
+  mcpDesignChoiceEnabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -56,6 +58,7 @@ const emit = defineEmits<{
   (event: "notificationSound", enabled: boolean): void;
   (event: "appTheme", theme: AppTheme): void;
   (event: "terminalLogin", providerId?: string): void;
+  (event: "mcpDesignChoice", enabled: boolean): void;
 }>();
 
 const configuredProviders = ref<ProviderAccountDto[]>([]);
@@ -168,6 +171,12 @@ function needsFor(row: SettingsRowModel): { sectionId: string; title: string } |
       v-if="props.section.id === 'appearance'"
       :theme="props.appTheme"
       @change="emit('appTheme', $event)"
+    />
+
+    <McpDesignChoiceSetting
+      v-if="props.section.id === 'mcp'"
+      :enabled="props.mcpDesignChoiceEnabled ?? true"
+      @change="emit('mcpDesignChoice', $event)"
     />
 
     <div v-if="props.section.id === 'model-and-providers'" class="mt-6">

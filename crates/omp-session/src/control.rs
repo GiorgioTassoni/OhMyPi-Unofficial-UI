@@ -161,6 +161,9 @@ impl SessionControl {
             SessionEvent::QueueUpdate(update) => {
                 self.queued_message_count = (update.steering.len() + update.follow_up.len()) as u64;
             }
+            SessionEvent::SessionSettled => {
+                self.is_streaming = false;
+            }
             SessionEvent::ModelChanged | SessionEvent::ConfigWarningsChanged => return true,
             _ => {}
         }

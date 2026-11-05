@@ -43,7 +43,7 @@ use serde_json::Value;
 /// absent from it is an event type we have never seen. The test suite asserts
 /// that every listed kind decodes to its own variant, so the list cannot rot
 /// silently.
-pub const KNOWN_EVENT_KINDS: [&str; 29] = [
+pub const KNOWN_EVENT_KINDS: [&str; 30] = [
     "advisor_cost_changed",
     "advisor_yielded",
     "agent_end",
@@ -63,6 +63,7 @@ pub const KNOWN_EVENT_KINDS: [&str; 29] = [
     "queue_update",
     "retry_fallback_applied",
     "retry_fallback_succeeded",
+    "session_settled",
     "thinking_level_changed",
     "todo_auto_clear",
     "todo_reminder",
@@ -87,6 +88,8 @@ pub enum SessionEvent {
     AgentStart,
     /// A run ended; inspect [`AgentEnd::is_terminal`] before treating it as final.
     AgentEnd(AgentEnd),
+    /// The session went quiet: the last run yielded and no background work can wake it.
+    SessionSettled,
     /// One assistant response plus any tool calls began.
     TurnStart,
     /// That turn finished.
@@ -200,6 +203,7 @@ impl SessionEvent {
         match self {
             Self::AgentStart => "agent_start",
             Self::AgentEnd(_) => "agent_end",
+            Self::SessionSettled => "session_settled",
             Self::TurnStart => "turn_start",
             Self::TurnEnd(_) => "turn_end",
             Self::MessageStart(_) => "message_start",

@@ -77,9 +77,14 @@ import {
   setupAudioUnlock,
   soundForNotification,
 } from "./lib/notificationSound";
+import {
+  readDesignChoiceEnabled,
+  saveDesignChoiceEnabled,
+  syncDesignChoiceMcp,
+} from "./lib/designChoiceSetting";
 import { isRecentDialogInteraction } from "./lib/dialogSelect";
 import { selectAfterClose, selectFrom, tabsFrom, type TerminalTab } from "./lib/terminals";
-import { loadProjectOrder, saveProjectOrder, sidebarModel, type ProjectGroup } from "./lib/threads";
+import { loadProjectOrder, saveProjectOrder, sidebarModel, type ProjectGroup, type ThreadRow } from "./lib/threads";
 import type { TurnFileSummary, TurnReviewRequest } from "./lib/panel";
 import type { ThreadContext } from "./lib/thread-menu";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -100,6 +105,7 @@ import ThreadView from "./components/ThreadView.vue";
 import TitleBar from "./components/TitleBar.vue";
 import WindowFrameBar from "./components/WindowFrameBar.vue";
 import ClosingOverlay from "./components/ClosingOverlay.vue";
+import Icon from "./components/ui/Icon.vue";
 
 /**
  * What a `ThreadView` exposes to the shell.
@@ -230,6 +236,10 @@ function closeThreadTab(id: string): void {
 function threadTabTitle(id: string): string {
   const row = rows.value.find((r) => r.id === id);
   return row?.title || "Conversation";
+}
+
+function threadRow(id: string): ThreadRow | undefined {
+  return rows.value.find((r) => r.id === id);
 }
 
 const unread = ref<Set<string>>(new Set());
@@ -442,6 +452,14 @@ watch(sidebarCollapsed, (next) => {
 function setNotificationSoundEnabled(enabled: boolean): void {
   notificationSoundEnabled.value = enabled;
   saveNotificationSoundEnabled(enabled);
+}
+
+const mcpDesignChoiceEnabled = ref(readDesignChoiceEnabled());
+
+function setMcpDesignChoiceEnabled(enabled: boolean): void {
+  mcpDesignChoiceEnabled.value = enabled;
+  saveDesignChoiceEnabled(enabled);
+  void syncDesignChoiceMcp(enabled, workspace.value);
 }
 
 function changeAppTheme(theme: AppTheme): void {
@@ -905,6 +923,7 @@ onMounted(async () => {
   }
 
   cleanupAudio = setupAudioUnlock();
+  void syncDesignChoiceMcp(mcpDesignChoiceEnabled.value, workspace.value);
   window.addEventListener("keydown", onShortcut);
   window.addEventListener("focus", onWindowFocus);
   window.addEventListener("contextmenu", onContextMenu);
@@ -1457,12 +1476,14 @@ function describe(cause: unknown): string {
       :mode="activeStatus?.approvalMode ?? null"
       :notification-sound-enabled="notificationSoundEnabled"
       :app-theme="appTheme"
+      :mcp-design-choice-enabled="mcpDesignChoiceEnabled"
       @back="openSettings(false)"
       @changed="onSettingsChanged"
       @favourites="onFavourites"
       @notification-sound="setNotificationSoundEnabled"
       @app-theme="changeAppTheme"
       @terminal-login="logIn"
+      @mcp-design-choice="setMcpDesignChoiceEnabled"
     />
 
     <!--
@@ -1528,7 +1549,6 @@ function describe(cause: unknown): string {
           :workspace="workspace"
           :busy="busy"
           :project="project"
-          :title="activeAgentTab ? tabAgentLabel(activeAgentTab.thread, activeAgentTab.id) : (activeRow?.title ?? null)"
           :sidebar-collapsed="sidebarCollapsed"
           :diagnostics="diagnostics"
           :panel="panelOpen || activeAgentTab !== null"
@@ -1538,7 +1558,93 @@ function describe(cause: unknown): string {
           @toggle-panel="panelOpen = !panelOpen"
           @toggle-diagnostics="diagnostics = !diagnostics"
           @toggle-terminals="terminalsOpen = !terminalsOpen"
-        />
+        >
+          <div
+            v-for="tid in openThreadTabs"
+            :key="tid"
+            class="group/tab flex shrink-0 items-center h-7 rounded-[6px] px-2.5 transition-all select-none cursor-pointer border text-[12px]"
+            :class="tid === activeId && activeAgentTab === null
+              ? 'bg-raised text-fg border-line/70 font-medium shadow-xs'
+              : 'text-dim hover:text-fg hover:bg-raised/50 border-transparent hover:border-line/30'"
+            :aria-current="tid === activeId && activeAgentTab === null ? 'page' : undefined"
+            @click="activeId = tid; activeAgentKey = null"
+            @auxclick.stop.prevent="closeThreadTab(tid)"
+          >
+            <span
+              v-if="threadRow(tid)?.unread"
+              class="mr-1.5 h-1.5 w-1.5 rounded-full bg-accent shrink-0 animate-pulse"
+              title="Unread response"
+            />
+            <span
+              v-else-if="threadRow(tid)?.dot === 'streaming'"
+              class="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0 animate-pulse"
+              title="Streaming..."
+            />
+            <span
+              v-else-if="threadRow(tid)?.dot === 'attention'"
+              class="mr-1.5 h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0"
+              title="Attention required"
+            />
+            <Icon
+              v-else
+              name="message"
+              class="mr-1.5 h-3 w-3 shrink-0 opacity-60 group-hover/tab:opacity-100"
+            />
+            <span class="max-w-64 sm:max-w-80 truncate" :title="threadTabTitle(tid)">
+              {{ threadTabTitle(tid) }}
+            </span>
+            <button
+              type="button"
+              class="ml-1.5 grid h-4 w-4 place-items-center rounded-[3px] text-dim hover:bg-surface hover:text-fg transition-colors"
+              :class="tid === activeId && activeAgentTab === null ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover/tab:opacity-100 focus:opacity-100'"
+              :aria-label="`Close ${threadTabTitle(tid)} tab`"
+              title="Close tab (Middle click)"
+              @click.stop="closeThreadTab(tid)"
+            >
+              <Icon name="close" class="h-3 w-3" />
+            </button>
+          </div>
+
+          <span v-if="openThreadTabs.length > 0 && agentTabs.length > 0" class="h-3.5 w-px bg-line/60 mx-0.5 shrink-0" />
+
+          <div
+            v-for="tab in agentTabs"
+            :key="agentKey(tab.thread, tab.id)"
+            class="group/tab flex shrink-0 items-center h-7 rounded-[6px] px-2.5 transition-all select-none cursor-pointer border text-[12px]"
+            :class="activeAgentKey === agentKey(tab.thread, tab.id)
+              ? 'bg-raised text-fg border-accent/40 font-medium shadow-xs'
+              : 'text-dim hover:text-fg hover:bg-raised/50 border-transparent hover:border-line/30'"
+            :aria-current="activeAgentKey === agentKey(tab.thread, tab.id) ? 'page' : undefined"
+            @click="activeId = tab.thread; activeAgentKey = agentKey(tab.thread, tab.id)"
+            @auxclick.stop.prevent="closeAgentTab(tab.thread, tab.id)"
+          >
+            <Icon name="bot" class="mr-1.5 h-3.5 w-3.5 text-accent shrink-0" />
+            <span class="max-w-60 sm:max-w-72 truncate" :title="tabAgentLabel(tab.thread, tab.id)">
+              {{ tabAgentLabel(tab.thread, tab.id) }}
+            </span>
+            <button
+              type="button"
+              class="ml-1.5 grid h-4 w-4 place-items-center rounded-[3px] text-dim hover:bg-surface hover:text-fg transition-colors"
+              :class="activeAgentKey === agentKey(tab.thread, tab.id) ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover/tab:opacity-100 focus:opacity-100'"
+              :aria-label="`Close ${tabAgentLabel(tab.thread, tab.id)} tab`"
+              title="Close agent tab"
+              @click.stop="closeAgentTab(tab.thread, tab.id)"
+            >
+              <Icon name="close" class="h-3 w-3" />
+            </button>
+          </div>
+
+          <button
+            v-if="workspace !== null"
+            type="button"
+            class="grid h-7 w-7 shrink-0 place-items-center rounded-[6px] text-dim hover:text-fg bg-raised/40 hover:bg-raised border border-line/40 hover:border-line/70 transition-all ml-0.5"
+            aria-label="New thread"
+            title="New thread in current project"
+            @click="open(workspace)"
+          >
+            <Icon name="plus" class="h-3.5 w-3.5" />
+          </button>
+        </TitleBar>
 
         <p
           v-if="error"
@@ -1548,58 +1654,6 @@ function describe(cause: unknown): string {
           <span class="min-w-0 flex-1">{{ error }}</span>
           <button class="shrink-0 text-err/70 hover:text-err select-none" @click="error = null">dismiss</button>
         </p>
-
-        <nav v-if="(openThreadTabs.length > 1 || agentTabs.length > 0) && activeId" class="flex shrink-0 items-center gap-0.5 overflow-x-auto border-b border-line/50 px-2 pt-1 select-none" aria-label="Conversation and agent tabs">
-          <!-- Conversation tabs when multiple threads are open -->
-          <div
-            v-for="tid in openThreadTabs"
-            :key="tid"
-            class="group/tab flex shrink-0 items-center rounded-t-[6px] transition-colors"
-            :class="tid === activeId && activeAgentTab === null ? 'bg-raised text-fg' : 'text-dim hover:bg-raised/60 hover:text-fg'"
-          >
-            <button
-              type="button"
-              class="max-w-48 truncate py-1.5 pl-3 pr-1 text-[12px] font-medium"
-              :aria-current="tid === activeId && activeAgentTab === null ? 'page' : undefined"
-              @click="activeId = tid; activeAgentKey = null"
-            >
-              {{ threadTabTitle(tid) }}
-            </button>
-            <button
-              v-if="openThreadTabs.length > 1"
-              type="button"
-              class="px-1.5 py-1 text-faint hover:text-fg rounded transition-opacity"
-              :class="tid === activeId ? 'opacity-100' : 'opacity-0 group-hover/tab:opacity-100'"
-              :aria-label="`Close ${threadTabTitle(tid)} tab`"
-              @click.stop="closeThreadTab(tid)"
-            >
-              ×
-            </button>
-          </div>
-
-          <!-- New thread plus button -->
-          <button
-            v-if="workspace !== null"
-            type="button"
-            class="grid h-6 w-6 shrink-0 place-items-center rounded-[5px] text-faint hover:bg-raised hover:text-fg transition-colors mx-1"
-            aria-label="New thread"
-            title="New thread in current project"
-            @click="open(workspace)"
-          >
-            <Icon name="plus" class="h-3 w-3" />
-          </button>
-
-          <!-- Separator if both thread tabs and agent tabs exist -->
-          <span v-if="openThreadTabs.length > 0 && agentTabs.length > 0" class="h-3.5 w-px bg-line/60 mx-1 shrink-0" />
-
-          <!-- Agent tabs -->
-          <div v-for="tab in agentTabs" :key="agentKey(tab.thread, tab.id)" class="flex shrink-0 items-center rounded-t-[6px]" :class="activeAgentKey === agentKey(tab.thread, tab.id) ? 'bg-raised text-fg' : 'text-dim hover:bg-raised/60'">
-            <button type="button" class="max-w-44 truncate py-1.5 pl-3 pr-1 text-[12px]" :aria-current="activeAgentKey === agentKey(tab.thread, tab.id) ? 'page' : undefined" @click="activeId = tab.thread; activeAgentKey = agentKey(tab.thread, tab.id)">
-              {{ tabAgentLabel(tab.thread, tab.id) }}
-            </button>
-            <button type="button" class="px-2 py-1.5 text-faint hover:text-fg" :aria-label="`Close ${tabAgentLabel(tab.thread, tab.id)} tab`" @click="closeAgentTab(tab.thread, tab.id)">×</button>
-          </div>
-        </nav>
 
         <main class="flex min-h-0 flex-1 flex-col overflow-hidden">
           <template v-for="id in viewIds" :key="id">

@@ -66,20 +66,18 @@ const props = defineProps<{
   /** App-owned preference; unlike OMP settings, this takes effect without a restart. */
   notificationSoundEnabled: boolean;
   appTheme: AppTheme;
+  mcpDesignChoiceEnabled?: boolean;
 }>();
 
 const emit = defineEmits<{
-  /** Back to the thread view. */
   back: [];
-  /** Something the app owns changed — the approval mode restarts a sidecar. */
   changed: [];
-  /** The favourites order changed; the shell stores it. */
   favourites: [keys: string[]];
-  /** A failure with nowhere on the row to show it. */
   failed: [message: string];
   notificationSound: [enabled: boolean];
   appTheme: [theme: AppTheme];
   terminalLogin: [providerId?: string];
+  mcpDesignChoice: [enabled: boolean];
 }>();
 
 /** What the controls below need from the shell. Provided, not threaded through four levels. */
@@ -336,6 +334,7 @@ function describe(cause: unknown): string {
               :notification-sound-enabled="props.notificationSoundEnabled"
               :app-theme="props.appTheme"
               :workspace="props.workspace"
+              :mcp-design-choice-enabled="props.mcpDesignChoiceEnabled"
               @write="(row: SettingsRow, value: unknown) => request(row, value, false)"
               @reset="request($event, null, true)"
               @restart="restart"
@@ -345,6 +344,7 @@ function describe(cause: unknown): string {
               @notification-sound="emit('notificationSound', $event)"
               @app-theme="emit('appTheme', $event)"
               @terminal-login="emit('terminalLogin', $event)"
+              @mcp-design-choice="emit('mcpDesignChoice', $event)"
             />
 
             <!--

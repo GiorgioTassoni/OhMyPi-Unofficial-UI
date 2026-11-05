@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "design-choice": {
+      "command": "bun",
+      "args": ["tools/mcp-design-choice/src/index.ts"]
+    }
+  }
+}

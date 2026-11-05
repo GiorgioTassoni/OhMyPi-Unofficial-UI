@@ -364,6 +364,7 @@ impl Transcript {
             // Lifecycle and side channels that are not transcript rows.
             SessionEvent::AgentStart
             | SessionEvent::TurnStart
+            | SessionEvent::SessionSettled
             | SessionEvent::ConfigWarningsChanged
             | SessionEvent::AdvisorCostChanged
             | SessionEvent::AdvisorYielded

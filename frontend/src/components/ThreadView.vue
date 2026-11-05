@@ -467,6 +467,20 @@ watch(waitingForOutput, (waiting) => {
   if (waiting && isAtBottom()) followAfterRender();
 });
 
+const autoOpenedUrls = new Set<string>();
+
+watch(
+  () => turns.value.at(-1)?.answer?.row.text,
+  (text) => {
+    if (!text) return;
+    const match = text.match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+(?:\/[^\s"')]*)?/i);
+    if (match && !autoOpenedUrls.has(match[0])) {
+      autoOpenedUrls.add(match[0]);
+      emit("openFile", { path: match[0] });
+    }
+  }
+);
+
 const { pendingSteer, setSteering: onSteering } = useOptimisticSteer(rows, () => {
   void nextTick(() => {
     scrollToBottom();

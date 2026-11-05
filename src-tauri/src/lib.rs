@@ -43,6 +43,7 @@ pub mod external;
 pub mod favourites;
 pub mod flows;
 pub mod idle;
+pub mod mcp_choice;
 pub mod models;
 pub mod notify;
 pub mod palette;
@@ -137,6 +138,9 @@ pub fn run() {
             let state = AppState::new(bridge::config_dir(app.handle()));
             if let Err(err) = providers::ensure_model_overrides() {
                 eprintln!("[omp-desktop] could not ensure model overrides: {err}");
+            }
+            if let Err(err) = mcp_choice::sync_all_configs(true, None) {
+                eprintln!("[omp-desktop] could not sync default mcp design choice: {err}");
             }
 
             // The first index pass starts with the window and runs on a worker of its own:
@@ -250,6 +254,8 @@ pub fn run() {
             skills::inspect_remote_skill,
             skills::import_remote_skill,
             skills::open_skills_folder,
+            mcp_choice::sync_mcp_design_choice,
+            mcp_choice::get_mcp_design_choice_status,
         ])
         .build(tauri::generate_context!())
         .expect("the Tauri application builds")

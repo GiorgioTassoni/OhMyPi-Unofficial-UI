@@ -12,7 +12,7 @@
  * Self-contained: fetches its own content from artifacts or disk when not pre-supplied.
  */
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { openPath, readArtifact, readFileBase64, readFileContent } from "../bridge";
+import { openExternal, openPath, readArtifact, readFileBase64, readFileContent } from "../bridge";
 import {
   formatLanguageLabel,
   isImageExtension,
@@ -61,15 +61,19 @@ const basename = computed(() => meta.value.basename);
 const directory = computed(() => meta.value.directory);
 const extension = computed(() => meta.value.extension);
 
-const isImage = computed(() => isImageExtension(extension.value));
-const isVideo = computed(() => isVideoExtension(extension.value));
-const isSvg = computed(() => isSvgExtension(extension.value));
-const isHtml = computed(() => extension.value === "html" || extension.value === "htm");
+const isHttp = computed(() => /^https?:\/\//i.test(props.file.path));
+const iframeKey = ref(0);
+
+const isImage = computed(() => !isHttp.value && isImageExtension(extension.value));
+const isVideo = computed(() => !isHttp.value && isVideoExtension(extension.value));
+const isSvg = computed(() => !isHttp.value && isSvgExtension(extension.value));
+const isHtml = computed(() => !isHttp.value && (extension.value === "html" || extension.value === "htm"));
 const frontmatter = computed(() => parseFrontmatter(content.value));
-const isSkill = computed(() => cleanPath.value.startsWith("skill:") || cleanPath.value.startsWith("skill://") || cleanPath.value.endsWith("SKILL.md") || (frontmatter.value.hasFrontmatter && !!frontmatter.value.attributes.name));
-const isMarkdown = computed(() => isMarkdownExtension(extension.value) || frontmatter.value.hasFrontmatter || isSkill.value);
+const isSkill = computed(() => !isHttp.value && (cleanPath.value.startsWith("skill:") || cleanPath.value.startsWith("skill://") || cleanPath.value.endsWith("SKILL.md") || (frontmatter.value.hasFrontmatter && !!frontmatter.value.attributes.name)));
+const isMarkdown = computed(() => !isHttp.value && (isMarkdownExtension(extension.value) || frontmatter.value.hasFrontmatter || isSkill.value));
 
 const isRealFileSystemPath = computed(() => {
+  if (isHttp.value) return false;
   const p = cleanPath.value;
   return !p.startsWith("artifact:") && !p.startsWith("skill:") && !p.startsWith("virtual:") && !p.includes("://");
 });
@@ -106,6 +110,10 @@ async function load(): Promise<void> {
   content.value = props.file.content ?? "";
 
   try {
+    if (isHttp.value) {
+      return;
+    }
+
     if (isVideo.value) {
       return;
     }
@@ -340,23 +348,45 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
 
         <!-- File Identity -->
         <div class="flex items-center gap-1.5 min-w-0 truncate">
-          <Icon :name="isVideo ? 'video' : (isImage ? 'image' : 'file')" class="h-3.5 w-3.5 shrink-0 text-accent" />
+          <Icon :name="isHttp ? 'panels' : (isVideo ? 'video' : (isImage ? 'image' : 'file'))" class="h-3.5 w-3.5 shrink-0 text-accent" />
           <span class="truncate font-mono text-[12.5px] font-semibold text-fg">
-            {{ basename }}
+            {{ isHttp ? (props.file.path.includes('choose') || props.file.path.includes('127.0.0.1') ? 'Design Choice Preview' : 'Live Preview') : basename }}
           </span>
           <span v-if="lineRange" class="shrink-0 rounded bg-raised px-1 py-0.5 font-mono text-[10.5px] text-accent font-medium">
             :{{ lineRange }}
           </span>
           <span v-if="directory" class="hidden md:inline truncate font-mono text-[11px] text-faint">
-            {{ directory }}
+            {{ isHttp ? props.file.path : directory }}
           </span>
         </div>
       </div>
 
       <!-- Actions & Controls -->
       <div class="flex items-center gap-2 shrink-0">
+        <!-- Live Web Preview Controls -->
+        <div v-if="isHttp" class="flex items-center gap-1.5">
+          <button
+            type="button"
+            class="flex items-center gap-1 rounded-[5px] border border-line/50 bg-raised/40 px-2 py-1 text-[11px] text-dim transition-colors hover:border-line-strong hover:bg-raised hover:text-fg"
+            title="Reload live preview"
+            @click="iframeKey++"
+          >
+            <Icon name="refresh" class="h-3.5 w-3.5" />
+            <span class="hidden sm:inline">Refresh</span>
+          </button>
+          <button
+            type="button"
+            class="flex items-center gap-1 rounded-[5px] border border-line/50 bg-raised/40 px-2 py-1 text-[11px] text-dim transition-colors hover:border-line-strong hover:bg-raised hover:text-fg"
+            title="Open in external browser"
+            @click="openExternal(props.file.path)"
+          >
+            <Icon name="external" class="h-3.5 w-3.5" />
+            <span class="hidden sm:inline">Browser</span>
+          </button>
+        </div>
+
         <!-- Markdown, SVG & HTML Preview vs Raw Toggle -->
-        <div v-if="isMarkdown || isSvg || isHtml" class="flex items-center rounded-[5px] border border-line/60 bg-raised/50 p-0.5 text-[11px]">
+        <div v-else-if="isMarkdown || isSvg || isHtml" class="flex items-center rounded-[5px] border border-line/60 bg-raised/50 p-0.5 text-[11px]">
           <button
             type="button"
             class="rounded-[4px] px-2 py-0.5 font-medium transition-colors"
@@ -509,7 +539,7 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
       <div class="flex items-center gap-2 truncate">
         <span class="flex items-center gap-1 text-accent/90 font-medium">
           <span class="h-1.5 w-1.5 rounded-full bg-accent" />
-          {{ isVideo ? 'Video' : (isImage && (!isSvg || mode === 'preview') ? 'Image preview' : (isHtml && mode === 'preview' ? 'HTML preview' : (isMarkdown && mode === 'preview' ? (isSkill ? 'Skill preview' : 'Markdown preview') : 'Read-only view'))) }}
+          {{ isHttp ? 'Live Web Preview' : (isVideo ? 'Video' : (isImage && (!isSvg || mode === 'preview') ? 'Image preview' : (isHtml && mode === 'preview' ? 'HTML preview' : (isMarkdown && mode === 'preview' ? (isSkill ? 'Skill preview' : 'Markdown preview') : 'Read-only view')))) }}
         </span>
         <span>·</span>
         <span class="truncate font-mono text-faint/80">{{ props.file.path }}</span>
@@ -654,6 +684,20 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
           sandbox="allow-scripts"
           class="h-full w-full border-0"
           title="HTML Document Preview"
+        />
+      </div>
+
+      <!-- Web / Localhost Live Interactive Preview (MCP design-choice & local dev servers) -->
+      <div
+        v-else-if="isHttp"
+        class="h-full w-full overflow-hidden bg-canvas flex flex-col"
+      >
+        <iframe
+          :key="iframeKey"
+          :src="props.file.path"
+          sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
+          class="h-full w-full border-0 flex-1 bg-canvas"
+          title="Live Web Preview"
         />
       </div>
 

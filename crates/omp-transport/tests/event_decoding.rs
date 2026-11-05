@@ -189,6 +189,7 @@ fn event_samples() -> Vec<(&'static str, Value)> {
                 "liveSteered": 0,
             }),
         ),
+        ("session_settled", json!({ "type": "session_settled" })),
     ]
 }
 
