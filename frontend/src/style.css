@@ -378,6 +378,8 @@ textarea:focus-visible,
    Do not let browser scroll anchoring apply a second, competing correction. */
 [data-conversation] {
   overflow-anchor: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Selection affordances:
@@ -386,7 +388,6 @@ textarea:focus-visible,
    caret rather than the one `user-select: none` on body would suppress. */
 textarea,
 input,
-[data-conversation],
 [data-dialog-panel],
 [data-widget],
 [data-status],

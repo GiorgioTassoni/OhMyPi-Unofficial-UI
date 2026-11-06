@@ -15,7 +15,7 @@ describe("mcp design choice ephemeral server", () => {
     const res = await fetch(srv.url);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("Nessuna mi convince");
+    expect(html).toContain("None of these work");
     expect(html).toContain("rejectModal");
     expect(html).toContain("rejectFeedbackInput");
     expect(html).not.toContain("</script>;");
@@ -32,7 +32,7 @@ describe("mcp design choice ephemeral server", () => {
 
   test("handles request_alternatives action with user feedback", async () => {
     const srv = await startEphemeralChoiceServer(sampleData);
-    const userFeedback = "Le opzioni sono troppo semplici, vorrei una sidebar moderna";
+    const userFeedback = "The options are too plain, I want a modern sidebar";
     const res = await fetch(`${srv.url}/api/choose`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

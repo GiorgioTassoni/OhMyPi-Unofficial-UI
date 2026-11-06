@@ -13,7 +13,7 @@ export function renderChoicePage(data: DesignChoiceInput): string {
   const descEscaped = data.description ? `<p class="desc">${escapeHtml(data.description)}</p>` : "";
 
   return `<!DOCTYPE html>
-<html lang="it">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -88,8 +88,8 @@ export function renderChoicePage(data: DesignChoiceInput): string {
     </div>
     <div class="controls">
       <div class="btn-group" id="viewModeGroup">
-        <button type="button" class="active" onclick="setViewMode('rendered')">Anteprima</button>
-        <button type="button" onclick="setViewMode('code')">Sorgente</button>
+        <button type="button" class="active" onclick="setViewMode('rendered')">Preview</button>
+        <button type="button" onclick="setViewMode('code')">Source</button>
       </div>
       <div class="btn-group" id="viewportGroup">
         <button type="button" class="active" onclick="setViewport('responsive')">Full</button>
@@ -112,33 +112,33 @@ export function renderChoicePage(data: DesignChoiceInput): string {
 
   <footer>
     <div class="footer-left">
-      <input type="text" id="feedbackInput" class="feedback-input" placeholder="Note per l'opzione scelta (opzionale, es. 'ottima, ma usa font più piccolo')" />
+      <input type="text" id="feedbackInput" class="feedback-input" placeholder="Feedback for chosen option (optional, e.g. 'looks great, but use smaller font')" />
     </div>
     <div class="footer-right">
       <button type="button" class="btn-reject" id="rejectBtn" onclick="openRejectModal()">
-        <span>Nessuna mi convince (Chiedi altre)</span>
+        <span>None of these work (Ask for others)</span>
       </button>
       <button type="button" class="btn-choose" id="chooseBtn" onclick="confirmChoice()">
-        <span>Scegli questa variante</span> &rarr;
+        <span>Choose this variant</span> &rarr;
       </button>
     </div>
   </footer>
 
   <div class="modal-overlay" id="rejectModal">
     <div class="modal-card">
-      <div class="modal-badge">Varianti non soddisfacenti</div>
-      <h3>Chiedi all'agente altre opzioni</h3>
-      <p>Spiega cosa non ti convince di queste opzioni o cosa vorresti di diverso per guidare la prossima iterazione:</p>
+      <div class="modal-badge">Unsatisfactory options</div>
+      <h3>Ask the agent for alternatives</h3>
+      <p>Explain what you dislike about these options or what you want different to guide the next iteration:</p>
       <textarea
         id="rejectFeedbackInput"
         class="reject-textarea"
-        placeholder="Es. Lo stile è troppo cupo, vorrei colori più caldi, un layout a card orizzontale e un call-to-action più evidente..."
+        placeholder="E.g. The style is too dark, please use warmer colors, horizontal cards, and a more prominent call-to-action..."
         rows="4"
       ></textarea>
       <div class="modal-actions">
-        <button type="button" class="btn-cancel" onclick="closeRejectModal()">Annulla</button>
+        <button type="button" class="btn-cancel" onclick="closeRejectModal()">Cancel</button>
         <button type="button" class="btn-request-alt" id="sendRejectBtn" onclick="confirmRequestAlternatives()">
-          Richiedi nuove varianti &rarr;
+          Request new variants &rarr;
         </button>
       </div>
     </div>
@@ -147,8 +147,8 @@ export function renderChoicePage(data: DesignChoiceInput): string {
   <div class="success-overlay" id="successOverlay">
     <div class="success-card">
       <div class="success-icon">&#10003;</div>
-      <h2 id="successTitle">Scelta inviata all'agente!</h2>
-      <p id="successMsg" style="color: var(--text-dim); margin-top: 8px; font-size: 14px;">L'agente ha ricevuto la tua selezione e sta continuando la lavorazione.</p>
+      <h2 id="successTitle">Choice sent to the agent!</h2>
+      <p id="successMsg" style="color: var(--text-dim); margin-top: 8px; font-size: 14px;">The agent received your selection and is continuing its work.</p>
     </div>
   </div>
 
@@ -159,11 +159,17 @@ export function renderChoicePage(data: DesignChoiceInput): string {
     let currentViewport = 'responsive';
 
     function init() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const optParam = urlParams.get('option');
+      if (optParam) {
+        const foundIdx = options.findIndex(o => o.id === optParam || o.label === optParam);
+        if (foundIdx >= 0) activeIndex = foundIdx;
+      }
       const tabsBar = document.getElementById('tabsBar');
       tabsBar.innerHTML = '';
       options.forEach((opt, idx) => {
         const btn = document.createElement('button');
-        btn.className = 'tab-btn' + (idx === 0 ? ' active' : '');
+        btn.className = 'tab-btn' + (idx === activeIndex ? ' active' : '');
         btn.textContent = opt.label || opt.id;
         btn.onclick = () => selectTab(idx);
         tabsBar.appendChild(btn);
@@ -182,7 +188,7 @@ export function renderChoicePage(data: DesignChoiceInput): string {
     function setViewMode(mode) {
       currentViewMode = mode;
       document.getElementById('viewModeGroup').querySelectorAll('button').forEach(btn => {
-        btn.classList.toggle('active', btn.textContent.toLowerCase().includes(mode === 'rendered' ? 'anteprima' : 'sorgente'));
+        btn.classList.toggle('active', btn.textContent.toLowerCase().includes(mode === 'rendered' ? 'preview' : 'source'));
       });
       const frame = document.getElementById('previewFrame');
       const code = document.getElementById('codeBlock');
@@ -213,9 +219,9 @@ export function renderChoicePage(data: DesignChoiceInput): string {
       const opt = options[activeIndex];
       const frame = document.getElementById('previewFrame');
       const code = document.getElementById('codeBlock');
-      frame.src = '/render/' + encodeURIComponent(opt.id);
+      frame.src = '/render/' + encodeURIComponent(opt.id) + '?raw=1';
       code.textContent = opt.html;
-      document.getElementById('chooseBtn').querySelector('span').textContent = 'Scegli: ' + opt.label;
+      document.getElementById('chooseBtn').querySelector('span').textContent = 'Choose: ' + opt.label;
     }
 
     async function confirmChoice() {
@@ -232,12 +238,12 @@ export function renderChoicePage(data: DesignChoiceInput): string {
           body: JSON.stringify({ action: 'selected', id: opt.id, label: opt.label, feedback: feedback || undefined })
         });
         if (res.ok) {
-          document.getElementById('successTitle').textContent = "Scelta confermata!";
-          document.getElementById('successMsg').textContent = "Selezione ricevuta, elaborazione in corso.";
+          document.getElementById('successTitle').textContent = "Choice confirmed!";
+          document.getElementById('successMsg').textContent = "Selection received, continuing work.";
           document.getElementById('successOverlay').style.display = 'grid';
         }
       } catch (err) {
-        alert("Errore invio scelta: " + err.message);
+        alert("Error sending choice: " + err.message);
         btn.disabled = false;
         btn.style.opacity = '1';
       }
@@ -265,18 +271,18 @@ export function renderChoicePage(data: DesignChoiceInput): string {
           body: JSON.stringify({
             action: 'request_alternatives',
             id: 'none',
-            label: 'Nessuna variante soddisfacente',
+            label: 'No satisfactory variants',
             feedback: feedback || undefined,
           }),
         });
         if (res.ok) {
           closeRejectModal();
-          document.getElementById('successTitle').textContent = "Richiesta alternative inviata!";
-          document.getElementById('successMsg').textContent = "Feedback ricevuto, generazione nuove varianti in corso.";
+          document.getElementById('successTitle').textContent = "Alternative request sent!";
+          document.getElementById('successMsg').textContent = "Feedback received, generating new variants.";
           document.getElementById('successOverlay').style.display = 'grid';
         }
       } catch (err) {
-        alert("Errore invio richiesta: " + err.message);
+        alert("Error sending request: " + err.message);
         sendBtn.disabled = false;
         sendBtn.style.opacity = '1';
       }
@@ -298,7 +304,7 @@ export function renderSinglePreviewPage(title: string, rawHtml: string, descript
   const codeEscaped = escapeHtml(rawHtml);
 
   return `<!DOCTYPE html>
-<html lang="it">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -342,8 +348,8 @@ export function renderSinglePreviewPage(title: string, rawHtml: string, descript
     </div>
     <div class="controls">
       <div class="btn-group" id="viewModeGroup">
-        <button type="button" class="active" onclick="setViewMode('rendered')">Anteprima</button>
-        <button type="button" onclick="setViewMode('code')">Sorgente</button>
+        <button type="button" class="active" onclick="setViewMode('rendered')">Preview</button>
+        <button type="button" onclick="setViewMode('code')">Source</button>
       </div>
       <div class="btn-group" id="viewportGroup">
         <button type="button" class="active" onclick="setViewport('responsive')">Full</button>
@@ -365,7 +371,7 @@ export function renderSinglePreviewPage(title: string, rawHtml: string, descript
   <script>
     function setViewMode(mode) {
       document.getElementById('viewModeGroup').querySelectorAll('button').forEach(btn => {
-        btn.classList.toggle('active', btn.textContent.toLowerCase().includes(mode === 'rendered' ? 'anteprima' : 'sorgente'));
+        btn.classList.toggle('active', btn.textContent.toLowerCase().includes(mode === 'rendered' ? 'preview' : 'source'));
       });
       const frame = document.getElementById('previewFrame');
       const code = document.getElementById('codeBlock');

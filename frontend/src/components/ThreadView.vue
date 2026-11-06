@@ -59,6 +59,7 @@ import { initialProjection, projectTranscript, type TranscriptProjection } from 
 import { turnContainingRow } from "../lib/virtualTurns";
 import { createDisclosureMemory } from "../lib/disclosureMemory";
 import { smoothWheel } from "../lib/smoothWheel";
+import { attachGutterSelection } from "../lib/gutterSelection";
 
 const props = defineProps<{
   thread: string;
@@ -181,6 +182,7 @@ let trailing: ReturnType<typeof setTimeout> | null = null;
 let subagentDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let conversationResizeObserver: ResizeObserver | null = null;
 let disconnectSmoothWheel: (() => void) | null = null;
+let disconnectGutterSelection: (() => void) | null = null;
 let lastClientHeight = 0;
 let isMouseDown = false;
 
@@ -288,6 +290,7 @@ onMounted(async () => {
   const el = conversationRef.value;
   if (el) {
     disconnectSmoothWheel = smoothWheel(el);
+    disconnectGutterSelection = attachGutterSelection(el);
     if (typeof ResizeObserver !== "undefined") {
       lastClientHeight = el.clientHeight;
       conversationResizeObserver = new ResizeObserver(([entry]) => {
@@ -311,6 +314,7 @@ onUnmounted(() => {
   conversationResizeObserver?.disconnect();
   conversationResizeObserver = null;
   disconnectSmoothWheel?.();
+  disconnectGutterSelection?.();
   window.removeEventListener("mousedown", onMouseDown);
   window.removeEventListener("mouseup", onMouseUp);
 });
@@ -480,7 +484,17 @@ watch(
     const match = text.match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+(?:\/[^\s"')]*)?/i);
     if (match && !autoOpenedUrls.has(match[0])) {
       autoOpenedUrls.add(match[0]);
-      emit("openFile", { path: match[0] });
+      let targetPath = match[0];
+      try {
+        const parsed = new URL(targetPath);
+        if (parsed.pathname.startsWith("/render/")) {
+          const optId = parsed.pathname.replace("/render/", "");
+          targetPath = `${parsed.origin}/?option=${encodeURIComponent(optId)}`;
+        } else if (parsed.pathname === "/render") {
+          targetPath = `${parsed.origin}/`;
+        }
+      } catch {}
+      emit("openFile", { path: targetPath });
     }
   }
 );

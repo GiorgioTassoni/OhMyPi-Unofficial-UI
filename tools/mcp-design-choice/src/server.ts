@@ -41,10 +41,11 @@ export function startEphemeralPreviewServer(
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/render") {
+      if (req.method === "GET" && (url.pathname === "/render" || url.pathname.startsWith("/render/"))) {
+        const baseStyle = "<style>*, *::before, *::after { box-sizing: border-box; } html, body { margin: 0; padding: 0; min-height: 100vh; background-color: #ffffff; color: #111827; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }</style>";
         const fullDoc = rawHtml.includes("<html")
           ? rawHtml
-          : `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>${rawHtml}</body></html>`;
+          : `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${baseStyle}</head><body>${rawHtml}</body></html>`;
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(fullDoc);
         return;
@@ -100,6 +101,13 @@ export function startEphemeralChoiceServer(data: DesignChoiceInput): Promise<Eph
 
       if (req.method === "GET" && url.pathname.startsWith("/render/")) {
         const id = decodeURIComponent(url.pathname.replace("/render/", ""));
+        const isIframe = req.headers["sec-fetch-dest"] === "iframe" || url.searchParams.has("raw");
+        if (!isIframe && req.headers.accept?.includes("text/html")) {
+          res.writeHead(302, { Location: `/?option=${encodeURIComponent(id)}` });
+          res.end();
+          return;
+        }
+
         const opt = data.options.find((o) => o.id === id);
         if (!opt) {
           res.writeHead(404, { "Content-Type": "text/plain" });
@@ -107,9 +115,10 @@ export function startEphemeralChoiceServer(data: DesignChoiceInput): Promise<Eph
           return;
         }
 
+        const baseStyle = "<style>*, *::before, *::after { box-sizing: border-box; } html, body { margin: 0; padding: 0; min-height: 100vh; background-color: #ffffff; color: #111827; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }</style>";
         const fullDoc = opt.html.includes("<html")
           ? opt.html
-          : `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${opt.css || ""}</style></head><body>${opt.html}</body></html>`;
+          : `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${baseStyle}<style>${opt.css || ""}</style></head><body>${opt.html}</body></html>`;
 
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(fullDoc);
@@ -133,13 +142,13 @@ export function startEphemeralChoiceServer(data: DesignChoiceInput): Promise<Eph
             const isAlternative = parsed.action === "request_alternatives" || parsed.id === "none";
             const chosen = data.options.find((o) => o.id === parsed.id) || {
               id: parsed.id || "none",
-              label: parsed.label || (isAlternative ? "Nessuna variante soddisfacente" : parsed.id),
+              label: parsed.label || (isAlternative ? "No satisfactory variants" : parsed.id),
             };
 
             const result: ChoiceResult = {
               action: isAlternative ? "request_alternatives" : "selected",
               selectedId: isAlternative ? "none" : chosen.id,
-              label: isAlternative ? "Nessuna variante soddisfacente" : chosen.label,
+              label: isAlternative ? "No satisfactory variants" : chosen.label,
               feedback: parsed.feedback || undefined,
             };
 
