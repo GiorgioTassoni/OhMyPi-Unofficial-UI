@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { startEphemeralChoiceServer } from "./server";
+import { startEphemeralChoiceServer, startEphemeralPreviewServer } from "./server";
 
 describe("mcp design choice ephemeral server", () => {
   const sampleData = {
     title: "Test Navbar Layout",
     options: [
       { id: "opt-1", label: "Minimalist", html: "<nav>Home</nav>" },
-      { id: "opt-2", label: "Expanded", html: "<nav>Home | About | Contact</nav>" },
+      { id: "opt-2", label: "Expanded", html: "<nav>Home | About | Contact</nav><script>console.log('test');</script>" },
     ],
   };
 
@@ -18,6 +18,7 @@ describe("mcp design choice ephemeral server", () => {
     expect(html).toContain("Nessuna mi convince");
     expect(html).toContain("rejectModal");
     expect(html).toContain("rejectFeedbackInput");
+    expect(html).not.toContain("</script>;");
 
     await fetch(`${srv.url}/api/choose`, {
       method: "POST",
@@ -51,5 +52,23 @@ describe("mcp design choice ephemeral server", () => {
     expect(choice.action).toBe("request_alternatives");
     expect(choice.feedback).toBe(userFeedback);
     await srv.close();
+  });
+
+  test("starts standalone preview server immediately without blocking", async () => {
+    const previewSrv = await startEphemeralPreviewServer("Button Preview", "<button>Click Me</button>", "Single button demo");
+    expect(previewSrv.url).toStartWith("http://127.0.0.1:");
+
+    const pageRes = await fetch(previewSrv.url);
+    expect(pageRes.status).toBe(200);
+    const pageHtml = await pageRes.text();
+    expect(pageHtml).toContain("Button Preview");
+    expect(pageHtml).toContain("<iframe");
+
+    const renderRes = await fetch(`${previewSrv.url}/render`);
+    expect(renderRes.status).toBe(200);
+    const renderHtml = await renderRes.text();
+    expect(renderHtml).toContain("<button>Click Me</button>");
+
+    await previewSrv.close();
   });
 });

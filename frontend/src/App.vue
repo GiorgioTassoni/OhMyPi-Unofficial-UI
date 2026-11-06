@@ -841,6 +841,12 @@ const project = computed(() =>
 /** Where a new thread would start: the active thread's project, else the last opened. */
 const workspace = computed(() => project.value ?? recent.value[0] ?? null);
 
+watch(workspace, (nextWs) => {
+  if (mcpDesignChoiceEnabled.value) {
+    void syncDesignChoiceMcp(true, nextWs);
+  }
+});
+
 const activeView = computed(() => (activeId.value ? views[activeId.value] : undefined));
 // Every read of the view's exposed surface goes through `?.` on the second hop as well as
 // the first: `defineExpose` is not type-linked to `ThreadViewApi`, so a field the view

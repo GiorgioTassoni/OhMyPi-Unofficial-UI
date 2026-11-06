@@ -1,12 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { DesignChoiceInputSchema, PreviewHtmlInputSchema } from "./types.js";
-import { startEphemeralChoiceServer } from "./server.js";
+import { startEphemeralChoiceServer, startEphemeralPreviewServer, type EphemeralPreviewServer } from "./server.js";
 
 const server = new McpServer({
   name: "mcp-design-choice",
   version: "1.0.0",
 });
+
+let activePreviewServer: EphemeralPreviewServer | null = null;
 
 server.tool(
   "design_choice",
@@ -85,52 +87,38 @@ server.tool(
   "Preview a single HTML document or UI component in the local browser or OhMyPiApp visual panel.",
   PreviewHtmlInputSchema.shape,
   async (args) => {
-    const choiceServer = await startEphemeralChoiceServer({
-      title: args.title,
-      description: args.description,
-      options: [
+    if (activePreviewServer) {
+      await activePreviewServer.close().catch(() => {});
+      activePreviewServer = null;
+    }
+
+    const previewServer = await startEphemeralPreviewServer(
+      args.title,
+      args.html,
+      args.description
+    );
+    activePreviewServer = previewServer;
+
+    console.error(`\n👁️ [preview-html] Active server: ${previewServer.url}`);
+    console.error(`👉 Open in browser or OhMyPiApp right panel: ${previewServer.url}\n`);
+
+    return {
+      content: [
         {
-          id: "preview-1",
-          label: args.title,
-          html: args.html,
-        },
-        {
-          id: "close",
-          label: "Close Preview",
-          html: "<div style='display:grid;place-items:center;height:100vh;font-family:sans-serif;color:#888;'>Click 'Scegli questa variante' in basso per chiudere la preview.</div>",
+          type: "text",
+          text: JSON.stringify(
+            {
+              status: "ready",
+              url: previewServer.url,
+              title: args.title,
+              message: `Live preview ready at ${previewServer.url}. Open this URL to view the live preview directly in OhMyPiApp.`,
+            },
+            null,
+            2
+          ),
         },
       ],
-    });
-
-    console.error(`\n👁️ [preview-html] Active server: ${choiceServer.url}\n`);
-
-    try {
-      const choice = await choiceServer.awaitChoice;
-      await choiceServer.close();
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              status: "reviewed",
-              userFeedback: choice.feedback || null,
-            }),
-          },
-        ],
-      };
-    } catch (err) {
-      await choiceServer.close();
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ status: "error", message: String(err) }),
-          },
-        ],
-        isError: true,
-      };
-    }
+    };
   }
 );
 

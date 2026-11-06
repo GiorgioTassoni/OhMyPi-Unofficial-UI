@@ -1,12 +1,74 @@
 import http from "node:http";
 import type { ChoiceResult, DesignChoiceInput } from "./types.js";
-import { renderChoicePage } from "./ui.js";
+import { renderChoicePage, renderSinglePreviewPage } from "./ui.js";
 
 export interface EphemeralServer {
   url: string;
   port: number;
   close: () => Promise<void>;
   awaitChoice: Promise<ChoiceResult>;
+}
+
+export interface EphemeralPreviewServer {
+  url: string;
+  port: number;
+  close: () => Promise<void>;
+}
+
+export function startEphemeralPreviewServer(
+  title: string,
+  rawHtml: string,
+  description?: string
+): Promise<EphemeralPreviewServer> {
+  return new Promise((resolveReady) => {
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
+
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+      if (req.method === "OPTIONS") {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/") {
+        const page = renderSinglePreviewPage(title, rawHtml, description);
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(page);
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/render") {
+        const fullDoc = rawHtml.includes("<html")
+          ? rawHtml
+          : `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>${rawHtml}</body></html>`;
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(fullDoc);
+        return;
+      }
+
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not Found");
+    });
+
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      const url = `http://127.0.0.1:${port}`;
+
+      resolveReady({
+        url,
+        port,
+        close: () =>
+          new Promise<void>((done) => {
+            server.close(() => done());
+          }),
+      });
+    });
+  });
 }
 
 export function startEphemeralChoiceServer(data: DesignChoiceInput): Promise<EphemeralServer> {

@@ -470,7 +470,11 @@ watch(waitingForOutput, (waiting) => {
 const autoOpenedUrls = new Set<string>();
 
 watch(
-  () => turns.value.at(-1)?.answer?.row.text,
+  () => {
+    const lastRow = rows.value.at(-1);
+    if (!lastRow) return null;
+    return (lastRow.text ?? "") + " " + (lastRow.tool?.output ?? "");
+  },
   (text) => {
     if (!text) return;
     const match = text.match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+(?:\/[^\s"')]*)?/i);

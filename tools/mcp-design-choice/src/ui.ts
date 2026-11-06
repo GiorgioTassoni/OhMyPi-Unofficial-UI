@@ -1,7 +1,14 @@
 import type { DesignChoiceInput, PreviewHtmlInput } from "./types.js";
 
+export function safeJsonForScript(obj: unknown): string {
+  return JSON.stringify(obj)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/\//g, "\\u002f");
+}
+
 export function renderChoicePage(data: DesignChoiceInput): string {
-  const optionsJson = JSON.stringify(data.options);
+  const optionsJson = safeJsonForScript(data.options);
   const titleEscaped = escapeHtml(data.title);
   const descEscaped = data.description ? `<p class="desc">${escapeHtml(data.description)}</p>` : "";
 
@@ -283,4 +290,107 @@ export function renderChoicePage(data: DesignChoiceInput): string {
 
 function escapeHtml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+export function renderSinglePreviewPage(title: string, rawHtml: string, description?: string): string {
+  const titleEscaped = escapeHtml(title);
+  const descEscaped = description ? `<p class="desc">${escapeHtml(description)}</p>` : "";
+  const codeEscaped = escapeHtml(rawHtml);
+
+  return `<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${titleEscaped} - Preview</title>
+  <style>
+    :root {
+      --bg: #121214;
+      --card-bg: #1a1a1e;
+      --surface: #242429;
+      --border: #323238;
+      --text: #ededed;
+      --text-dim: #9e9ea7;
+      --accent: #3b82f6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
+    header { background: var(--card-bg); border-bottom: 1px solid var(--border); padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    .header-left { min-width: 0; }
+    h1 { font-size: 16px; font-weight: 600; color: var(--text); }
+    .desc { font-size: 13px; color: var(--text-dim); margin-top: 2px; }
+    .controls { display: flex; align-items: center; gap: 8px; }
+    .btn-group { display: flex; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 2px; gap: 2px; }
+    .btn-group button { background: transparent; border: none; color: var(--text-dim); padding: 5px 10px; font-size: 12px; border-radius: 4px; cursor: pointer; transition: 0.15s; }
+    .btn-group button.active { background: var(--card-bg); color: var(--text); font-weight: 500; }
+    .btn-group button:hover:not(.active) { color: var(--text); }
+    main { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 16px; min-height: 0; }
+    .viewport-container { width: 100%; flex: 1; display: flex; justify-content: center; min-height: 400px; transition: width 0.2s ease; }
+    .viewport-responsive { width: 100%; max-width: 100%; }
+    .viewport-tablet { width: 768px; max-width: 100%; }
+    .viewport-mobile { width: 375px; max-width: 100%; }
+    .frame-wrapper { width: 100%; background: #ffffff; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+    iframe { width: 100%; height: 100%; border: none; display: block; }
+    pre { width: 100%; height: 100%; margin: 0; padding: 16px; background: #18181b; color: #a1a1aa; font-family: monospace; font-size: 13px; overflow: auto; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>${titleEscaped}</h1>
+      ${descEscaped}
+    </div>
+    <div class="controls">
+      <div class="btn-group" id="viewModeGroup">
+        <button type="button" class="active" onclick="setViewMode('rendered')">Anteprima</button>
+        <button type="button" onclick="setViewMode('code')">Sorgente</button>
+      </div>
+      <div class="btn-group" id="viewportGroup">
+        <button type="button" class="active" onclick="setViewport('responsive')">Full</button>
+        <button type="button" onclick="setViewport('tablet')">Tablet (768px)</button>
+        <button type="button" onclick="setViewport('mobile')">Mobile (375px)</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="viewport-container viewport-responsive" id="viewportContainer">
+      <div class="frame-wrapper">
+        <iframe id="previewFrame" src="/render" sandbox="allow-scripts allow-forms allow-same-origin allow-popups"></iframe>
+        <pre id="codeBlock" style="display: none;">${codeEscaped}</pre>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    function setViewMode(mode) {
+      document.getElementById('viewModeGroup').querySelectorAll('button').forEach(btn => {
+        btn.classList.toggle('active', btn.textContent.toLowerCase().includes(mode === 'rendered' ? 'anteprima' : 'sorgente'));
+      });
+      const frame = document.getElementById('previewFrame');
+      const code = document.getElementById('codeBlock');
+      if (mode === 'code') {
+        frame.style.display = 'none';
+        code.style.display = 'block';
+      } else {
+        frame.style.display = 'block';
+        code.style.display = 'none';
+      }
+    }
+
+    function setViewport(vp) {
+      const container = document.getElementById('viewportContainer');
+      container.className = 'viewport-container viewport-' + vp;
+      document.getElementById('viewportGroup').querySelectorAll('button').forEach(btn => {
+        const txt = btn.textContent.toLowerCase();
+        btn.classList.toggle('active',
+          (vp === 'responsive' && txt.includes('full')) ||
+          (vp === 'tablet' && txt.includes('tablet')) ||
+          (vp === 'mobile' && txt.includes('mobile'))
+        );
+      });
+    }
+  </script>
+</body>
+</html>`;
 }

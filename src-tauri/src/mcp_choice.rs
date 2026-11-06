@@ -1,6 +1,6 @@
+use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
-use serde_json::{json, Value};
 
 pub const SERVER_NAME: &str = "design-choice";
 
@@ -17,8 +17,11 @@ pub fn candidate_mcp_config_paths(workspace: Option<&Path>) -> Vec<PathBuf> {
         paths.push(ws.join("mcp.json"));
     }
     if let Some(home) = resolve_user_home() {
+        paths.push(home.join(".omp").join("agent").join("mcp.json"));
+        paths.push(home.join(".omp").join("agent").join(".mcp.json"));
         paths.push(home.join(".config").join("omp").join("mcp.json"));
         paths.push(home.join(".omp").join("mcp.json"));
+        paths.push(home.join(".cursor").join("mcp.json"));
     }
     paths
 }
@@ -36,13 +39,21 @@ pub fn resolve_script_path(workspace: Option<&Path>) -> Option<PathBuf> {
         }
     }
     if let Some(ws) = workspace {
-        let in_ws = ws.join("tools").join("mcp-design-choice").join("src").join("index.ts");
+        let in_ws = ws
+            .join("tools")
+            .join("mcp-design-choice")
+            .join("src")
+            .join("index.ts");
         if in_ws.exists() {
             return Some(in_ws.canonicalize().unwrap_or(in_ws));
         }
     }
     if let Ok(cwd) = std::env::current_dir() {
-        let in_cwd = cwd.join("tools").join("mcp-design-choice").join("src").join("index.ts");
+        let in_cwd = cwd
+            .join("tools")
+            .join("mcp-design-choice")
+            .join("src")
+            .join("index.ts");
         if in_cwd.exists() {
             return Some(in_cwd.canonicalize().unwrap_or(in_cwd));
         }
@@ -56,7 +67,11 @@ pub fn resolve_script_path(workspace: Option<&Path>) -> Option<PathBuf> {
     })
 }
 
-pub fn update_mcp_file(path: &Path, enabled: bool, script_path: Option<&Path>) -> Result<(), String> {
+pub fn update_mcp_file(
+    path: &Path,
+    enabled: bool,
+    script_path: Option<&Path>,
+) -> Result<(), String> {
     let mut root: Value = if path.exists() {
         let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
         serde_json::from_str(&content).unwrap_or_else(|_| json!({}))
@@ -85,15 +100,14 @@ pub fn update_mcp_file(path: &Path, enabled: bool, script_path: Option<&Path>) -
     if enabled {
         let script = script_path
             .map(|p| p.to_string_lossy().to_string())
-            .or_else(|| {
-                resolve_script_path(None).map(|p| p.to_string_lossy().to_string())
-            })
+            .or_else(|| resolve_script_path(None).map(|p| p.to_string_lossy().to_string()))
             .unwrap_or_else(|| "tools/mcp-design-choice/src/index.ts".to_string());
         servers_obj.insert(
             SERVER_NAME.to_string(),
             json!({
                 "command": "bun",
-                "args": ["run", script]
+                "args": ["run", script],
+                "timeout": 3600000
             }),
         );
     } else {
@@ -121,7 +135,7 @@ pub fn sync_all_configs(enabled: bool, workspace: Option<&Path>) -> Result<(), S
     }
     if !updated_any && enabled {
         if let Some(home) = resolve_user_home() {
-            let primary = home.join(".config").join("omp").join("mcp.json");
+            let primary = home.join(".omp").join("agent").join("mcp.json");
             update_mcp_file(&primary, true, script.as_deref())?;
         }
     }
@@ -129,7 +143,10 @@ pub fn sync_all_configs(enabled: bool, workspace: Option<&Path>) -> Result<(), S
 }
 
 #[tauri::command]
-pub async fn sync_mcp_design_choice(enabled: bool, workspace: Option<String>) -> Result<(), String> {
+pub async fn sync_mcp_design_choice(
+    enabled: bool,
+    workspace: Option<String>,
+) -> Result<(), String> {
     let ws_path = workspace.as_deref().map(Path::new);
     sync_all_configs(enabled, ws_path)
 }
@@ -159,7 +176,13 @@ mod tests {
 
     #[test]
     fn test_update_mcp_file_enable_and_disable() {
-        let temp_dir = std::env::temp_dir().join(format!("test_mcp_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "test_mcp_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let file_path = temp_dir.join(".mcp.json");
         let script = Path::new("/custom/path/to/script.ts");
 

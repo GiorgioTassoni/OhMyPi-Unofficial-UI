@@ -2,7 +2,11 @@
   "mcpServers": {
     "design-choice": {
       "command": "bun",
-      "args": ["tools/mcp-design-choice/src/index.ts"]
+      "args": [
+        "run",
+        "/home/GioViale/.omp/tools/mcp-design-choice/src/index.ts"
+      ],
+      "timeout": 3600000
     }
   }
 }
