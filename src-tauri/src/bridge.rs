@@ -887,6 +887,15 @@ pub async fn open_path(state: State<'_, AppState>, path: String) -> Result<(), S
     .await
 }
 
+#[tauri::command]
+pub fn toggle_devtools(window: tauri::WebviewWindow) {
+    if window.is_devtools_open() {
+        window.close_devtools();
+    } else {
+        window.open_devtools();
+    }
+}
+
 // ------------------------------------------------- the right panel (`docs/12` §8)
 
 /// The thread's plan, as the Todos tab renders it.

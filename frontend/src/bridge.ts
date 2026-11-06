@@ -692,6 +692,10 @@ export async function openPath(path: string): Promise<void> {
   return invoke<void>("open_path", { path });
 }
 
+export async function toggleDevtools(): Promise<void> {
+  return invoke<void>("toggle_devtools");
+}
+
 /**
  * Delete a session: its file and its artifacts directory.
  *

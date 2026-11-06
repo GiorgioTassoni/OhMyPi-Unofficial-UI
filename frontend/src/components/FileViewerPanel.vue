@@ -12,7 +12,7 @@
  * Self-contained: fetches its own content from artifacts or disk when not pre-supplied.
  */
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { openExternal, openPath, readArtifact, readFileBase64, readFileContent } from "../bridge";
+import { openExternal, openPath, readArtifact, readFileBase64, readFileContent, toggleDevtools } from "../bridge";
 import {
   formatLanguageLabel,
   isImageExtension,
@@ -62,15 +62,21 @@ const directory = computed(() => meta.value.directory);
 const extension = computed(() => meta.value.extension);
 
 const isHttp = computed(() => /^https?:\/\//i.test(props.file.path));
+const isLocalHttp = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?/i.test(props.file.path));
 const iframeKey = ref(0);
 
-const isImage = computed(() => !isHttp.value && isImageExtension(extension.value));
-const isVideo = computed(() => !isHttp.value && isVideoExtension(extension.value));
-const isSvg = computed(() => !isHttp.value && isSvgExtension(extension.value));
+function onInspect(): void {
+  void toggleDevtools();
+}
+
+const isImage = computed(() => isImageExtension(extension.value));
+const isVideo = computed(() => isVideoExtension(extension.value));
+const isSvg = computed(() => isSvgExtension(extension.value));
 const isHtml = computed(() => !isHttp.value && (extension.value === "html" || extension.value === "htm"));
 const frontmatter = computed(() => parseFrontmatter(content.value));
 const isSkill = computed(() => !isHttp.value && (cleanPath.value.startsWith("skill:") || cleanPath.value.startsWith("skill://") || cleanPath.value.endsWith("SKILL.md") || (frontmatter.value.hasFrontmatter && !!frontmatter.value.attributes.name)));
 const isMarkdown = computed(() => !isHttp.value && (isMarkdownExtension(extension.value) || frontmatter.value.hasFrontmatter || isSkill.value));
+const isLiveWeb = computed(() => isHttp.value && !isImage.value && !isVideo.value);
 
 const isRealFileSystemPath = computed(() => {
   if (isHttp.value) return false;
@@ -110,7 +116,21 @@ async function load(): Promise<void> {
   content.value = props.file.content ?? "";
 
   try {
-    if (isHttp.value) {
+    if (isImage.value) {
+      if (isHttp.value) {
+        imageDataUrl.value = props.file.path;
+      } else {
+        const b64 = await readFileBase64(props.workspace ?? null, cleanPath.value);
+        const mime = mimeTypeForExtension(extension.value);
+        imageDataUrl.value = `data:${mime};base64,${b64}`;
+        if (isSvg.value) {
+          try {
+            content.value = atob(b64);
+          } catch {
+            content.value = "";
+          }
+        }
+      }
       return;
     }
 
@@ -118,17 +138,7 @@ async function load(): Promise<void> {
       return;
     }
 
-    if (isImage.value) {
-      const b64 = await readFileBase64(props.workspace ?? null, cleanPath.value);
-      const mime = mimeTypeForExtension(extension.value);
-      imageDataUrl.value = `data:${mime};base64,${b64}`;
-      if (isSvg.value) {
-        try {
-          content.value = atob(b64);
-        } catch {
-          content.value = "";
-        }
-      }
+    if (isLiveWeb.value) {
       return;
     }
 
@@ -173,6 +183,10 @@ function onImageLoad(e: Event): void {
       height: target.naturalHeight,
     };
   }
+}
+
+function onImageError(): void {
+  error.value = "Failed to load image.";
 }
 
 const lines = computed(() => {
@@ -348,15 +362,15 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
 
         <!-- File Identity -->
         <div class="flex items-center gap-1.5 min-w-0 truncate">
-          <Icon :name="isHttp ? 'panels' : (isVideo ? 'video' : (isImage ? 'image' : 'file'))" class="h-3.5 w-3.5 shrink-0 text-accent" />
+          <Icon :name="isLiveWeb ? 'panels' : (isVideo ? 'video' : (isImage ? 'image' : 'file'))" class="h-3.5 w-3.5 shrink-0 text-accent" />
           <span class="truncate font-mono text-[12.5px] font-semibold text-fg">
-            {{ isHttp ? (props.file.path.includes('choose') || props.file.path.includes('127.0.0.1') ? 'Design Choice Preview' : 'Live Preview') : basename }}
+            {{ isLiveWeb ? (props.file.path.includes('choose') || props.file.path.includes('127.0.0.1') ? 'Design Choice Preview' : 'Live Preview') : basename }}
           </span>
           <span v-if="lineRange" class="shrink-0 rounded bg-raised px-1 py-0.5 font-mono text-[10.5px] text-accent font-medium">
             :{{ lineRange }}
           </span>
           <span v-if="directory" class="hidden md:inline truncate font-mono text-[11px] text-faint">
-            {{ isHttp ? props.file.path : directory }}
+            {{ isLiveWeb ? props.file.path : directory }}
           </span>
         </div>
       </div>
@@ -364,7 +378,16 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
       <!-- Actions & Controls -->
       <div class="flex items-center gap-2 shrink-0">
         <!-- Live Web Preview Controls -->
-        <div v-if="isHttp" class="flex items-center gap-1.5">
+        <div v-if="isLiveWeb" class="flex items-center gap-1.5">
+          <button
+            type="button"
+            class="flex items-center gap-1 rounded-[5px] border border-line/50 bg-raised/40 px-2 py-1 text-[11px] text-dim transition-colors hover:border-line-strong hover:bg-raised hover:text-fg"
+            title="Inspect preview / Toggle DevTools (F12)"
+            @click="onInspect"
+          >
+            <Icon name="terminal" class="h-3.5 w-3.5" />
+            <span class="hidden sm:inline">Inspect</span>
+          </button>
           <button
             type="button"
             class="flex items-center gap-1 rounded-[5px] border border-line/50 bg-raised/40 px-2 py-1 text-[11px] text-dim transition-colors hover:border-line-strong hover:bg-raised hover:text-fg"
@@ -539,7 +562,7 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
       <div class="flex items-center gap-2 truncate">
         <span class="flex items-center gap-1 text-accent/90 font-medium">
           <span class="h-1.5 w-1.5 rounded-full bg-accent" />
-          {{ isHttp ? 'Live Web Preview' : (isVideo ? 'Video' : (isImage && (!isSvg || mode === 'preview') ? 'Image preview' : (isHtml && mode === 'preview' ? 'HTML preview' : (isMarkdown && mode === 'preview' ? (isSkill ? 'Skill preview' : 'Markdown preview') : 'Read-only view')))) }}
+          {{ isLiveWeb ? 'Live Web Preview' : (isVideo ? 'Video' : (isImage && (!isSvg || mode === 'preview') ? 'Image preview' : (isHtml && mode === 'preview' ? 'HTML preview' : (isMarkdown && mode === 'preview' ? (isSkill ? 'Skill preview' : 'Markdown preview') : 'Read-only view')))) }}
         </span>
         <span>·</span>
         <span class="truncate font-mono text-faint/80">{{ props.file.path }}</span>
@@ -629,6 +652,7 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
               imageZoom === 'fit' ? 'max-h-full max-w-full object-contain cursor-zoom-in' : 'cursor-zoom-out',
             ]"
             @load="onImageLoad"
+            @error="onImageError"
             @click="imageZoom = imageZoom === 'fit' ? 'actual' : 'fit'"
           />
         </div>
@@ -689,13 +713,13 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
 
       <!-- Web / Localhost Live Interactive Preview (MCP design-choice & local dev servers) -->
       <div
-        v-else-if="isHttp"
+        v-else-if="isLiveWeb"
         class="h-full w-full overflow-hidden bg-canvas flex flex-col"
       >
         <iframe
           :key="iframeKey"
           :src="props.file.path"
-          sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
+          :sandbox="isLocalHttp ? undefined : 'allow-scripts allow-forms allow-same-origin allow-popups allow-modals'"
           class="h-full w-full border-0 flex-1 bg-canvas"
           title="Live Web Preview"
         />

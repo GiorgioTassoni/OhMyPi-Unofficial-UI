@@ -40,7 +40,7 @@ export interface FilePathMeta {
  */
 export function cleanExtension(ext: string): string {
   if (!ext) return "";
-  const stripped = ext.toLowerCase().trim().replace(/(?::\d+(?:-\d+)?|#.*)$/, "");
+  const stripped = ext.toLowerCase().trim().replace(/(?:\?.*|#.*|:\d+(?:-\d+)?)$/, "");
   const lastDot = stripped.lastIndexOf(".");
   return lastDot >= 0 ? stripped.slice(lastDot + 1) : stripped;
 }
@@ -93,11 +93,20 @@ export function parseFilePath(rawPath: string): FilePathMeta {
     };
   }
 
-  const parts = cleanPath.split(/[/\\]/).filter(Boolean);
+  const pathWithoutQuery = cleanPath.replace(/\?.*$/, "");
+  const parts = pathWithoutQuery.split(/[/\\]/).filter(Boolean);
   const basename = parts.pop() || cleanPath;
 
   let directory: string | null = null;
-  if (cleanPath.endsWith(basename)) {
+  if (/^https?:\/\//i.test(cleanPath)) {
+    try {
+      const u = new URL(cleanPath);
+      const lastSlash = u.pathname.lastIndexOf("/");
+      directory = `${u.origin}${lastSlash > 0 ? u.pathname.slice(0, lastSlash) : ""}`;
+    } catch {
+      directory = null;
+    }
+  } else if (cleanPath.endsWith(basename)) {
     const dir = cleanPath.slice(0, cleanPath.length - basename.length).replace(/[/\\]$/, "");
     directory = dir || null;
   }

@@ -55,6 +55,7 @@ import {
   type UiRequestSnapshot,
   parkedAgents,
   type ParkedAgent,
+  toggleDevtools,
 } from "./bridge";
 import { activeCount, agentInFlight, buildChatSubagents, tabAgentLabel as resolveTabAgentLabel, type ChatSubagent } from "./lib/agents";
 import { readAppTheme, setAppTheme, type AppTheme } from "./lib/appTheme";
@@ -1054,6 +1055,11 @@ onUnmounted(() => {
  * composer is untouched.
  */
 function onShortcut(event: KeyboardEvent): void {
+  if (event.key === "F12" || ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "i")) {
+    event.preventDefault();
+    void toggleDevtools();
+    return;
+  }
   if (!event.metaKey && !event.ctrlKey) return;
 
   const key = event.key.toLowerCase();
@@ -1258,7 +1264,8 @@ function onWindowFocus(): void {
 function onContextMenu(event: MouseEvent): void {
   const target = event.target as HTMLElement | null;
   const isInput = target?.closest("input, textarea, [contenteditable='true']");
-  if (!isInput) {
+  const isInspectable = target?.closest(".file-viewer-panel, iframe");
+  if (!isInput && !isInspectable && !event.shiftKey) {
     event.preventDefault();
   }
 }

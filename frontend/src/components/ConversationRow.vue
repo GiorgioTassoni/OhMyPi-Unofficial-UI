@@ -131,9 +131,9 @@ const skillPrompt = computed(() => parseSkillPrompt(props.row));
   <!-- A user turn: right-aligned, so a long thread reads as a dialogue rather
        than one column of prose. -->
   <div v-else-if="(row.role === 'user' || skillPrompt.isSkill) && !isSystemReminder" class="flex flex-col items-end gap-1.5 my-1">
-    <div v-if="row.steering" class="flex items-center gap-1 text-[11px] text-faint select-none">
-      <Icon name="steer" class="h-2.5 w-2.5 text-faint" />
-      <span>steer</span>
+    <div v-if="row.steering" class="flex items-center gap-1.5 text-[11.5px] font-medium text-accent select-none">
+      <Icon name="steer" class="h-3 w-3 text-accent" />
+      <span>steering</span>
     </div>
     <div v-if="row.attachments.length > 0" class="flex flex-wrap justify-end gap-1.5">
       <img

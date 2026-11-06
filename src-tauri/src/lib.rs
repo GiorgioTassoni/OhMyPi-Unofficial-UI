@@ -256,6 +256,7 @@ pub fn run() {
             skills::open_skills_folder,
             mcp_choice::sync_mcp_design_choice,
             mcp_choice::get_mcp_design_choice_status,
+            bridge::toggle_devtools,
         ])
         .build(tauri::generate_context!())
         .expect("the Tauri application builds")

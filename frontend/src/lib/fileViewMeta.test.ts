@@ -38,6 +38,12 @@ describe("fileViewMeta", () => {
     expect(meta.basename).toBe("README.md");
     expect(meta.directory).toBeNull();
     expect(meta.extension).toBe("md");
+
+    const urlMeta = parseFilePath("https://webassets.linear.app/images/prod/sample.png?q=95&auto=format");
+    expect(urlMeta.cleanPath).toBe("https://webassets.linear.app/images/prod/sample.png?q=95&auto=format");
+    expect(urlMeta.basename).toBe("sample.png");
+    expect(urlMeta.directory).toBe("https://webassets.linear.app/images/prod");
+    expect(urlMeta.extension).toBe("png");
   });
 
   test("parseFilePath recognizes skill URIs as markdown documents", () => {
@@ -58,6 +64,7 @@ describe("fileViewMeta", () => {
   test("cleanExtension normalizes suffixes and leading dots", () => {
     expect(cleanExtension("dart:239-245")).toBe("dart");
     expect(cleanExtension("file.ts#L5")).toBe("ts");
+    expect(cleanExtension("png?q=95&auto=format&dpr=2")).toBe("png");
     expect(cleanExtension(".rs")).toBe("rs");
     expect(cleanExtension("")).toBe("");
   });
