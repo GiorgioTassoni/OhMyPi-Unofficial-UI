@@ -1,16 +1,4 @@
 <script setup lang="ts">
-/**
- * Read-only file viewer for the right sidebar.
- *
- * Opens when an agent reads a whole file (or when inspected), presenting:
- * - Image files (png, jpg, webp, svg, gif, etc.) with zoom controls (fit vs 100%),
- *   resolution metrics, and a subtle checkerboard transparency canvas.
- * - Markdown documents via MarkdownBody with Preview / Raw segmented toggle.
- * - Code and text files with a lockstep line-numbered viewer, safe syntax highlighting,
- *   copy affordances, and an external editor launch button.
- *
- * Self-contained: fetches its own content from artifacts or disk when not pre-supplied.
- */
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { openExternal, openPath, readArtifact, readFileBase64, readFileContent, toggleDevtools } from "../bridge";
 import {
@@ -221,7 +209,6 @@ async function copyImage(): Promise<void> {
       return;
     }
 
-    // Convert to PNG on canvas for standard clipboard support
     const img = new Image();
     img.crossOrigin = "anonymous";
     await new Promise((resolve, reject) => {
@@ -242,7 +229,6 @@ async function copyImage(): Promise<void> {
         return;
       }
     }
-    // Fallback: copy file path
     await navigator.clipboard.writeText(props.file.path);
     markCopied();
   } catch {
@@ -351,15 +337,16 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
     <!-- Top Bar -->
     <header class="flex h-10 shrink-0 items-center justify-between border-b border-line/50 bg-surface/60 px-2.5 backdrop-blur-sm select-none">
       <div class="flex items-center gap-2 min-w-0 flex-1 pr-2">
-        <!-- Back Button -->
+        <!-- Close Button -->
         <button
           type="button"
           class="flex items-center gap-1.5 rounded-[5px] px-2 py-1 text-[11.5px] font-medium text-dim transition-colors hover:bg-raised hover:text-fg"
-          aria-label="Back to panel"
+          aria-label="Close file viewer"
+          title="Close file preview"
           @click="emit('close')"
         >
-          <Icon name="arrow-left" class="h-3.5 w-3.5 shrink-0" />
-          <span class="hidden sm:inline">Back</span>
+          <Icon name="close" class="h-3.5 w-3.5 shrink-0" />
+          <span class="hidden sm:inline">Close</span>
         </button>
 
         <span class="h-3.5 w-px bg-line/60" />

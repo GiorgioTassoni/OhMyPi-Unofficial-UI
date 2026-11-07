@@ -362,6 +362,11 @@ const savedRightPanelWidth = ref<number | null>(null);
 watch(activeId, () => {
   turnReview.value = null;
   activeFile.value = null;
+  if (savedRightPanelWidth.value !== null) {
+    const restored = savedRightPanelWidth.value;
+    savedRightPanelWidth.value = null;
+    rightPanelWidth.value = restored;
+  }
 });
 
 function openTurnReview(thread: string, summary: TurnFileSummary): void {
@@ -376,12 +381,10 @@ function onOpenFile(thread: string, request: FileViewRequest): void {
   diagnostics.value = false;
   panelOpen.value = true;
 
-  // Save current width to restore on close
   if (savedRightPanelWidth.value === null) {
     savedRightPanelWidth.value = rightPanelWidth.value;
   }
 
-  // Expand right panel to spacious preview width (up to 62% of window width)
   const maxAllowed = Math.min(MAX_RIGHT_PANEL_WIDTH, Math.floor(window.innerWidth * 0.62));
   rightPanelWidth.value = Math.max(DEFAULT_RIGHT_PANEL_WIDTH, maxAllowed);
 
@@ -391,24 +394,22 @@ function onOpenFile(thread: string, request: FileViewRequest): void {
 function closeFileViewer(): void {
   activeFile.value = null;
   if (savedRightPanelWidth.value !== null) {
-    rightPanelWidth.value = savedRightPanelWidth.value;
+    const restored = savedRightPanelWidth.value;
     savedRightPanelWidth.value = null;
+    rightPanelWidth.value = restored;
   }
 }
 
-/** Resizable sidebars & collapse thresholds */
 const DEFAULT_SIDEBAR_WIDTH = 288;
-const MIN_SIDEBAR_WIDTH = 180;
+const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 520;
 const SIDEBAR_COLLAPSE_THRESHOLD = 140;
 
-const DEFAULT_RIGHT_PANEL_WIDTH = 320;
-// The tabs (including the todo count) and header actions need room to stay on one row.
-const MIN_RIGHT_PANEL_WIDTH = 280;
+const DEFAULT_RIGHT_PANEL_WIDTH = 360;
+const MIN_RIGHT_PANEL_WIDTH = 340;
 const MAX_RIGHT_PANEL_WIDTH = 1100;
 const RIGHT_PANEL_COLLAPSE_THRESHOLD = 220;
 
-/** A forgiving drag target around the quiet one-pixel divider the user sees. */
 const RESIZE_HANDLE_CLASS =
   "z-30 h-full w-2 cursor-col-resize select-none after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-accent after:opacity-0 after:transition-opacity hover:after:opacity-80";
 
@@ -423,14 +424,20 @@ function readStorageNumber(key: string, fallback: number): number {
   }
 }
 
-const sidebarWidth = ref(readStorageNumber("omp:sidebar-width", DEFAULT_SIDEBAR_WIDTH));
+const sidebarWidth = ref(
+  Math.min(
+    MAX_SIDEBAR_WIDTH,
+    Math.max(MIN_SIDEBAR_WIDTH, readStorageNumber("omp:sidebar-width", DEFAULT_SIDEBAR_WIDTH)),
+  ),
+);
 const sidebarCollapsed = ref(localStorage.getItem("omp:sidebar-collapsed") === "true");
 const notificationSoundEnabled = ref(readNotificationSoundEnabled());
 const appTheme = ref(readAppTheme());
 setAppTheme(appTheme.value);
+const INITIAL_MAX_RIGHT_PANEL_WIDTH = 520;
 const rightPanelWidth = ref(
   Math.min(
-    MAX_RIGHT_PANEL_WIDTH,
+    INITIAL_MAX_RIGHT_PANEL_WIDTH,
     Math.max(MIN_RIGHT_PANEL_WIDTH, readStorageNumber("omp:right-panel-width", DEFAULT_RIGHT_PANEL_WIDTH)),
   ),
 );
@@ -470,7 +477,9 @@ function changeAppTheme(theme: AppTheme): void {
 
 watch(rightPanelWidth, (next) => {
   try {
-    localStorage.setItem("omp:right-panel-width", String(next));
+    if (savedRightPanelWidth.value === null) {
+      localStorage.setItem("omp:right-panel-width", String(next));
+    }
   } catch {}
 });
 
