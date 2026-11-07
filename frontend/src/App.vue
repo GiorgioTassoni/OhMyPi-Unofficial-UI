@@ -106,6 +106,7 @@ import ThreadView from "./components/ThreadView.vue";
 import TitleBar from "./components/TitleBar.vue";
 import WindowFrameBar from "./components/WindowFrameBar.vue";
 import ClosingOverlay from "./components/ClosingOverlay.vue";
+import GlobalTooltip from "./components/ui/GlobalTooltip.vue";
 import Icon from "./components/ui/Icon.vue";
 
 /**
@@ -1969,5 +1970,7 @@ function describe(cause: unknown): string {
 
     <!-- Closing & Shutdown visual feedback overlay -->
     <ClosingOverlay :active="isClosing" />
+
+    <GlobalTooltip />
   </div>
 </template>
