@@ -43,6 +43,174 @@ export function extractTextNode(node: Node, fromStart = true): CaretPoint | null
   return { node: target, offset: fromStart ? 0 : (target.textContent?.length ?? 0) };
 }
 
+export function isTextNodeNearY(textNode: Text, targetY: number, doc: Document = document): boolean {
+  if (!textNode.textContent || textNode.textContent.trim().length === 0) return false;
+  try {
+    const range = doc.createRange();
+    range.selectNodeContents(textNode);
+    const rects = range.getClientRects();
+    if (rects.length > 0) {
+      for (let i = 0; i < rects.length; i++) {
+        const r = rects[i];
+        if (r.width > 0 && r.height > 0 && r.top - 8 <= targetY && r.bottom + 8 >= targetY) {
+          return true;
+        }
+      }
+      return false;
+    }
+    const bRect = range.getBoundingClientRect();
+    if (bRect.width > 0 && bRect.height > 0) {
+      return bRect.top - 12 <= targetY && bRect.bottom + 12 >= targetY;
+    }
+  } catch {}
+  return true;
+}
+
+export function findTextNodeInElementNearY(
+  element: Element,
+  targetY: number,
+  preferStart: boolean,
+  doc: Document = document,
+): CaretPoint | null {
+  const filter = (doc.defaultView as unknown as { NodeFilter?: { SHOW_TEXT: number } })?.NodeFilter?.SHOW_TEXT ?? 4;
+  const walker = doc.createTreeWalker(element, filter);
+  let curr: Text | null;
+  let bestNode: Text | null = null;
+  let minDistance = Infinity;
+
+  while ((curr = walker.nextNode() as Text | null)) {
+    if (!curr.textContent || curr.textContent.trim().length === 0) continue;
+    try {
+      const range = doc.createRange();
+      range.selectNodeContents(curr);
+      const rects = range.getClientRects();
+      let matched = false;
+      if (rects.length > 0) {
+        for (let i = 0; i < rects.length; i++) {
+          const r = rects[i];
+          if (r.width > 0 && r.height > 0) {
+            if (r.top - 8 <= targetY && r.bottom + 8 >= targetY) {
+              bestNode = curr;
+              matched = true;
+              break;
+            }
+            const dist = Math.min(Math.abs(r.top - targetY), Math.abs(r.bottom - targetY));
+            if (dist < minDistance && dist <= 40) {
+              minDistance = dist;
+              bestNode = curr;
+            }
+          }
+        }
+      } else {
+        const bRect = range.getBoundingClientRect();
+        if (bRect.width > 0 && bRect.height > 0) {
+          if (bRect.top - 12 <= targetY && bRect.bottom + 12 >= targetY) {
+            bestNode = curr;
+            matched = true;
+          } else {
+            const dist = Math.min(Math.abs(bRect.top - targetY), Math.abs(bRect.bottom - targetY));
+            if (dist < minDistance && dist <= 40) {
+              minDistance = dist;
+              bestNode = curr;
+            }
+          }
+        }
+      }
+      if (matched) break;
+    } catch {}
+  }
+
+  if (!bestNode) {
+    if (typeof (element as HTMLElement).getBoundingClientRect === "function") {
+      const eRect = element.getBoundingClientRect();
+      if (eRect.width === 0 && eRect.height === 0) {
+        return extractTextNode(element, preferStart);
+      }
+    }
+    return null;
+  }
+  return {
+    node: bestNode,
+    offset: preferStart ? 0 : (bestNode.textContent?.length ?? 0),
+  };
+}
+
+export function findLineCaret(
+  targetY: number,
+  isLeftGutter: boolean,
+  col: HTMLElement,
+  container: HTMLElement,
+  doc: Document = document,
+): CaretPoint | null {
+  const colRect = col.getBoundingClientRect();
+
+  if (colRect.height > 0) {
+    if (targetY < colRect.top) {
+      return extractTextNode(col, true);
+    }
+    if (targetY > colRect.bottom) {
+      return extractTextNode(col, false);
+    }
+  }
+
+  const colCenter = (colRect.left + colRect.right) / 2;
+  const probeXs = isLeftGutter
+    ? [
+        colRect.left + 24,
+        colRect.left + 48,
+        colRect.left + 80,
+        colRect.left + 140,
+        colRect.left + 220,
+        colCenter,
+        colRect.right - 80,
+      ]
+    : [
+        colRect.right - 24,
+        colRect.right - 48,
+        colRect.right - 80,
+        colRect.right - 140,
+        colRect.right - 220,
+        colCenter,
+        colRect.left + 80,
+      ];
+
+  const yDeltas = [0, 6, -6, 12, -12, 18, -18, 24, -24];
+
+  for (const dy of yDeltas) {
+    const y = targetY + dy;
+    for (const px of probeXs) {
+      const caret = getCaretFromPoint(px, y, doc);
+      if (caret && container.contains(caret.node)) {
+        if (caret.node.nodeType === Node.TEXT_NODE) {
+          const textNode = caret.node as Text;
+          if (isTextNodeNearY(textNode, targetY, doc)) {
+            return {
+              node: textNode,
+              offset: isLeftGutter ? 0 : (textNode.textContent?.length ?? 0),
+            };
+          }
+        } else if (caret.node instanceof Element && container.contains(caret.node)) {
+          const near = findTextNodeInElementNearY(caret.node, targetY, isLeftGutter, doc);
+          if (near) return near;
+        }
+      }
+    }
+  }
+
+  for (const dy of yDeltas) {
+    const y = targetY + dy;
+    for (const px of probeXs) {
+      const el = doc.elementFromPoint(px, y);
+      if (el && container.contains(el) && el !== container && el !== col) {
+        const near = findTextNodeInElementNearY(el, targetY, isLeftGutter, doc);
+        if (near) return near;
+      }
+    }
+  }
+
+  return null;
+}
+
 export function findTextCaretAt(
   probeX: number,
   probeY: number,
@@ -57,14 +225,14 @@ export function findTextCaretAt(
       if (caret.node.nodeType === Node.TEXT_NODE) {
         return caret;
       }
-      const resolved = extractTextNode(caret.node, fromStart);
+      const resolved = findTextNodeInElementNearY(caret.node as Element, probeY, fromStart, doc);
       if (resolved) return resolved;
     }
   }
 
   const el = doc.elementFromPoint(probeX, probeY);
-  if (el && container.contains(el)) {
-    const resolved = extractTextNode(el, fromStart);
+  if (el && container.contains(el) && el !== container) {
+    const resolved = findTextNodeInElementNearY(el, probeY, fromStart, doc);
     if (resolved) return resolved;
   }
   return null;
@@ -74,6 +242,18 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
   if (!container || typeof window === "undefined") return () => {};
 
   let activeDragCleanup: (() => void) | null = null;
+  let lastValidSelection: { anchorNode: Node; anchorOffset: number; focusNode: Node; focusOffset: number } | null = null;
+
+  const col = (container.querySelector(".max-w-\\[46rem\\]") as HTMLElement | null) ?? container;
+
+  function isRootContainer(node: Node | null): boolean {
+    if (!node) return false;
+    if (node === container || node === col || node === container?.ownerDocument?.body) return true;
+    if (node instanceof HTMLElement) {
+      if (node.hasAttribute("data-conversation") || node.classList.contains("max-w-[46rem]")) return true;
+    }
+    return false;
+  }
 
   function onMouseDown(e: MouseEvent): void {
     if (e.button !== 0 || e.defaultPrevented || e.shiftKey) return;
@@ -91,15 +271,14 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
       initialCaret.node !== container &&
       container.contains(initialCaret.node);
 
-    const col = (container.querySelector(".max-w-\\[46rem\\]") as HTMLElement | null) ?? container;
     const colRect = col.getBoundingClientRect();
-    const fromStart = e.clientX <= (colRect.left + colRect.right) / 2;
+    const isLeftGutter = e.clientX < colRect.left;
 
-    let probeX = e.clientX;
-    if (probeX < colRect.left) probeX = colRect.left + 16;
-    else if (probeX > colRect.right) probeX = colRect.right - 16;
+    const startCaret = isDirectText
+      ? initialCaret
+      : findLineCaret(e.clientY, isLeftGutter, col, container, doc) ??
+        findTextCaretAt(e.clientX, e.clientY, container, isLeftGutter, doc);
 
-    const startCaret = isDirectText ? initialCaret : findTextCaretAt(probeX, e.clientY, container, fromStart, doc);
     if (!startCaret) return;
     const initialAnchor = startCaret;
 
@@ -112,6 +291,22 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
       } catch {
         return;
       }
+    }
+
+    if (sel && sel.anchorNode && sel.focusNode) {
+      lastValidSelection = {
+        anchorNode: sel.anchorNode,
+        anchorOffset: sel.anchorOffset,
+        focusNode: sel.focusNode,
+        focusOffset: sel.focusOffset,
+      };
+    } else {
+      lastValidSelection = {
+        anchorNode: initialAnchor.node,
+        anchorOffset: initialAnchor.offset,
+        focusNode: initialAnchor.node,
+        focusOffset: initialAnchor.offset,
+      };
     }
 
     if (activeDragCleanup) {
@@ -144,41 +339,49 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
       }
       autoScroll(moveEv.clientY);
 
-      const inGutter = moveEv.clientX < colRect.left || moveEv.clientX > colRect.right;
-      if (!inGutter && isDirectText) {
-        return;
-      }
-
-      let targetX = moveEv.clientX;
-      if (targetX < colRect.left) targetX = colRect.left + 16;
-      else if (targetX > colRect.right) targetX = colRect.right - 16;
+      const currentColRect = col.getBoundingClientRect();
+      const currentIsLeft = moveEv.clientX < currentColRect.left;
+      const currentIsRight = moveEv.clientX > currentColRect.right;
+      const currentlyInGutter = currentIsLeft || currentIsRight;
 
       const currentSel = doc.defaultView?.getSelection() ?? window.getSelection();
       if (!currentSel) return;
 
-      const anchorNode = currentSel.anchorNode && container.contains(currentSel.anchorNode) && currentSel.anchorNode !== container
-        ? currentSel.anchorNode
-        : initialAnchor.node;
-      const anchorOffset = currentSel.anchorNode && container.contains(currentSel.anchorNode) && currentSel.anchorNode !== container
-        ? currentSel.anchorOffset
-        : initialAnchor.offset;
+      if (!currentlyInGutter) {
+        if (currentSel.anchorNode && currentSel.focusNode && !isRootContainer(currentSel.focusNode)) {
+          lastValidSelection = {
+            anchorNode: currentSel.anchorNode,
+            anchorOffset: currentSel.anchorOffset,
+            focusNode: currentSel.focusNode,
+            focusOffset: currentSel.focusOffset,
+          };
+        }
+        if (isDirectText) return;
+      }
 
-      const endCaret = findTextCaretAt(
-        targetX,
-        moveEv.clientY,
-        container,
-        moveEv.clientY < e.clientY,
-        doc,
-      );
+      const anchorNode =
+        currentSel.anchorNode && container.contains(currentSel.anchorNode) && !isRootContainer(currentSel.anchorNode)
+          ? currentSel.anchorNode
+          : (lastValidSelection?.anchorNode ?? initialAnchor.node);
+      const anchorOffset =
+        currentSel.anchorNode && container.contains(currentSel.anchorNode) && !isRootContainer(currentSel.anchorNode)
+          ? currentSel.anchorOffset
+          : (lastValidSelection?.anchorOffset ?? initialAnchor.offset);
+
+      const endCaret = currentlyInGutter
+        ? findLineCaret(moveEv.clientY, currentIsLeft, col, container, doc)
+        : findTextCaretAt(moveEv.clientX, moveEv.clientY, container, moveEv.clientY < e.clientY, doc);
+
       if (!endCaret) return;
 
       try {
-        currentSel.setBaseAndExtent(
+        currentSel.setBaseAndExtent(anchorNode, anchorOffset, endCaret.node, endCaret.offset);
+        lastValidSelection = {
           anchorNode,
           anchorOffset,
-          endCaret.node,
-          endCaret.offset,
-        );
+          focusNode: endCaret.node,
+          focusOffset: endCaret.offset,
+        };
       } catch {}
     }
 
@@ -202,9 +405,22 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
     const doc = container?.ownerDocument ?? document;
     const sel = doc.defaultView?.getSelection() ?? window.getSelection();
     if (!sel || sel.isCollapsed) return;
-    const anchorIsRoot = sel.anchorNode === container || sel.anchorNode === doc.body;
-    const focusIsRoot = sel.focusNode === container || sel.focusNode === doc.body;
+
+    const anchorIsRoot = isRootContainer(sel.anchorNode);
+    const focusIsRoot = isRootContainer(sel.focusNode);
+
     if ((anchorIsRoot && sel.anchorOffset === 0) || (focusIsRoot && sel.focusOffset === 0)) {
+      if (lastValidSelection && !isRootContainer(lastValidSelection.focusNode) && !isRootContainer(lastValidSelection.anchorNode)) {
+        try {
+          sel.setBaseAndExtent(
+            lastValidSelection.anchorNode,
+            lastValidSelection.anchorOffset,
+            lastValidSelection.focusNode,
+            lastValidSelection.focusOffset,
+          );
+          return;
+        } catch {}
+      }
       sel.removeAllRanges();
     }
   }

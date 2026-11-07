@@ -2,8 +2,11 @@ import { describe, expect, it } from "bun:test";
 import {
   attachGutterSelection,
   extractTextNode,
+  findLineCaret,
   findTextCaretAt,
+  findTextNodeInElementNearY,
   getCaretFromPoint,
+  isTextNodeNearY,
 } from "./gutterSelection";
 
 describe("gutterSelection", () => {
@@ -39,6 +42,141 @@ describe("gutterSelection", () => {
   it("returns null for empty element without text", () => {
     const div = document.createElement("div");
     expect(extractTextNode(div)).toBeNull();
+  });
+
+  it("isTextNodeNearY returns false for empty text nodes", () => {
+    const emptyNode = document.createTextNode("   ");
+    expect(isTextNodeNearY(emptyNode, 100)).toBe(false);
+  });
+
+  it("isTextNodeNearY handles text node with mock rects", () => {
+    const text = document.createTextNode("Sample line");
+    const doc = document.implementation.createHTMLDocument();
+    doc.body.appendChild(text);
+
+    const range = doc.createRange();
+    range.selectNodeContents(text);
+    range.getClientRects = () => [
+      {
+        top: 90,
+        bottom: 110,
+        left: 20,
+        right: 150,
+        width: 130,
+        height: 20,
+        x: 20,
+        y: 90,
+        toJSON: () => {},
+      },
+    ] as unknown as DOMRectList;
+
+    const origCreateRange = doc.createRange.bind(doc);
+    doc.createRange = () => range;
+
+    expect(isTextNodeNearY(text, 100, doc)).toBe(true);
+    expect(isTextNodeNearY(text, 50, doc)).toBe(false);
+    expect(isTextNodeNearY(text, 150, doc)).toBe(false);
+
+    doc.createRange = origCreateRange;
+  });
+
+  it("findTextNodeInElementNearY finds matching child text node near coordinate", () => {
+    const div = document.createElement("div");
+    const p1 = document.createElement("p");
+    p1.textContent = "Line one";
+    const p2 = document.createElement("p");
+    p2.textContent = "Line two";
+    div.appendChild(p1);
+    div.appendChild(p2);
+
+    const t1 = p1.firstChild as Text;
+    const t2 = p2.firstChild as Text;
+
+    const doc = document.implementation.createHTMLDocument();
+    doc.body.appendChild(div);
+
+    const origCreateRange = doc.createRange.bind(doc);
+    doc.createRange = () => {
+      const r = origCreateRange();
+      const origSelect = r.selectNodeContents.bind(r);
+      r.selectNodeContents = (node: Node) => {
+        origSelect(node);
+        if (node === t1) {
+          r.getClientRects = () => [
+            { top: 50, bottom: 70, left: 10, right: 100, width: 90, height: 20, x: 10, y: 50, toJSON: () => {} },
+          ] as unknown as DOMRectList;
+        } else if (node === t2) {
+          r.getClientRects = () => [
+            { top: 100, bottom: 120, left: 10, right: 100, width: 90, height: 20, x: 10, y: 100, toJSON: () => {} },
+          ] as unknown as DOMRectList;
+        }
+      };
+      return r;
+    };
+
+    const foundT2 = findTextNodeInElementNearY(div, 105, true, doc);
+    expect(foundT2).not.toBeNull();
+    expect(foundT2?.node).toBe(t2);
+    expect(foundT2?.offset).toBe(0);
+
+    const foundT1 = findTextNodeInElementNearY(div, 60, false, doc);
+    expect(foundT1).not.toBeNull();
+    expect(foundT1?.node).toBe(t1);
+    expect(foundT1?.offset).toBe("Line one".length);
+
+    doc.createRange = origCreateRange;
+  });
+
+  it("findLineCaret clamps to top when targetY is above colRect", () => {
+    const container = document.createElement("div");
+    const col = document.createElement("div");
+    const p = document.createElement("p");
+    p.textContent = "First row";
+    col.appendChild(p);
+    container.appendChild(col);
+
+    col.getBoundingClientRect = () => ({
+      top: 100,
+      bottom: 500,
+      left: 200,
+      right: 800,
+      width: 600,
+      height: 400,
+      x: 200,
+      y: 100,
+      toJSON: () => {},
+    });
+
+    const res = findLineCaret(50, true, col, container, document);
+    expect(res).not.toBeNull();
+    expect(res?.node.textContent).toBe("First row");
+    expect(res?.offset).toBe(0);
+  });
+
+  it("findLineCaret clamps to bottom when targetY is below colRect", () => {
+    const container = document.createElement("div");
+    const col = document.createElement("div");
+    const p = document.createElement("p");
+    p.textContent = "Last row";
+    col.appendChild(p);
+    container.appendChild(col);
+
+    col.getBoundingClientRect = () => ({
+      top: 100,
+      bottom: 500,
+      left: 200,
+      right: 800,
+      width: 600,
+      height: 400,
+      x: 200,
+      y: 100,
+      toJSON: () => {},
+    });
+
+    const res = findLineCaret(600, false, col, container, document);
+    expect(res).not.toBeNull();
+    expect(res?.node.textContent).toBe("Last row");
+    expect(res?.offset).toBe("Last row".length);
   });
 
   it("getCaretFromPoint handles caretRangeFromPoint", () => {

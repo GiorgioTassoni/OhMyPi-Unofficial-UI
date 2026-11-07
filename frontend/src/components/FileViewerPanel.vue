@@ -10,6 +10,7 @@ import {
   looksLikeMarkdown,
   mimeTypeForExtension,
   parseFilePath,
+  resolveWorkspacePath,
   stripToolOutputFormatting,
 } from "../lib/fileViewMeta";
 import { highlightCode } from "../lib/highlighter";
@@ -78,9 +79,7 @@ const isRealFileSystemPath = computed(() => {
 const fullPath = computed(() => {
   const targetPath = cleanPath.value;
   if (!isRealFileSystemPath.value) return targetPath;
-  return props.workspace && !targetPath.startsWith("/")
-    ? `${props.workspace}/${targetPath}`
-    : targetPath;
+  return resolveWorkspacePath(props.workspace, targetPath);
 });
 
 const parentDirectory = computed(() => {
@@ -111,7 +110,8 @@ async function load(): Promise<void> {
       if (isHttp.value) {
         imageDataUrl.value = props.file.path;
       } else {
-        const b64 = await readFileBase64(props.workspace ?? null, cleanPath.value);
+        const targetPath = fullPath.value || cleanPath.value;
+        const b64 = await readFileBase64(props.workspace ?? null, targetPath);
         const mime = mimeTypeForExtension(extension.value);
         imageDataUrl.value = `data:${mime};base64,${b64}`;
         if (isSvg.value) {
@@ -145,7 +145,8 @@ async function load(): Promise<void> {
     }
 
     if (isRealFileSystemPath.value && cleanPath.value) {
-      const text = await readFileContent(props.workspace ?? null, cleanPath.value);
+      const targetPath = fullPath.value || cleanPath.value;
+      const text = await readFileContent(props.workspace ?? null, targetPath);
       content.value = text;
       return;
     }

@@ -244,3 +244,25 @@ export function stripToolOutputFormatting(text: string): string {
 
   return clean;
 }
+
+export function resolveWorkspacePath(
+  workspace: string | null | undefined,
+  targetPath: string,
+): string {
+  if (!targetPath) return "";
+  if (!workspace || targetPath.startsWith("/") || /^[a-zA-Z]:/.test(targetPath)) {
+    return targetPath;
+  }
+  const ws = workspace.replace(/[/\\]+$/, "");
+  const clean = targetPath.replace(/^[/\\]+/, "");
+  const wsParts = ws.split(/[/\\]/).filter(Boolean);
+  const cleanParts = clean.split(/[/\\]/).filter(Boolean);
+  const lastWsPart = wsParts[wsParts.length - 1];
+
+  if (lastWsPart && cleanParts.length > 0 && lastWsPart.toLowerCase() === cleanParts[0].toLowerCase()) {
+    const stripped = cleanParts.slice(1).join("/");
+    return stripped.length > 0 ? `${ws}/${stripped}` : ws;
+  }
+
+  return `${ws}/${clean}`;
+}

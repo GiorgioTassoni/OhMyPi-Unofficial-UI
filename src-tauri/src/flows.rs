@@ -327,6 +327,31 @@ pub fn clean_path_input(path: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Borrowed(stripped)
 }
 
+pub fn collapse_duplicate_components(path: &Path) -> Option<PathBuf> {
+    let mut components = Vec::new();
+    let mut modified = false;
+
+    for comp in path.components() {
+        if let Some(prev) = components.last() {
+            if comp == *prev && matches!(comp, std::path::Component::Normal(_)) {
+                modified = true;
+                continue;
+            }
+        }
+        components.push(comp);
+    }
+
+    if modified {
+        let mut out = PathBuf::new();
+        for comp in components {
+            out.push(comp.as_os_str());
+        }
+        Some(out)
+    } else {
+        None
+    }
+}
+
 impl Allowlist {
     /// Collect what the host is showing: the live threads and the catalogue.
     pub fn collect(store: Option<&Store>, threads: &Threads, exports: Option<PathBuf>) -> Self {
@@ -378,9 +403,20 @@ impl Allowlist {
             ));
         }
 
-        let resolved = requested
-            .canonicalize()
-            .map_err(|error| format!("`{}` cannot be opened: {error}", requested.display()))?;
+        let resolved = match requested.canonicalize() {
+            Ok(p) => p,
+            Err(error) => {
+                if let Some(collapsed) = collapse_duplicate_components(requested) {
+                    if let Ok(p) = collapsed.canonicalize() {
+                        p
+                    } else {
+                        return Err(format!("`{}` cannot be opened: {error}", requested.display()));
+                    }
+                } else {
+                    return Err(format!("`{}` cannot be opened: {error}", requested.display()));
+                }
+            }
+        };
 
         if self
             .exports
@@ -727,6 +763,19 @@ mod tests {
             clean_path_input("docs/UI%20Component%20Schema%20v1.0.txt"),
             "docs/UI Component Schema v1.0.txt"
         );
+    }
+
+    #[test]
+    fn collapse_duplicate_components_removes_repeated_folders() {
+        let path = Path::new("/home/user/project/app/app/FRONTEND_CHANGES.md");
+        let collapsed = collapse_duplicate_components(path).expect("collapsed");
+        assert_eq!(
+            collapsed,
+            PathBuf::from("/home/user/project/app/FRONTEND_CHANGES.md")
+        );
+
+        let clean = Path::new("/home/user/project/app/FRONTEND_CHANGES.md");
+        assert!(collapse_duplicate_components(clean).is_none());
     }
 
     /// The export path is the app's, and it is inside the directory the allowlist admits.

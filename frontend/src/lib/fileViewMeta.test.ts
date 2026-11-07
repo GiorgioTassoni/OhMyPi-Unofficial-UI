@@ -10,6 +10,7 @@ import {
   normalizeFilePath,
   parseFilePath,
   looksLikeMarkdown,
+  resolveWorkspacePath,
   stripToolOutputFormatting,
 } from "./fileViewMeta";
 
@@ -156,5 +157,23 @@ describe("fileViewMeta", () => {
     expect(stripToolOutputFormatting(singleLineRatio)).toBe(singleLineRatio);
 
     expect(stripToolOutputFormatting("")).toBe("");
+  });
+
+  test("resolveWorkspacePath avoids duplicating folder when path starts with workspace basename", () => {
+    const ws = "/home/GioViale/Projects/Python/Zephyr/app";
+    const path = "app/FRONTEND_CHANGES.md";
+    expect(resolveWorkspacePath(ws, path)).toBe("/home/GioViale/Projects/Python/Zephyr/app/FRONTEND_CHANGES.md");
+
+    const normalPath = "src/main.py";
+    expect(resolveWorkspacePath(ws, normalPath)).toBe("/home/GioViale/Projects/Python/Zephyr/app/src/main.py");
+
+    const rootWs = "/home/GioViale/Projects/Python/Zephyr";
+    expect(resolveWorkspacePath(rootWs, path)).toBe("/home/GioViale/Projects/Python/Zephyr/app/FRONTEND_CHANGES.md");
+
+    const absolute = "/var/log/syslog";
+    expect(resolveWorkspacePath(ws, absolute)).toBe("/var/log/syslog");
+
+    expect(resolveWorkspacePath(null, "some/file.txt")).toBe("some/file.txt");
+    expect(resolveWorkspacePath(undefined, "")).toBe("");
   });
 });

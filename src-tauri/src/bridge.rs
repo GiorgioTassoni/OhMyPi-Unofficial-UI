@@ -1003,12 +1003,58 @@ fn resolve_file_path(workspace: Option<&str>, path: &str) -> PathBuf {
     let cleaned = flows::clean_path_input(path);
     let p = Path::new(cleaned.as_ref());
     if p.is_absolute() {
-        p.to_path_buf()
-    } else if let Some(ws) = workspace {
-        Path::new(ws).join(p)
-    } else {
-        p.to_path_buf()
+        if p.exists() {
+            return p.to_path_buf();
+        }
+        if let Some(collapsed) = flows::collapse_duplicate_components(p) {
+            if collapsed.exists() {
+                return collapsed;
+            }
+        }
+        return p.to_path_buf();
     }
+    let Some(ws) = workspace else {
+        return p.to_path_buf();
+    };
+    let ws_path = Path::new(ws);
+    let direct = ws_path.join(p);
+    if direct.exists() {
+        return direct;
+    }
+
+    if let (Some(ws_name), Some(first_comp)) = (
+        ws_path.file_name().and_then(|n| n.to_str()),
+        p.iter().next().and_then(|n| n.to_str()),
+    ) {
+        if ws_name.eq_ignore_ascii_case(first_comp) {
+            if let Ok(stripped) = p.strip_prefix(first_comp) {
+                let candidate = ws_path.join(stripped);
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+        }
+    }
+
+    if let Some(parent) = ws_path.parent() {
+        let candidate = parent.join(p);
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+
+    if let (Some(ws_name), Some(first_comp)) = (
+        ws_path.file_name().and_then(|n| n.to_str()),
+        p.iter().next().and_then(|n| n.to_str()),
+    ) {
+        if ws_name.eq_ignore_ascii_case(first_comp) {
+            if let Ok(stripped) = p.strip_prefix(first_comp) {
+                return ws_path.join(stripped);
+            }
+        }
+    }
+
+    direct
 }
 
 /// Read the full contents of a file on disk for the read-only file viewer.

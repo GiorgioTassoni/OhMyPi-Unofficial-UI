@@ -759,7 +759,7 @@ defineExpose({
     -->
     <div
       ref="conversationRef"
-      class="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden pl-4 pr-6 sm:pr-8"
+      class="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden pl-4 pr-6 sm:pr-8 select-none"
       data-conversation
       @scroll="onScroll"
     >
@@ -779,7 +779,7 @@ defineExpose({
         <p class="mt-2 text-[13px] text-faint">A fresh thread — nothing said yet.</p>
       </div>
 
-      <div v-else class="mx-auto w-full max-w-[46rem] pt-4 pb-12">
+      <div v-else class="mx-auto w-full max-w-[46rem] pt-4 pb-12 select-text">
         <!-- Archived history banner -->
         <ArchivedTurnsBanner
           :remaining="remainingArchivedTurns"
