@@ -1816,7 +1816,6 @@ function describe(cause: unknown): string {
               :review="turnReview?.thread === activeId ? turnReview : null"
               :workspace="workspace"
               :terminals="terminalsOpen"
-              :diagnostics="diagnostics"
               :subagents="currentChatSubagents"
               :active-agent-id="activeAgentTab?.id ?? null"
               :file-request="activeFile?.thread === activeId ? activeFile.request : null"
@@ -1828,7 +1827,6 @@ function describe(cause: unknown): string {
               @close-file-viewer="closeFileViewer"
               @open-file="activeId && onOpenFile(activeId, $event)"
               @toggle-terminals="terminalsOpen = !terminalsOpen"
-              @toggle-diagnostics="diagnostics = !diagnostics"
               @open-agent="openAgentTab"
             />
           </div>

@@ -19,7 +19,6 @@ const props = defineProps<{
   review: TurnReviewRequest | null;
   workspace?: string | null;
   terminals?: boolean;
-  diagnostics?: boolean;
   subagents?: ChatSubagent[];
   activeAgentId?: string | null | undefined;
   fileRequest?: FileViewRequest | null | undefined;
@@ -32,7 +31,6 @@ const emit = defineEmits<{
   close: [];
   closeReview: [];
   toggleTerminals: [];
-  toggleDiagnostics: [];
   openAgent: [thread: string, id: string];
   closeFileViewer: [];
   openFile: [file: { path: string; content?: string; artifactId?: string | null }];
@@ -93,14 +91,14 @@ const BUTTON =
     >
       <div class="flex items-center gap-0.5 min-w-0">
         <button
-          v-for="name in (['todos', 'files', 'subagents', 'viewer'] as const)"
+          v-for="name in (['todos', 'files', 'subagents'] as const)"
           :key="name"
           class="rounded-[6px] px-2 py-1 text-[12px] transition-colors"
           :class="tab === name ? 'bg-raised/90 text-fg font-medium shadow-sm' : 'text-dim hover:text-fg hover:bg-raised/40'"
           :aria-pressed="tab === name"
           @click="tab = name"
         >
-          {{ name === "todos" ? "Todos" : name === "files" ? "Files" : name === "subagents" ? "Subagents" : "Viewer" }}
+          {{ name === "todos" ? "Todos" : name === "files" ? "Files" : "Subagents" }}
           <span v-if="name === 'todos' && activeTodosCount > 0" class="ml-1 rounded-full bg-surface px-1.5 py-0.5 font-mono text-[10px] text-accent">
             {{ activeTodosCount }}
           </span>
@@ -111,11 +109,6 @@ const BUTTON =
           >
             {{ activeSubagentsCount > 0 ? activeSubagentsCount : props.subagents.length }}
           </span>
-          <span
-            v-else-if="name === 'viewer' && props.fileRequest"
-            class="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-accent"
-            title="File open"
-          />
         </button>
       </div>
 
@@ -140,13 +133,19 @@ const BUTTON =
           <Icon name="panels" />
         </button>
         <button
-          :class="[BUTTON, props.diagnostics ? 'bg-raised text-accent hover:text-accent' : '']"
-          aria-label="diagnostics"
-          data-action="diagnostics"
+          :class="[BUTTON, 'relative', tab === 'viewer' ? 'bg-raised text-accent hover:text-accent' : '']"
+          :aria-pressed="tab === 'viewer'"
+          aria-label="file viewer"
+          title="File viewer"
           type="button"
-          @click="emit('toggleDiagnostics')"
+          @click="tab = tab === 'viewer' ? 'todos' : 'viewer'"
         >
-          <Icon name="sliders" />
+          <Icon name="file" />
+          <span
+            v-if="props.fileRequest"
+            class="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-accent"
+            title="File open"
+          />
         </button>
       </div>
     </header>
