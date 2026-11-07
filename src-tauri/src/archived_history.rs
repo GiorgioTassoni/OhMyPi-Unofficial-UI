@@ -93,12 +93,12 @@ pub fn read_chain_from_file(path: &Path) -> Result<(Vec<Value>, Option<String>),
     let mut chain = Vec::new();
     let mut cur = Some(last_id);
     while let Some(id) = cur {
-        if let Some(entry) = entries.get(&id) {
-            chain.push(entry.clone());
+        if let Some(entry) = entries.remove(&id) {
             cur = entry
                 .get("parentId")
                 .and_then(Value::as_str)
                 .map(ToString::to_string);
+            chain.push(entry);
         } else {
             break;
         }

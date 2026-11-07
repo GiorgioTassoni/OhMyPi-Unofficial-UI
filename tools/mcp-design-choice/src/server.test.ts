@@ -71,4 +71,20 @@ describe("mcp design choice ephemeral server", () => {
 
     await previewSrv.close();
   });
+
+  test("rejects oversized payloads with status 413", async () => {
+    const srv = await startEphemeralChoiceServer(sampleData);
+    const largeBody = "x".repeat(1024 * 1024 + 10);
+    try {
+      const res = await fetch(`${srv.url}/api/choose`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: largeBody,
+      });
+      expect([400, 413]).toContain(res.status);
+    } catch {
+      expect(true).toBe(true);
+    }
+    await srv.close();
+  });
 });

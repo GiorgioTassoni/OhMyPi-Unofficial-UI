@@ -57,6 +57,9 @@ const ROWS_PUBLISH_INTERVAL: Duration = Duration::from_millis(100);
 /// OMP's `agent_start` for a finished turn.
 const MODE_SWITCH_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
+/// Maximum duration an approval mode switch will wait for the active turn and dialogs to settle.
+const MODE_SWITCH_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// How long the engine gets to finish cleanly before it is killed.
 ///
 /// Defined here rather than in `bridge` because two layers need it now and they must not
@@ -270,32 +273,36 @@ impl LiveSession {
     /// A fresh engine snapshot is needed here: a cached `is_streaming: false` may
     /// precede `agent_start` for a prompt OMP has accepted but not begun yet.
     pub async fn wait_for_turn_to_finish(&self) -> Result<(), String> {
-        let mut idle_samples = 0;
-        loop {
-            let client = self
-                .client()
-                .ok_or_else(|| "the session closed before its turn finished".to_string())?;
-            let response = call(&client, commands::get_state(), None, "session state").await?;
-            let fresh = SessionControl::decode(&response["data"])
-                .ok_or_else(|| "the agent's state payload had no session id".to_string())?;
-            let idle = {
-                let cached = self
-                    .control
-                    .lock()
-                    .map_err(|_| "the control state lock was poisoned".to_string())?;
-                mode_switch_idle(&fresh, &cached, self.dialogs.count())
-            };
+        tokio::time::timeout(MODE_SWITCH_WAIT_TIMEOUT, async {
+            let mut idle_samples = 0;
+            loop {
+                let client = self
+                    .client()
+                    .ok_or_else(|| "the session closed before its turn finished".to_string())?;
+                let response = call(&client, commands::get_state(), None, "session state").await?;
+                let fresh = SessionControl::decode(&response["data"])
+                    .ok_or_else(|| "the agent's state payload had no session id".to_string())?;
+                let idle = {
+                    let cached = self
+                        .control
+                        .lock()
+                        .map_err(|_| "the control state lock was poisoned".to_string())?;
+                    mode_switch_idle(&fresh, &cached, self.dialogs.count())
+                };
 
-            if idle {
-                idle_samples += 1;
-                if idle_samples >= 2 {
-                    return Ok(());
+                if idle {
+                    idle_samples += 1;
+                    if idle_samples >= 2 {
+                        return Ok(());
+                    }
+                } else {
+                    idle_samples = 0;
                 }
-            } else {
-                idle_samples = 0;
+                tokio::time::sleep(MODE_SWITCH_POLL_INTERVAL).await;
             }
-            tokio::time::sleep(MODE_SWITCH_POLL_INTERVAL).await;
-        }
+        })
+        .await
+        .map_err(|_| "timed out waiting for active turn or dialog to settle".to_string())?
     }
 
     fn ensure_turn_admitted(&self) -> Result<(), String> {

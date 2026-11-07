@@ -101,7 +101,7 @@ describe("gutterSelection", () => {
     document.body.removeChild(container);
   });
 
-  it("clears selection when anchorNode is root container at offset 0", () => {
+  it("clears selection when anchorNode or focusNode is root container at offset 0", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
 

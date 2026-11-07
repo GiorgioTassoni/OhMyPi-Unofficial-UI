@@ -93,6 +93,19 @@ export function parseFilePath(rawPath: string): FilePathMeta {
     };
   }
 
+  if (/^agents?:/i.test(cleanPath)) {
+    const schemeMatch = cleanPath.match(/^agents?:(?:\/\/)?/i);
+    const prefix = schemeMatch ? schemeMatch[0] : "agent://";
+    const agentName = cleanPath.slice(prefix.length).replace(/\/.*$/, "");
+    return {
+      cleanPath,
+      lineRange,
+      basename: agentName || cleanPath,
+      directory: prefix.includes("//") ? "agent://" : "agent:",
+      extension: "md",
+    };
+  }
+
   const pathWithoutQuery = cleanPath.replace(/\?.*$/, "");
   const parts = pathWithoutQuery.split(/[/\\]/).filter(Boolean);
   const basename = parts.pop() || cleanPath;
@@ -131,6 +144,18 @@ export function isSvgExtension(ext: string): boolean {
 
 export function isMarkdownExtension(ext: string): boolean {
   return MARKDOWN_EXTENSIONS.has(cleanExtension(ext));
+}
+
+export function looksLikeMarkdown(content: string): boolean {
+  if (!content) return false;
+  const sample = content.trimStart().slice(0, 2000);
+  return /^#{1,6}\s+\S/m.test(sample) ||
+    /^\s*[-*+]\s+\[[ xX]\]\s+\S/m.test(sample) ||
+    /^\s*\|.+\|\s*\n\s*\|[-: ]+\|/m.test(sample) ||
+    sample.startsWith("```") ||
+    /^\s*[-*]\s+\S/m.test(sample) ||
+    /^\s*\d+\.\s+\S/m.test(sample) ||
+    /^\s*>\s+\S/m.test(sample);
 }
 
 export function mimeTypeForExtension(ext: string): string {

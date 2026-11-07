@@ -9,6 +9,7 @@ import {
   mimeTypeForExtension,
   normalizeFilePath,
   parseFilePath,
+  looksLikeMarkdown,
   stripToolOutputFormatting,
 } from "./fileViewMeta";
 
@@ -59,6 +60,20 @@ describe("fileViewMeta", () => {
     expect(metaWithRange.basename).toBe("impeccable");
     expect(metaWithRange.directory).toBe("skill://");
     expect(metaWithRange.extension).toBe("md");
+
+    const agentMeta = parseFilePath("agent://StructureReview");
+    expect(agentMeta.cleanPath).toBe("agent://StructureReview");
+    expect(agentMeta.basename).toBe("StructureReview");
+    expect(agentMeta.directory).toBe("agent://");
+    expect(agentMeta.extension).toBe("md");
+  });
+
+  test("looksLikeMarkdown detects markdown structures in extensionless text", () => {
+    expect(looksLikeMarkdown("## Verdict: **block**\nSome content")).toBe(true);
+    expect(looksLikeMarkdown("| col | col |\n| --- | --- |\n| 1 | 2 |")).toBe(true);
+    expect(looksLikeMarkdown("- [x] Done\n- [ ] Pending")).toBe(true);
+    expect(looksLikeMarkdown("plain unformatted text without markdown markers")).toBe(false);
+    expect(looksLikeMarkdown("")).toBe(false);
   });
 
   test("cleanExtension normalizes suffixes and leading dots", () => {

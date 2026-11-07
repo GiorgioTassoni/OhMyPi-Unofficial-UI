@@ -133,10 +133,19 @@ export function startEphemeralChoiceServer(data: DesignChoiceInput): Promise<Eph
 
       if (req.method === "POST" && url.pathname === "/api/choose") {
         let body = "";
+        let exceeded = false;
         req.on("data", (chunk) => {
+          if (exceeded) return;
           body += chunk;
+          if (body.length > 1024 * 1024) {
+            exceeded = true;
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Payload too large" }));
+            req.destroy();
+          }
         });
         req.on("end", () => {
+          if (exceeded) return;
           try {
             const parsed = JSON.parse(body);
             const isAlternative = parsed.action === "request_alternatives" || parsed.id === "none";

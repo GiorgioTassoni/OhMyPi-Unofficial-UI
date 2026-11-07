@@ -19,6 +19,7 @@ import {
   isMarkdownExtension,
   isSvgExtension,
   isVideoExtension,
+  looksLikeMarkdown,
   mimeTypeForExtension,
   parseFilePath,
   stripToolOutputFormatting,
@@ -75,7 +76,9 @@ const isSvg = computed(() => isSvgExtension(extension.value));
 const isHtml = computed(() => !isHttp.value && (extension.value === "html" || extension.value === "htm"));
 const frontmatter = computed(() => parseFrontmatter(content.value));
 const isSkill = computed(() => !isHttp.value && (cleanPath.value.startsWith("skill:") || cleanPath.value.startsWith("skill://") || cleanPath.value.endsWith("SKILL.md") || (frontmatter.value.hasFrontmatter && !!frontmatter.value.attributes.name)));
-const isMarkdown = computed(() => !isHttp.value && (isMarkdownExtension(extension.value) || frontmatter.value.hasFrontmatter || isSkill.value));
+const isAgent = computed(() => !isHttp.value && (cleanPath.value.startsWith("agent:") || cleanPath.value.startsWith("agent://")));
+const hasMarkdownContent = computed(() => looksLikeMarkdown(content.value));
+const isMarkdown = computed(() => !isHttp.value && (isMarkdownExtension(extension.value) || frontmatter.value.hasFrontmatter || isSkill.value || isAgent.value || ((!extension.value || extension.value === "txt") && hasMarkdownContent.value)));
 const isLiveWeb = computed(() => isHttp.value && !isImage.value && !isVideo.value);
 
 const isRealFileSystemPath = computed(() => {
@@ -334,6 +337,7 @@ onUnmounted(() => {
 });
 
 const languageLabel = computed(() => {
+  if (isAgent.value) return "AGENT";
   if (isSkill.value) return "SKILL";
   if (isMarkdown.value) return "MARKDOWN";
   return formatLanguageLabel(extension.value);
@@ -362,7 +366,7 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
 
         <!-- File Identity -->
         <div class="flex items-center gap-1.5 min-w-0 truncate">
-          <Icon :name="isLiveWeb ? 'panels' : (isVideo ? 'video' : (isImage ? 'image' : 'file'))" class="h-3.5 w-3.5 shrink-0 text-accent" />
+          <Icon :name="isLiveWeb ? 'panels' : (isVideo ? 'video' : (isImage ? 'image' : (isAgent ? 'bot' : 'file')))" class="h-3.5 w-3.5 shrink-0 text-accent" />
           <span class="truncate font-mono text-[12.5px] font-semibold text-fg">
             {{ isLiveWeb ? (props.file.path.includes('choose') || props.file.path.includes('127.0.0.1') ? 'Design Choice Preview' : 'Live Preview') : basename }}
           </span>
@@ -562,7 +566,7 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
       <div class="flex items-center gap-2 truncate">
         <span class="flex items-center gap-1 text-accent/90 font-medium">
           <span class="h-1.5 w-1.5 rounded-full bg-accent" />
-          {{ isLiveWeb ? 'Live Web Preview' : (isVideo ? 'Video' : (isImage && (!isSvg || mode === 'preview') ? 'Image preview' : (isHtml && mode === 'preview' ? 'HTML preview' : (isMarkdown && mode === 'preview' ? (isSkill ? 'Skill preview' : 'Markdown preview') : 'Read-only view')))) }}
+          {{ isLiveWeb ? 'Live Web Preview' : (isVideo ? 'Video' : (isImage && (!isSvg || mode === 'preview') ? 'Image preview' : (isHtml && mode === 'preview' ? 'HTML preview' : (isMarkdown && mode === 'preview' ? (isAgent ? 'Agent report' : (isSkill ? 'Skill preview' : 'Markdown preview')) : 'Read-only view')))) }}
         </span>
         <span>·</span>
         <span class="truncate font-mono text-faint/80">{{ props.file.path }}</span>

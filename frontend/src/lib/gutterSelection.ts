@@ -91,10 +91,6 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
       initialCaret.node !== container &&
       container.contains(initialCaret.node);
 
-    if (isDirectText && target !== container && !target.classList.contains("border-t")) {
-      return;
-    }
-
     const col = (container.querySelector(".max-w-\\[46rem\\]") as HTMLElement | null) ?? container;
     const colRect = col.getBoundingClientRect();
     const fromStart = e.clientX <= (colRect.left + colRect.right) / 2;
@@ -103,19 +99,19 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
     if (probeX < colRect.left) probeX = colRect.left + 16;
     else if (probeX > colRect.right) probeX = colRect.right - 16;
 
-    const startCaret = findTextCaretAt(probeX, e.clientY, container, fromStart, doc);
+    const startCaret = isDirectText ? initialCaret : findTextCaretAt(probeX, e.clientY, container, fromStart, doc);
     if (!startCaret) return;
     const initialAnchor = startCaret;
 
-    e.preventDefault();
-
     const sel = doc.defaultView?.getSelection() ?? window.getSelection();
-    if (!sel) return;
-
-    try {
-      sel.collapse(initialAnchor.node, initialAnchor.offset);
-    } catch {
-      return;
+    if (!isDirectText) {
+      e.preventDefault();
+      if (!sel) return;
+      try {
+        sel.collapse(initialAnchor.node, initialAnchor.offset);
+      } catch {
+        return;
+      }
     }
 
     if (activeDragCleanup) {
@@ -139,10 +135,33 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
 
     function onMouseMove(moveEv: MouseEvent): void {
       if (!container) return;
+      if (moveEv.buttons !== 1) {
+        if (activeDragCleanup) {
+          activeDragCleanup();
+          activeDragCleanup = null;
+        }
+        return;
+      }
       autoScroll(moveEv.clientY);
+
+      const inGutter = moveEv.clientX < colRect.left || moveEv.clientX > colRect.right;
+      if (!inGutter && isDirectText) {
+        return;
+      }
+
       let targetX = moveEv.clientX;
       if (targetX < colRect.left) targetX = colRect.left + 16;
       else if (targetX > colRect.right) targetX = colRect.right - 16;
+
+      const currentSel = doc.defaultView?.getSelection() ?? window.getSelection();
+      if (!currentSel) return;
+
+      const anchorNode = currentSel.anchorNode && container.contains(currentSel.anchorNode) && currentSel.anchorNode !== container
+        ? currentSel.anchorNode
+        : initialAnchor.node;
+      const anchorOffset = currentSel.anchorNode && container.contains(currentSel.anchorNode) && currentSel.anchorNode !== container
+        ? currentSel.anchorOffset
+        : initialAnchor.offset;
 
       const endCaret = findTextCaretAt(
         targetX,
@@ -151,12 +170,12 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
         moveEv.clientY < e.clientY,
         doc,
       );
-      if (!endCaret || !sel) return;
+      if (!endCaret) return;
 
       try {
-        sel.setBaseAndExtent(
-          initialAnchor.node,
-          initialAnchor.offset,
+        currentSel.setBaseAndExtent(
+          anchorNode,
+          anchorOffset,
           endCaret.node,
           endCaret.offset,
         );
@@ -183,7 +202,9 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
     const doc = container?.ownerDocument ?? document;
     const sel = doc.defaultView?.getSelection() ?? window.getSelection();
     if (!sel || sel.isCollapsed) return;
-    if (sel.anchorNode === container && sel.anchorOffset === 0) {
+    const anchorIsRoot = sel.anchorNode === container || sel.anchorNode === doc.body;
+    const focusIsRoot = sel.focusNode === container || sel.focusNode === doc.body;
+    if ((anchorIsRoot && sel.anchorOffset === 0) || (focusIsRoot && sel.focusOffset === 0)) {
       sel.removeAllRanges();
     }
   }

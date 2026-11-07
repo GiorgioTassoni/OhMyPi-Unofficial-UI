@@ -1837,9 +1837,45 @@ pub fn play_notification_sound(kind: String) {
     });
 }
 
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy)]
+enum LinuxAudioBackend {
+    Canberra,
+    PipeWire,
+    PulseAudio,
+    None,
+}
+
+#[cfg(target_os = "linux")]
+fn detect_linux_audio() -> LinuxAudioBackend {
+    fn has_bin(name: &str) -> bool {
+        if let Ok(path) = std::env::var("PATH") {
+            for dir in std::env::split_paths(&path) {
+                if dir.join(name).is_file() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    if has_bin("canberra-gtk-play") {
+        LinuxAudioBackend::Canberra
+    } else if has_bin("pw-play") {
+        LinuxAudioBackend::PipeWire
+    } else if has_bin("paplay") {
+        LinuxAudioBackend::PulseAudio
+    } else {
+        LinuxAudioBackend::None
+    }
+}
+
 fn play_sound_sync(kind: &str) {
     #[cfg(target_os = "linux")]
     {
+        static AUDIO_BACKEND: std::sync::OnceLock<LinuxAudioBackend> = std::sync::OnceLock::new();
+        let backend = AUDIO_BACKEND.get_or_init(detect_linux_audio);
+
         let (sound_id, oga_file) = match kind {
             "needs-you" => (
                 "message-new-instant",
@@ -1851,40 +1887,22 @@ fn play_sound_sync(kind: &str) {
             ),
         };
 
-        // 1. Try canberra-gtk-play (standard desktop sound theme player)
-        if std::process::Command::new("canberra-gtk-play")
-            .args(["-i", sound_id])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-        {
-            return;
-        }
-
-        // 2. Try pw-play (PipeWire)
-        if std::path::Path::new(oga_file).exists() {
-            if std::process::Command::new("pw-play")
-                .arg(oga_file)
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-            {
-                return;
+        match backend {
+            LinuxAudioBackend::Canberra => {
+                let _ = std::process::Command::new("canberra-gtk-play")
+                    .args(["-i", sound_id])
+                    .spawn();
             }
-
-            // 3. Try paplay (PulseAudio)
-            if std::process::Command::new("paplay")
-                .arg(oga_file)
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-            {
-                return;
+            LinuxAudioBackend::PipeWire if std::path::Path::new(oga_file).exists() => {
+                let _ = std::process::Command::new("pw-play").arg(oga_file).spawn();
+            }
+            LinuxAudioBackend::PulseAudio if std::path::Path::new(oga_file).exists() => {
+                let _ = std::process::Command::new("paplay").arg(oga_file).spawn();
+            }
+            _ => {
+                eprint!("\x07");
             }
         }
-
-        // 4. Fallback bell
-        eprint!("\x07");
     }
 
     #[cfg(target_os = "macos")]
@@ -1893,14 +1911,14 @@ fn play_sound_sync(kind: &str) {
             "needs-you" => "/System/Library/Sounds/Ping.aiff",
             _ => "/System/Library/Sounds/Glass.aiff",
         };
-        let _ = std::process::Command::new("afplay").arg(sound).status();
+        let _ = std::process::Command::new("afplay").arg(sound).spawn();
     }
 
     #[cfg(target_os = "windows")]
     {
         let _ = std::process::Command::new("powershell")
             .args(["-c", "[System.Media.SystemSounds]::Asterisk.Play()"])
-            .status();
+            .spawn();
     }
 }
 
