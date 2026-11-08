@@ -208,7 +208,7 @@ export function findLineCaret(
     }
   }
 
-  return null;
+  return findTextNodeInElementNearY(col, targetY, isLeftGutter, doc) ?? extractTextNode(col, isLeftGutter);
 }
 
 export function findTextCaretAt(
@@ -240,44 +240,73 @@ export function findTextCaretAt(
 
 export function attachGutterSelection(container: HTMLElement | null): () => void {
   if (!container || typeof window === "undefined") return () => {};
+  const root: HTMLElement = container;
 
   let activeDragCleanup: (() => void) | null = null;
   let lastValidSelection: { anchorNode: Node; anchorOffset: number; focusNode: Node; focusOffset: number } | null = null;
+  let isClamping = false;
 
-  const col = (container.querySelector(".max-w-\\[46rem\\]") as HTMLElement | null) ?? container;
+  const col = (root.querySelector(".max-w-\\[46rem\\]") as HTMLElement | null) ?? root;
 
   function isRootContainer(node: Node | null): boolean {
     if (!node) return false;
-    if (node === container || node === col || node === container?.ownerDocument?.body) return true;
+    const doc = root.ownerDocument ?? document;
+    if (
+      node === root ||
+      node === col ||
+      node === doc.body ||
+      node === doc.documentElement ||
+      node === doc
+    ) {
+      return true;
+    }
     if (node instanceof HTMLElement) {
       if (node.hasAttribute("data-conversation") || node.classList.contains("max-w-[46rem]")) return true;
     }
     return false;
   }
 
+  function onSelectStart(e: Event): void {
+    let target = e.target as Node | null;
+    if (!target) return;
+    if (target.nodeType === Node.TEXT_NODE) {
+      target = target.parentElement;
+    }
+    if (!(target instanceof Element)) {
+      e.preventDefault();
+      return;
+    }
+    const selectable = target.closest(
+      ".select-text, textarea, input, .md, pre, code, kbd, samp, [data-dialog-panel], [data-widget]"
+    );
+    if (!selectable || !root.contains(selectable)) {
+      e.preventDefault();
+    }
+  }
+
   function onMouseDown(e: MouseEvent): void {
     if (e.button !== 0 || e.defaultPrevented || e.shiftKey) return;
     const target = e.target as HTMLElement | null;
-    if (!target || !container?.contains(target)) return;
+    if (!target || !root.contains(target)) return;
     if (target.closest("button, a, input, textarea, select, [role='button'], summary, .select-none")) {
       return;
     }
 
-    const doc = container.ownerDocument ?? document;
+    const doc = root.ownerDocument ?? document;
     const initialCaret = getCaretFromPoint(e.clientX, e.clientY, doc);
     const isDirectText =
       initialCaret &&
       initialCaret.node.nodeType === Node.TEXT_NODE &&
-      initialCaret.node !== container &&
-      container.contains(initialCaret.node);
+      initialCaret.node !== root &&
+      root.contains(initialCaret.node);
 
     const colRect = col.getBoundingClientRect();
     const isLeftGutter = e.clientX < colRect.left;
 
     const startCaret = isDirectText
       ? initialCaret
-      : findLineCaret(e.clientY, isLeftGutter, col, container, doc) ??
-        findTextCaretAt(e.clientX, e.clientY, container, isLeftGutter, doc);
+      : findLineCaret(e.clientY, isLeftGutter, col, root, doc) ??
+        findTextCaretAt(e.clientX, e.clientY, root, isLeftGutter, doc);
 
     if (!startCaret) return;
     const initialAnchor = startCaret;
@@ -316,20 +345,18 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
 
     let lastScrollTime = 0;
     function autoScroll(clientY: number): void {
-      if (!container) return;
       const now = performance.now();
       if (now - lastScrollTime < 16) return;
       lastScrollTime = now;
-      const cRect = container.getBoundingClientRect();
+      const cRect = root.getBoundingClientRect();
       if (clientY < cRect.top + 30) {
-        container.scrollTop -= 14;
+        root.scrollTop -= 14;
       } else if (clientY > cRect.bottom - 30) {
-        container.scrollTop += 14;
+        root.scrollTop += 14;
       }
     }
 
     function onMouseMove(moveEv: MouseEvent): void {
-      if (!container) return;
       if (moveEv.buttons !== 1) {
         if (activeDragCleanup) {
           activeDragCleanup();
@@ -348,7 +375,14 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
       if (!currentSel) return;
 
       if (!currentlyInGutter) {
-        if (currentSel.anchorNode && currentSel.focusNode && !isRootContainer(currentSel.focusNode)) {
+        if (
+          currentSel.anchorNode &&
+          currentSel.focusNode &&
+          root.contains(currentSel.anchorNode) &&
+          root.contains(currentSel.focusNode) &&
+          !isRootContainer(currentSel.anchorNode) &&
+          !isRootContainer(currentSel.focusNode)
+        ) {
           lastValidSelection = {
             anchorNode: currentSel.anchorNode,
             anchorOffset: currentSel.anchorOffset,
@@ -360,21 +394,23 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
       }
 
       const anchorNode =
-        currentSel.anchorNode && container.contains(currentSel.anchorNode) && !isRootContainer(currentSel.anchorNode)
+        currentSel.anchorNode && root.contains(currentSel.anchorNode) && !isRootContainer(currentSel.anchorNode)
           ? currentSel.anchorNode
           : (lastValidSelection?.anchorNode ?? initialAnchor.node);
       const anchorOffset =
-        currentSel.anchorNode && container.contains(currentSel.anchorNode) && !isRootContainer(currentSel.anchorNode)
+        currentSel.anchorNode && root.contains(currentSel.anchorNode) && !isRootContainer(currentSel.anchorNode)
           ? currentSel.anchorOffset
           : (lastValidSelection?.anchorOffset ?? initialAnchor.offset);
 
       const endCaret = currentlyInGutter
-        ? findLineCaret(moveEv.clientY, currentIsLeft, col, container, doc)
-        : findTextCaretAt(moveEv.clientX, moveEv.clientY, container, moveEv.clientY < e.clientY, doc);
+        ? (findLineCaret(moveEv.clientY, currentIsLeft, col, root, doc) ??
+           (lastValidSelection ? { node: lastValidSelection.focusNode, offset: lastValidSelection.focusOffset } : null))
+        : findTextCaretAt(moveEv.clientX, moveEv.clientY, root, moveEv.clientY < e.clientY, doc);
 
       if (!endCaret) return;
 
       try {
+        isClamping = true;
         currentSel.setBaseAndExtent(anchorNode, anchorOffset, endCaret.node, endCaret.offset);
         lastValidSelection = {
           anchorNode,
@@ -382,7 +418,10 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
           focusNode: endCaret.node,
           focusOffset: endCaret.offset,
         };
-      } catch {}
+      } catch {
+      } finally {
+        isClamping = false;
+      }
     }
 
     function onMouseUp(): void {
@@ -392,7 +431,7 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
       }
     }
 
-    window.addEventListener("mousemove", onMouseMove, { passive: true });
+    window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp, { once: true });
 
     activeDragCleanup = () => {
@@ -402,16 +441,31 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
   }
 
   function onSelectionChange(): void {
-    const doc = container?.ownerDocument ?? document;
+    if (isClamping) return;
+    const doc = root.ownerDocument ?? document;
     const sel = doc.defaultView?.getSelection() ?? window.getSelection();
     if (!sel || sel.isCollapsed) return;
 
+    const inContainer =
+      (sel.anchorNode && root.contains(sel.anchorNode)) ||
+      (sel.focusNode && root.contains(sel.focusNode));
+    if (!inContainer) return;
+
     const anchorIsRoot = isRootContainer(sel.anchorNode);
     const focusIsRoot = isRootContainer(sel.focusNode);
+    const focusEscaped = !sel.focusNode || !root.contains(sel.focusNode);
+    const anchorEscaped = !sel.anchorNode || !root.contains(sel.anchorNode);
 
-    if ((anchorIsRoot && sel.anchorOffset === 0) || (focusIsRoot && sel.focusOffset === 0)) {
-      if (lastValidSelection && !isRootContainer(lastValidSelection.focusNode) && !isRootContainer(lastValidSelection.anchorNode)) {
+    if (anchorIsRoot || focusIsRoot || focusEscaped || anchorEscaped) {
+      if (
+        lastValidSelection &&
+        root.contains(lastValidSelection.anchorNode) &&
+        root.contains(lastValidSelection.focusNode) &&
+        !isRootContainer(lastValidSelection.anchorNode) &&
+        !isRootContainer(lastValidSelection.focusNode)
+      ) {
         try {
+          isClamping = true;
           sel.setBaseAndExtent(
             lastValidSelection.anchorNode,
             lastValidSelection.anchorOffset,
@@ -419,17 +473,27 @@ export function attachGutterSelection(container: HTMLElement | null): () => void
             lastValidSelection.focusOffset,
           );
           return;
-        } catch {}
+        } catch {
+        } finally {
+          isClamping = false;
+        }
       }
-      sel.removeAllRanges();
+      isClamping = true;
+      try {
+        sel.removeAllRanges();
+      } finally {
+        isClamping = false;
+      }
     }
   }
 
-  container.addEventListener("mousedown", onMouseDown);
+  root.addEventListener("mousedown", onMouseDown);
+  root.addEventListener("selectstart", onSelectStart);
   document.addEventListener("selectionchange", onSelectionChange);
 
   return () => {
-    container.removeEventListener("mousedown", onMouseDown);
+    root.removeEventListener("mousedown", onMouseDown);
+    root.removeEventListener("selectstart", onSelectStart);
     document.removeEventListener("selectionchange", onSelectionChange);
     if (activeDragCleanup) {
       activeDragCleanup();

@@ -263,4 +263,108 @@ describe("gutterSelection", () => {
     cleanup();
     document.body.removeChild(container);
   });
+
+  it("clears selection when anchorNode or focusNode is root container at offset > 0", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+
+    const cleanup = attachGutterSelection(container);
+
+    const sel = window.getSelection();
+    if (sel) {
+      const text = document.createTextNode("some text");
+      container.appendChild(text);
+      const range = document.createRange();
+      range.setStart(text, 0);
+      range.setEnd(container, 1);
+      sel.removeAllRanges();
+      sel.addRange(range);
+
+      const eventConstructor = document.defaultView?.Event ?? Event;
+      document.dispatchEvent(new eventConstructor("selectionchange"));
+      expect(sel.rangeCount).toBe(0);
+    }
+
+    cleanup();
+    document.body.removeChild(container);
+  });
+
+  it("clears selection when focusNode escapes outside container", () => {
+    const container = document.createElement("div");
+    const outside = document.createElement("div");
+    document.body.appendChild(container);
+    document.body.appendChild(outside);
+
+    const cleanup = attachGutterSelection(container);
+
+    const sel = window.getSelection();
+    if (sel) {
+      const textInside = document.createTextNode("inside");
+      const textOutside = document.createTextNode("outside");
+      container.appendChild(textInside);
+      outside.appendChild(textOutside);
+
+      const range = document.createRange();
+      range.setStart(textInside, 0);
+      range.setEnd(textOutside, 3);
+      sel.removeAllRanges();
+      sel.addRange(range);
+
+      const eventConstructor = document.defaultView?.Event ?? Event;
+      document.dispatchEvent(new eventConstructor("selectionchange"));
+      expect(sel.rangeCount).toBe(0);
+    }
+
+    cleanup();
+    document.body.removeChild(container);
+    document.body.removeChild(outside);
+  });
+
+  it("prevents default on selectstart when target is not selectable", () => {
+    const container = document.createElement("div");
+    container.setAttribute("data-conversation", "true");
+    document.body.appendChild(container);
+
+    const cleanup = attachGutterSelection(container);
+
+    const EventCtor = document.defaultView?.Event ?? Event;
+    let defaultPrevented = false;
+    const event = new EventCtor("selectstart", { bubbles: true, cancelable: true });
+    event.preventDefault = () => {
+      defaultPrevented = true;
+    };
+
+    container.dispatchEvent(event);
+    expect(defaultPrevented).toBe(true);
+
+    cleanup();
+    document.body.removeChild(container);
+  });
+
+  it("allows selectstart when target is inside .select-text", () => {
+    const container = document.createElement("div");
+    container.setAttribute("data-conversation", "true");
+    const content = document.createElement("div");
+    content.className = "select-text";
+    const p = document.createElement("p");
+    p.textContent = "allowed";
+    content.appendChild(p);
+    container.appendChild(content);
+    document.body.appendChild(container);
+
+    const cleanup = attachGutterSelection(container);
+
+    const EventCtor = document.defaultView?.Event ?? Event;
+    let defaultPrevented = false;
+    const event = new EventCtor("selectstart", { bubbles: true, cancelable: true });
+    event.preventDefault = () => {
+      defaultPrevented = true;
+    };
+
+    p.dispatchEvent(event);
+    expect(defaultPrevented).toBe(false);
+
+    cleanup();
+    document.body.removeChild(container);
+  });
 });

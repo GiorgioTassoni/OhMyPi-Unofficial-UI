@@ -380,6 +380,21 @@ textarea:focus-visible,
   overflow-anchor: none;
   user-select: none;
   -webkit-user-select: none;
+  contain: layout paint;
+}
+
+[data-conversation]::selection,
+[data-conversation] *::selection {
+  background-color: transparent;
+}
+
+[data-conversation] .select-text::selection,
+[data-conversation] .select-text *::selection,
+[data-conversation] textarea::selection,
+[data-conversation] input::selection,
+[data-conversation] pre::selection,
+[data-conversation] code::selection {
+  background-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
 }
 
 /* Selection affordances:
