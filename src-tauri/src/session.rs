@@ -1164,6 +1164,22 @@ pub async fn open(
     // that changes identity has to re-read this).
     let thread = ThreadId::new(control.session_id.clone());
 
+    match client.request(commands::set_ask_dialog(true), None).await {
+        Ok(response)
+            if protocol::is_success(&response)
+                && response["data"]["enabled"].as_bool() == Some(true) => {}
+        Ok(response) => {
+            let _ = client.shutdown(SHUTDOWN_GRACE).await;
+            return Err(format!(
+                "the agent refused to enable its ask dialog: {response}"
+            ));
+        }
+        Err(error) => {
+            let _ = client.shutdown(SHUTDOWN_GRACE).await;
+            return Err(format!("the agent did not enable its ask dialog: {error}"));
+        }
+    }
+
     // Asked for here, before the pump subscribes: a frame that arrives before it has a
     // consumer is dropped, and the first `subagent_lifecycle` is the one that says an
     // agent exists at all.
@@ -2558,6 +2574,7 @@ mod tests {
             message: String::new(),
             options: vec!["Approve".to_string(), "Deny".to_string()],
             option_details: Vec::new(),
+            questions: Vec::new(),
             prefill: None,
             placeholder: None,
             timeout_ms: None,
@@ -2610,6 +2627,7 @@ mod tests {
                 message: String::new(),
                 options: vec!["Approve".to_string(), "Deny".to_string()],
                 option_details: Vec::new(),
+                questions: Vec::new(),
                 prefill: None,
                 placeholder: None,
                 timeout_ms: None,
@@ -2660,6 +2678,7 @@ mod tests {
             message: String::new(),
             options: vec!["Approve".to_string(), "Deny".to_string()],
             option_details: Vec::new(),
+            questions: Vec::new(),
             prefill: None,
             placeholder: None,
             timeout_ms: None,

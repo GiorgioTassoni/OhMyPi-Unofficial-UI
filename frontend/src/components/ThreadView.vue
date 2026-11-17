@@ -35,6 +35,7 @@ import {
   type UiRequestSnapshot,
 } from "../bridge";
 import { applyRowPatch } from "../lib/rows";
+import { previewToolCallIds, unseenPreviewRequests } from "../lib/livePreview";
 import { isNoLiveThreadError } from "../lib/threads";
 import type { ThreadChrome } from "../lib/chrome";
 import { stripAnsi } from "../lib/ansi";
@@ -59,7 +60,7 @@ import { initialProjection, projectTranscript, type TranscriptProjection } from 
 import { turnContainingRow } from "../lib/virtualTurns";
 import { createDisclosureMemory } from "../lib/disclosureMemory";
 import { smoothWheel } from "../lib/smoothWheel";
-import { attachGutterSelection } from "../lib/gutterSelection";
+import { attachConversationSelection, hasSelectionWithin } from "../lib/conversationSelection";
 
 const props = defineProps<{
   thread: string;
@@ -146,6 +147,7 @@ async function loadEarlier(): Promise<void> {
       archivedRows.value = [...res.rows, ...archivedRows.value];
       const combined = [...archivedRows.value, ...activeRows.value];
       rows.value = combined;
+      markPreviewHistoryLoaded(res.rows);
       projection.value = initialProjection(combined, streaming.value);
 
       await nextTick();
@@ -182,7 +184,7 @@ let trailing: ReturnType<typeof setTimeout> | null = null;
 let subagentDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let conversationResizeObserver: ResizeObserver | null = null;
 let disconnectSmoothWheel: (() => void) | null = null;
-let disconnectGutterSelection: (() => void) | null = null;
+let disconnectConversationSelection: (() => void) | null = null;
 let lastClientHeight = 0;
 let isMouseDown = false;
 
@@ -210,7 +212,31 @@ async function refreshSubagentFileChanges(): Promise<void> {
   }
 }
 
-function replaceTranscript(next: RowSnapshot[]): void {
+const handledPreviewCalls = new Set<string>();
+let previewHistorySeeded = false;
+
+function seedPreviewHistory(next: RowSnapshot[]): void {
+  for (const toolCallId of previewToolCallIds(next)) handledPreviewCalls.add(toolCallId);
+}
+
+function markPreviewHistoryLoaded(next: RowSnapshot[]): void {
+  seedPreviewHistory(next);
+  previewHistorySeeded = true;
+}
+
+function openNewPreviewRequests(next: RowSnapshot[]): void {
+  if (!previewHistorySeeded) {
+    seedPreviewHistory(next);
+    return;
+  }
+  for (const request of unseenPreviewRequests(next, handledPreviewCalls)) {
+    handledPreviewCalls.add(request.toolCallId);
+    emit("openFile", { path: request.url });
+  }
+}
+
+function replaceTranscript(next: RowSnapshot[], seedPreviews = true): void {
+  if (seedPreviews) markPreviewHistoryLoaded(next);
   if (next.length === 0 && rows.value.length > 0) {
     return;
   }
@@ -290,14 +316,14 @@ onMounted(async () => {
   const el = conversationRef.value;
   if (el) {
     disconnectSmoothWheel = smoothWheel(el);
-    disconnectGutterSelection = attachGutterSelection(el);
+    disconnectConversationSelection = attachConversationSelection(el);
     if (typeof ResizeObserver !== "undefined") {
       lastClientHeight = el.clientHeight;
       conversationResizeObserver = new ResizeObserver(([entry]) => {
         if (!entry) return;
         const decreased = lastClientHeight > 0 && entry.contentRect.height < lastClientHeight;
         lastClientHeight = entry.contentRect.height;
-        if (decreased && !isScrolledUp.value && !isMouseDown) el.scrollTop = el.scrollHeight;
+        if (decreased && !isScrolledUp.value && !isMouseDown && !hasSelectionWithin(el)) el.scrollTop = el.scrollHeight;
       });
       conversationResizeObserver.observe(el);
     }
@@ -314,7 +340,7 @@ onUnmounted(() => {
   conversationResizeObserver?.disconnect();
   conversationResizeObserver = null;
   disconnectSmoothWheel?.();
-  disconnectGutterSelection?.();
+  disconnectConversationSelection?.();
   window.removeEventListener("mousedown", onMouseDown);
   window.removeEventListener("mouseup", onMouseUp);
 });
@@ -332,6 +358,7 @@ async function applyPatch(patch: RowPatch): Promise<void> {
     activeRows.value = outcome.rows;
     const combined = archivedRows.value.length === 0 ? activeRows.value : [...archivedRows.value, ...activeRows.value];
     rows.value = combined;
+    openNewPreviewRequests(patch.rows);
     const follow = isAtBottom();
     patchTranscript(combined, archivedRows.value.length + patch.from);
     if (follow) followAfterRender();
@@ -342,7 +369,8 @@ async function applyPatch(patch: RowPatch): Promise<void> {
   activeRows.value = recovered;
   const combined = archivedRows.value.length === 0 ? activeRows.value : [...archivedRows.value, ...activeRows.value];
   const follow = isAtBottom();
-  replaceTranscript(combined);
+  replaceTranscript(combined, false);
+  openNewPreviewRequests(combined);
   if (follow) followAfterRender();
 }
 
@@ -470,34 +498,6 @@ const waitingForOutput = computed(() => {
 watch(waitingForOutput, (waiting) => {
   if (waiting && isAtBottom()) followAfterRender();
 });
-
-const autoOpenedUrls = new Set<string>();
-
-watch(
-  () => {
-    const lastRow = rows.value.at(-1);
-    if (!lastRow) return null;
-    return (lastRow.text ?? "") + " " + (lastRow.tool?.output ?? "");
-  },
-  (text) => {
-    if (!text) return;
-    const match = text.match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+(?:\/[^\s"')]*)?/i);
-    if (match && !autoOpenedUrls.has(match[0])) {
-      autoOpenedUrls.add(match[0]);
-      let targetPath = match[0];
-      try {
-        const parsed = new URL(targetPath);
-        if (parsed.pathname.startsWith("/render/")) {
-          const optId = parsed.pathname.replace("/render/", "");
-          targetPath = `${parsed.origin}/?option=${encodeURIComponent(optId)}`;
-        } else if (parsed.pathname === "/render") {
-          targetPath = `${parsed.origin}/`;
-        }
-      } catch {}
-      emit("openFile", { path: targetPath });
-    }
-  }
-);
 
 const { pendingSteer, setSteering: onSteering } = useOptimisticSteer(rows, () => {
   void nextTick(() => {
@@ -651,6 +651,7 @@ const {
   targetRef: computed(() => conversationRef.value?.closest("section") ?? null),
   onFiles: (files) => composer.value?.attachFiles(files),
   onPaths: (paths) => composer.value?.attachPaths(paths),
+  onError: (cause) => emit("failed", `files cannot be dropped onto the chat: ${describe(cause)}`),
 });
 
 /**
@@ -691,15 +692,16 @@ function onScroll(): void {
 
 function scrollToLatest(): void {
   const el = conversationRef.value;
-  if (!el) return;
+  if (!el || isMouseDown || hasSelectionWithin(el)) return;
   el.scrollTop = el.scrollHeight;
   isScrolledUp.value = false;
 }
 
 function followAfterRender(): void {
   void nextTick(() => {
-    if (!isScrolledUp.value && conversationRef.value) {
-      conversationRef.value.scrollTop = conversationRef.value.scrollHeight;
+    const el = conversationRef.value;
+    if (el && !isScrolledUp.value && !isMouseDown && !hasSelectionWithin(el)) {
+      el.scrollTop = el.scrollHeight;
     }
   });
 }
@@ -759,7 +761,7 @@ defineExpose({
     -->
     <div
       ref="conversationRef"
-      class="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden pl-4 pr-6 sm:pr-8 select-none"
+      class="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden select-none"
       data-conversation
       @scroll="onScroll"
     >
@@ -772,91 +774,93 @@ defineExpose({
       -->
       <div
         v-if="nothingSaidYet"
-        class="my-auto flex flex-col items-center justify-center py-16 text-center select-none"
+        class="my-auto flex flex-col items-center justify-center py-16 pl-4 pr-6 sm:pr-8 text-center select-none"
         data-greeting
       >
         <p class="text-[30px] font-normal leading-tight text-fg">{{ greeting }}</p>
         <p class="mt-2 text-[13px] text-faint">A fresh thread — nothing said yet.</p>
       </div>
 
-      <div v-else class="mx-auto w-full max-w-[46rem] pt-4 pb-12 select-text">
-        <!-- Archived history banner -->
-        <ArchivedTurnsBanner
-          :remaining="remainingArchivedTurns"
-          :loading="loadingEarlier"
-          @load="loadEarlier"
-        />
-
-        <article
-          v-for="turn in turns"
-          :key="turn.start"
-          :data-turn-start="turn.start"
-          class="flex min-w-0 flex-col gap-2 border-line/50 pb-4"
-          :class="turn.start === turns[0]?.start ? '' : 'border-t pt-4'"
-        >
-          <div
-            v-if="turn.user"
-            class="shrink-0 rounded-[8px] transition-colors duration-500"
-            :class="flashed === turn.user.index ? 'bg-accent/10 ring-1 ring-accent' : ''"
-            :data-row-index="turn.user.index"
-          >
-            <ConversationRow :row="turn.user.row" @failed="emit('failed', $event)" @open-file="emit('openFile', $event)" />
-          </div>
-          <TurnActivity
-            :turn="turn"
-            :flashed="flashed"
-            :memory="disclosureMemory"
-            :next-turn-is-steer="turn.nextTurnIsSteer || (Boolean(pendingSteer) && turn === turns.at(-1))"
-            @failed="emit('failed', $event)"
-            @open-file="emit('openFile', $event)"
+      <div v-else class="min-h-full w-full shrink-0 pl-4 pr-6 sm:pr-8 select-text" data-selection-surface>
+        <div class="mx-auto w-full max-w-[46rem] pt-4 pb-12 select-text">
+          <!-- Archived history banner -->
+          <ArchivedTurnsBanner
+            :remaining="remainingArchivedTurns"
+            :loading="loadingEarlier"
+            @load="loadEarlier"
           />
-          <button
-            v-for="agent in turn.spawnedAgents"
-            :key="agent"
-            type="button"
-            class="flex min-w-0 items-center gap-2 self-start rounded-[6px] px-2 py-1 text-left text-[12px] text-dim transition-colors hover:bg-raised/65 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-            :aria-label="`Open ${agent} agent activity in a tab`"
-            @click="emit('agent', agent)"
+
+          <article
+            v-for="turn in turns"
+            :key="turn.start"
+            :data-turn-start="turn.start"
+            class="flex min-w-0 flex-col gap-2 border-line/50 pb-4"
+            :class="turn.start === turns[0]?.start ? '' : 'border-t pt-4'"
           >
-            <Icon
-              :name="activeAgents.includes(agent) ? 'bot' : 'check'"
-              class="h-3.5 w-3.5 shrink-0"
-              :class="activeAgents.includes(agent) ? 'text-accent animate-pulse' : 'text-ok'"
+            <div
+              v-if="turn.user"
+              class="shrink-0 rounded-[8px] transition-colors duration-500"
+              :class="flashed === turn.user.index ? 'bg-accent/10 ring-1 ring-accent' : ''"
+              :data-row-index="turn.user.index"
+            >
+              <ConversationRow :row="turn.user.row" @failed="emit('failed', $event)" @open-file="emit('openFile', $event)" />
+            </div>
+            <TurnActivity
+              :turn="turn"
+              :flashed="flashed"
+              :memory="disclosureMemory"
+              :next-turn-is-steer="turn.nextTurnIsSteer || (Boolean(pendingSteer) && turn === turns.at(-1))"
+              @failed="emit('failed', $event)"
+              @open-file="emit('openFile', $event)"
             />
-            <span class="min-w-0 truncate">
-              Agent <span class="font-medium text-fg">“{{ agent }}”</span>
-              {{ activeAgents.includes(agent) ? "working" : "finished" }}
-            </span>
-            <Icon name="chevron-right" class="h-3 w-3 shrink-0 text-faint" />
-          </button>
-          <div
-            v-if="turn.answer"
-            class="shrink-0 rounded-[8px] transition-colors duration-500"
-            :class="flashed === turn.answer.index ? 'bg-accent/10 ring-1 ring-accent' : ''"
-            :data-row-index="turn.answer.index"
+            <button
+              v-for="agent in turn.spawnedAgents"
+              :key="agent"
+              type="button"
+              class="flex min-w-0 items-center gap-2 self-start rounded-[6px] px-2 py-1 text-left text-[12px] text-dim transition-colors hover:bg-raised/65 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              :aria-label="`Open ${agent} agent activity in a tab`"
+              @click="emit('agent', agent)"
+            >
+              <Icon
+                :name="activeAgents.includes(agent) ? 'bot' : 'check'"
+                class="h-3.5 w-3.5 shrink-0"
+                :class="activeAgents.includes(agent) ? 'text-accent animate-pulse' : 'text-ok'"
+              />
+              <span class="min-w-0 truncate">
+                Agent <span class="font-medium text-fg">“{{ agent }}”</span>
+                {{ activeAgents.includes(agent) ? "working" : "finished" }}
+              </span>
+              <Icon name="chevron-right" class="h-3 w-3 shrink-0 text-faint" />
+            </button>
+            <div
+              v-if="turn.answer"
+              class="shrink-0 rounded-[8px] transition-colors duration-500"
+              :class="flashed === turn.answer.index ? 'bg-accent/10 ring-1 ring-accent' : ''"
+              :data-row-index="turn.answer.index"
+            >
+              <ConversationRow :row="turn.answer.row" @failed="emit('failed', $event)" @open-file="emit('openFile', $event)" />
+            </div>
+            <TurnFiles
+              v-if="!turn.working && fileSummaries.get(turn.end)"
+              :summary="fileSummaries.get(turn.end)!"
+              :workspace="status?.workspace ?? null"
+              @jump="revealRow"
+              @review="emit('review', $event)"
+            />
+          </article>
+
+          <!-- Optimistic Steer indicator while awaiting engine interrupt -->
+          <PendingSteerBadge v-if="pendingSteer" :text="pendingSteer.text" />
+
+          <p
+            v-if="waitingForOutput"
+            class="shrink-0 animate-pulse text-[12.5px] text-faint"
+            role="status"
+            aria-live="polite"
           >
-            <ConversationRow :row="turn.answer.row" @failed="emit('failed', $event)" @open-file="emit('openFile', $event)" />
-          </div>
-          <TurnFiles
-            v-if="!turn.working && fileSummaries.get(turn.end)"
-            :summary="fileSummaries.get(turn.end)!"
-            :workspace="status?.workspace ?? null"
-            @jump="revealRow"
-            @review="emit('review', $event)"
-          />
-        </article>
-
-        <!-- Optimistic Steer indicator while awaiting engine interrupt -->
-        <PendingSteerBadge v-if="pendingSteer" :text="pendingSteer.text" />
-
-        <p
-          v-if="waitingForOutput"
-          class="shrink-0 animate-pulse text-[12.5px] text-faint"
-          role="status"
-          aria-live="polite"
-        >
-          Loading…
-        </p>
+            Loading…
+          </p>
+        </div>
       </div>
     </div>
 

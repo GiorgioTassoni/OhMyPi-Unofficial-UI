@@ -29,7 +29,7 @@ Vue 3 + TypeScript + Tailwind in `frontend/`.
 | **Plan and files** | The right column: the active thread's todos straight from engine state, plus its files — changed files derived from the transcript's mutating tool calls with diffs, a one-level tree of the thread's directory, and truncated results read back from the session's artifacts |
 | **Agents and jobs** | A panel of every subagent the app can account for (running, settled, nested, transcripts read back from disk, jump to the spawning call) plus background-job rows, with `omp ps stop <name>` as the one control the engine actually supports |
 | **Terminal** | An app-owned pty per tab in a drawer below the columns, running your own `$SHELL` in the workspace on screen. It is yours alone: `--mode rpc-ui` leaves the agent's own `bash` with no terminal, so it can neither see nor drive it |
-| **Settings** | A generated catalogue of the engine's own config keys (505 keys), each row stating where the value is written and what a write costs. Every change goes through `omp config set`/`reset`; there is also a raw-config view with credentials masked and a plan-and-confirm path for hand edits |
+| **Settings** | A generated catalogue of the engine's own config keys (505 keys), each row stating where the value is written and what a write costs. Catalogue changes go through `omp config set`/`reset`; OpenRouter execution-provider restrictions update `models.yml`. There is also a raw-config view with credentials masked and a plan-and-confirm path for hand edits |
 | **Search** | Cross-thread full-text search over the app's own index, landing on the matching row |
 | **Login** | `/log-in` opens a terminal running the engine's own credential-vault flow (`omp auth-broker login`). The window never holds a credential |
 | **Notifications** | Unread rings, in-app notices and OS banners for a finished turn, a dialog waiting, a failed turn and a finished background job. Idle sidecars are released after ten quiet minutes and resumed through the same path any cold session uses |
@@ -71,6 +71,10 @@ omp-desktop --prefer-x11 /path/to/project
 cargo run -p omp-desktop -- --prefer-x11 /path/to/project
 ```
 
+Linux defaults to `WEBKIT_DISABLE_DMABUF_RENDERER=1` for compatibility. The large
+**Model & Providers** cards deliberately omit blurred box shadows, which can make
+scrolling expensive in that renderer mode; their borders still separate the content.
+
 The app finds its engine in this order: **`OMP_BIN`** if set, then an `omp` binary **beside
 the app's own executable** (what the installers ship), then **`omp` on your `PATH`**.
 
@@ -100,6 +104,38 @@ the app's own executable** (what the installers ship), then **`omp` on your `PAT
 
 There is no native menu bar by design; the titlebar carries the window's own controls, and
 the panels on either side are resizable by dragging their edge (double-click resets).
+
+### OpenRouter execution providers
+
+In **Settings → Model & Providers**, find **OpenRouter execution providers** below
+**Model roles**. **Saved restrictions** lists every configured model immediately,
+including models no longer in the current catalog. Use **Edit** or **Remove** on a
+saved rule, or **Add model** to configure another model without replacing the others.
+The model picker has **Search models**; the provider picker has **Search providers**
+and supports multiple selections. Search matches model names/IDs and provider
+names/slugs, including queries with multiple words. Choose providers such as River,
+then **Save restriction**. Filtering does not clear selected providers.
+Provider discovery uses OpenRouter's public endpoints for the model being edited;
+opening the saved-rule list does not query endpoints for every model. No API key or
+inference request is needed for discovery.
+
+The selection writes `compat.openRouterRouting.only: [provider-slugs...]` under that
+model's `providers.openrouter.modelOverrides` entry in the engine's `models.yml`.
+OpenRouter may use only the selected execution providers for that model. With just
+River selected, it cannot switch to another provider; with several selected, it may
+route among those providers. Separately configured OMP model fallbacks can still
+select another model. This also applies to subagent roles using the same model.
+
+Choose **Automatic routing**, then save, or **Remove** the saved rule to remove only
+that model-level restriction, preserving other model settings and routing
+preferences. Provider-wide or custom-model defaults may still apply. Existing
+multi-provider and empty restrictions remain visible until explicitly changed;
+saved but undiscovered provider slugs remain selectable. Clearing/removing a rule
+remains available if discovery fails. Failed writes retain the saved rule and draft.
+Restart existing sessions after saving so their engine processes reload the file.
+Malformed configuration is refused without overwriting it. Writes preserve file
+permissions, but YAML formatting and comments are not retained. A symlinked
+`models.yml` is refused rather than replaced.
 
 ## Status and scope
 

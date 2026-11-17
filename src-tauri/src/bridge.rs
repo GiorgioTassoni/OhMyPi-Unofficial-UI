@@ -1370,14 +1370,25 @@ pub async fn respond_ui_request(
 
 /// The one response the answer's shape can mean.
 ///
-/// An answer carrying none of the three fields is refused rather than defaulted:
-/// a `select` answered with an empty choice, or a `confirm` answered with a
-/// silence read as "yes", is worse than an error the UI can show.
+/// Exactly one of the four fields may be supplied, and a payload mixing them is
+/// refused rather than defaulted: a `select` answered with an empty choice, or a
+/// `confirm` answered with a silence read as "yes", is worse than an error the UI
+/// can show. Cancelling is checked first because it withdraws the dialog whatever
+/// else the payload carries.
 fn resolve_answer(answer: &UiAnswer) -> Result<UiResponse, String> {
     if answer.cancelled == Some(true) {
         return Ok(UiResponse::Cancelled {
             timed_out: answer.timed_out.unwrap_or(false),
         });
+    }
+    if let Some(answers) = &answer.answers {
+        if answer.value.is_some() || answer.confirmed.is_some() {
+            return Err("an `answers` reply cannot also carry `value` or `confirmed`".to_string());
+        }
+        return Ok(UiResponse::Answers(answers.clone()));
+    }
+    if answer.value.is_some() && answer.confirmed.is_some() {
+        return Err("an answer cannot carry both `value` and `confirmed`".to_string());
     }
     if let Some(confirmed) = answer.confirmed {
         return Ok(UiResponse::Confirmed(confirmed));
@@ -1386,7 +1397,7 @@ fn resolve_answer(answer: &UiAnswer) -> Result<UiResponse, String> {
         return Ok(UiResponse::Value(value.clone()));
     }
 
-    Err("an answer must carry one of `value`, `confirmed` or `cancelled`".to_string())
+    Err("an answer must carry one of `value`, `confirmed`, `answers` or `cancelled`".to_string())
 }
 
 /// What the app was launched with, so the window can open a project directly.
@@ -2239,5 +2250,51 @@ mod tests {
         let default_dir = default_start_directory(None);
         assert!(default_dir.is_some());
         assert!(default_dir.unwrap().is_dir());
+    }
+
+    #[test]
+    fn an_answer_resolves_only_from_one_unambiguous_shape() {
+        let answer = |value: serde_json::Value| {
+            serde_json::from_value::<UiAnswer>(value).expect("the window's shape")
+        };
+
+        assert_eq!(
+            resolve_answer(&answer(serde_json::json!({
+                "answers": [
+                    { "id": "q1", "selectedOptions": ["Vue"] },
+                    { "id": "q2", "selectedOptions": [], "customInput": "none" },
+                ],
+            }))),
+            Ok(UiResponse::Answers(vec![
+                crate::dto::AskAnswer {
+                    id: "q1".to_string(),
+                    selected_options: vec!["Vue".to_string()],
+                    custom_input: None,
+                },
+                crate::dto::AskAnswer {
+                    id: "q2".to_string(),
+                    selected_options: Vec::new(),
+                    custom_input: Some("none".to_string()),
+                },
+            ]))
+        );
+
+        assert_eq!(
+            resolve_answer(&answer(serde_json::json!({
+                "cancelled": true,
+                "timedOut": true,
+                "value": "ignored",
+            }))),
+            Ok(UiResponse::Cancelled { timed_out: true })
+        );
+
+        for mixed in [
+            serde_json::json!({ "answers": [], "value": "Vue" }),
+            serde_json::json!({ "answers": [], "confirmed": true }),
+            serde_json::json!({ "value": "Vue", "confirmed": true }),
+            serde_json::json!({}),
+        ] {
+            assert!(resolve_answer(&answer(mixed.clone())).is_err(), "{mixed}");
+        }
     }
 }

@@ -14,6 +14,7 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { openExternal, openPath } from "../bridge";
 import { renderMarkdown } from "../lib/markdown";
 import { normalizeFilePath } from "../lib/fileViewMeta";
+import { useSelectionStableText } from "../lib/selectionStableText";
 
 const props = defineProps<{ text: string }>();
 const emit = defineEmits<{
@@ -22,7 +23,8 @@ const emit = defineEmits<{
 }>();
 
 const root = ref<HTMLElement | null>(null);
-const html = computed(() => renderMarkdown(props.text));
+const displayedText = useSelectionStableText(() => props.text, () => root.value);
+const html = computed(() => renderMarkdown(displayedText.value));
 
 const COPY_ICON = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg><span>Copy</span>`;
 const CHECK_ICON = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--color-ok)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span style="color:var(--color-ok)">Copied</span>`;

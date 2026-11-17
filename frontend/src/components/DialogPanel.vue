@@ -4,7 +4,7 @@
  *
  * Every dialog here is *blocking*: the run is parked inside a tool call until the
  * host answers, so an unrendered kind is not a degraded screen — it is a stopped
- * agent. That is why all four wire kinds have a path, why an unknown kind still
+ * agent. That is why every wire kind has a path, why an unknown kind still
  * renders its text and a way out, and why the engine's own deadline is shown rather
  * than left to expire in silence.
  *
@@ -19,6 +19,7 @@
 import { computed, onUnmounted, ref, watch } from "vue";
 import Icon from "./ui/Icon.vue";
 import ColorText from "./ui/ColorText.vue";
+import AskDialog from "./AskDialog.vue";
 import {
   allowCommand as grantCommand,
   allowTool,
@@ -33,18 +34,7 @@ import {
   formatRemaining,
   remainingMs,
 } from "../lib/approval";
-import {
-  cleanOptionLabel,
-  dialogSummaryTitle,
-  isDoneOption,
-  isMultiSelectDialog,
-  isOptionSelected,
-  loadSelectedOptions,
-  markDialogInteraction,
-  questionKey,
-  saveSelectedOptions,
-  titleParts,
-} from "../lib/dialogSelect";
+import { dialogSummaryTitle, markDialogInteraction } from "../lib/dialogSelect";
 
 const props = defineProps<{
   /** The thread the dialogs belong to: an answer goes to its session. */
@@ -68,13 +58,6 @@ const writing = ref<string | null>(null);
 /** The host names the next unapproved executable; the frontend never guesses. */
 const candidatePrograms = ref<Record<string, string | null>>({});
 let candidateRead = 0;
-
-/** Client-side tracking of selected options in multi-choice questions across roundtrips. */
-const selectedOptionsByQuestion = ref<Record<string, Set<string>>>(
-  Object.fromEntries(
-    Object.entries(loadSelectedOptions()).map(([k, arr]) => [k, new Set(arr)]),
-  ),
-);
 
 /** Dialog IDs that the user collapsed into the compact reference bar. */
 const collapsedIds = ref<Set<string>>(new Set());
@@ -152,33 +135,6 @@ watch(
       if (dialog.prefill !== null && replies.value[dialog.id] === undefined) {
         replies.value[dialog.id] = dialog.prefill;
       }
-      // Sync any option already flagged by the engine or with checkmark prefix
-      if (dialog.kind === "select") {
-        const key = questionKey(props.thread, dialog.title);
-        dialog.options.forEach((opt, idx) => {
-          if (
-            dialog.optionDetails?.[idx]?.selected === true ||
-            /^(\[[xX✓✔☑]\]|[✓✔☑])\s+/i.test(opt)
-          ) {
-            selectedOptionsByQuestion.value[key] ??= new Set<string>();
-            selectedOptionsByQuestion.value[key]!.add(cleanOptionLabel(opt));
-          }
-        });
-      }
-    }
-
-    // Drop stale question keys belonging to this thread
-    const threadPrefix = `${props.thread}:`;
-    const liveKeys = new Set(dialogs.map((d) => questionKey(props.thread, d.title)));
-    let changed = false;
-    for (const k of Object.keys(selectedOptionsByQuestion.value)) {
-      if (k.startsWith(threadPrefix) && !liveKeys.has(k)) {
-        delete selectedOptionsByQuestion.value[k];
-        changed = true;
-      }
-    }
-    if (changed) {
-      saveSelectedOptions(selectedOptionsByQuestion.value);
     }
   },
   { immediate: true, deep: true },
@@ -226,50 +182,21 @@ function optionDescription(dialog: UiRequestSnapshot, index: number): string | n
 
 interface DialogOptionView {
   label: string;
-  cleanLabel: string;
   description: string | null;
-  index: number;
-  isSelected: boolean;
 }
 
-interface DialogSelectViewModel {
-  selectable: DialogOptionView[];
-  doneOption: { label: string; index: number } | null;
-  isMulti: boolean;
-}
-
-function selectViewModel(dialog: UiRequestSnapshot): DialogSelectViewModel {
-  const isMulti = isMultiSelectDialog(dialog);
-  const qKey = questionKey(props.thread, dialog.title);
-  const selectedSet = selectedOptionsByQuestion.value[qKey];
-
-  let doneOption: { label: string; index: number } | null = null;
-  const selectable: DialogOptionView[] = [];
-
-  for (let i = 0; i < dialog.options.length; i++) {
-    const opt = dialog.options[i];
-    if (isDoneOption(opt)) {
-      doneOption = { label: opt, index: i };
-    } else {
-      selectable.push({
-        label: opt,
-        cleanLabel: cleanOptionLabel(opt),
-        description: optionDescription(dialog, i),
-        index: i,
-        isSelected: isOptionSelected(dialog, opt, i, selectedSet),
-      });
-    }
-  }
-
-  return { selectable, doneOption, isMulti };
+function selectOptions(dialog: UiRequestSnapshot): DialogOptionView[] {
+  return dialog.options.map((label, index) => ({
+    label,
+    description: optionDescription(dialog, index),
+  }));
 }
 
 /**
  * One pass over the pending set per render.
  *
- * The parse and the countdown are derived from a dialog plus the clock, so doing
- * them here keeps the template from re-reading the same prompt once per line it
- * renders.
+ * The countdown is derived from a dialog plus the clock, so doing it here keeps
+ * the template from re-reading the same prompt once per line it renders.
  */
 const cards = computed(() => {
   const total = props.dialogs.length;
@@ -277,14 +204,14 @@ const cards = computed(() => {
     const left = remainingMs(dialog.timeoutMs, seenAt.value[dialog.id] ?? now.value, now.value);
     const approval = approvalOf(dialog);
     const command = approval?.fields.find((field) => field.label === "Command")?.value ?? null;
-    const title = titleParts(dialog.title);
-    const stepBadge = title.stepBadge ?? (total > 1 ? `${index + 1} of ${total}` : null);
+    const titleText =
+      dialog.kind === "ask" ? dialog.questions[0]?.question ?? dialog.title : dialog.title;
     return {
       dialog,
-      title,
-      stepBadge,
+      titleText,
+      stepBadge: total > 1 ? `${index + 1} of ${total}` : null,
       summaryTitle: dialogSummaryTitle({
-        titleText: title.text,
+        titleText,
         message: dialog.message,
         kind: dialog.kind,
         approvalTool: approval?.tool,
@@ -296,7 +223,7 @@ const cards = computed(() => {
       program: candidatePrograms.value[dialog.id] ?? null,
       deadline: left === null ? null : formatRemaining(left),
       busy: answering.value[dialog.id] === true,
-      select: dialog.kind === "select" ? selectViewModel(dialog) : null,
+      selectOptions: dialog.kind === "select" ? selectOptions(dialog) : null,
     };
   });
 });
@@ -361,30 +288,6 @@ async function allowCommandForConversation(
   await answer(dialog, { value: APPROVE });
 }
 
-function onSelectOption(dialog: UiRequestSnapshot, option: string, _index?: number): void {
-  if (answering.value[dialog.id] === true) return;
-
-  if (isDoneOption(option)) {
-    void answer(dialog, { value: option });
-    return;
-  }
-
-  if (isMultiSelectDialog(dialog)) {
-    const key = questionKey(props.thread, dialog.title);
-    selectedOptionsByQuestion.value[key] ??= new Set<string>();
-    const set = selectedOptionsByQuestion.value[key]!;
-    const clean = cleanOptionLabel(option);
-    if (set.has(clean)) {
-      set.delete(clean);
-    } else {
-      set.add(clean);
-    }
-    saveSelectedOptions(selectedOptionsByQuestion.value);
-  }
-
-  void answer(dialog, { value: option });
-}
-
 function onEditorKeydown(event: KeyboardEvent, dialog: UiRequestSnapshot): void {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
@@ -410,7 +313,7 @@ function describe(cause: unknown): string {
     <template v-for="card in cards" :key="card.dialog.id">
       <!-- Collapsed view: compact sleek bar matching reference -->
       <button
-        v-if="card.isCollapsed"
+        v-show="card.isCollapsed"
         type="button"
         class="group flex w-full items-center justify-between gap-2.5 rounded-[8px] border border-line-strong/60 bg-surface/80 px-3 py-2 text-left transition-colors hover:border-line-strong hover:bg-raised/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         :aria-expanded="false"
@@ -428,12 +331,6 @@ function describe(cause: unknown): string {
             {{ card.summaryTitle }}
           </span>
           <span
-            v-if="card.title.selectedBadge"
-            class="shrink-0 rounded-[4px] bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent"
-          >
-            {{ card.title.selectedBadge }}
-          </span>
-          <span
             v-if="card.stepBadge"
             class="shrink-0 font-mono text-[10.5px] text-faint"
           >
@@ -449,13 +346,13 @@ function describe(cause: unknown): string {
 
       <!-- Expanded view: full dialog card with interactive collapsible header -->
       <section
-        v-else
+        v-show="!card.isCollapsed"
         class="rounded-[10px] border p-3.5"
         :class="card.approval
           ? (isCommandApproval(card.approval.tool) ? 'border-line-strong/70 bg-selected/60' : 'border-warn/40 bg-warn/5')
           : 'border-line-strong/70 bg-raised/50 shadow-sm'"
       >
-        <header class="mb-3">
+        <header v-if="card.dialog.kind !== 'ask'" class="mb-3">
           <button
             type="button"
             class="group/header flex w-full items-center justify-between gap-2 text-left select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent rounded-[4px]"
@@ -477,13 +374,7 @@ function describe(cause: unknown): string {
               </template>
               <template v-else>
                 <span class="truncate text-[12.5px] font-medium text-fg">
-                  {{ card.dialog.kind === 'confirm' ? 'Confirmation' : 'Question' }}
-                </span>
-                <span
-                  v-if="card.title.isCustomResponse"
-                  class="shrink-0 text-[11px] text-faint"
-                >
-                  · Custom response
+                  {{ card.dialog.kind === 'confirm' ? 'Confirmation' : card.dialog.kind === 'ask' ? 'Questions' : 'Question' }}
                 </span>
               </template>
             </div>
@@ -600,143 +491,123 @@ function describe(cause: unknown): string {
 
       <!-- Any other dialog: the engine's text, and a control that answers it. -->
       <template v-else>
-        <div class="flex items-start gap-2">
-          <span
-            v-if="card.title.selectedBadge"
-            class="inline-flex shrink-0 items-center rounded-[4px] bg-accent/15 px-1.5 py-0.5 text-[10.5px] font-medium text-accent"
-          >
-            {{ card.title.selectedBadge }}
-          </span>
-          <p class="text-[12.5px] font-medium whitespace-pre-wrap text-fg">
-            <ColorText :text="card.title.text" />
-          </p>
-        </div>
-        <p
-          v-if="card.dialog.message && !card.title.isCustomResponse"
-          class="mt-2 text-[12.5px] leading-relaxed whitespace-pre-wrap text-dim"
+        <AskDialog
+          v-if="card.dialog.kind === 'ask'"
+          :dialog="card.dialog"
+          :busy="card.busy"
+          @submit="answer(card.dialog, { answers: $event })"
+          @collapse="toggleCollapse(card.dialog.id)"
         >
-          <ColorText :text="card.dialog.message" />
-        </p>
-
-        <div v-if="card.dialog.kind === 'select' && card.select" class="mt-3 flex flex-col gap-1.5">
-          <!-- Selectable options: checkboxes for multi-select, radios for single-select -->
-          <button
-            v-for="opt in card.select.selectable"
-            :key="`${opt.label}_${opt.index}`"
-            :disabled="card.busy"
-            class="group relative flex items-start gap-3 rounded-[8px] border px-3.5 py-2.5 text-left text-[12.5px] transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-            :class="[
-              opt.isSelected
-                ? 'border-accent/80 bg-accent/10 text-fg shadow-xs ring-1 ring-accent/30'
-                : 'border-line-strong/50 bg-surface/60 text-fg hover:border-accent/70 hover:bg-raised hover:text-fg',
-              card.busy ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer',
-            ]"
-            @click="onSelectOption(card.dialog, opt.label, opt.index)"
-          >
-            <!-- Multi-select checkbox -->
-            <div
-              v-if="card.select.isMulti"
-              class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors"
-              :class="[
-                opt.isSelected
-                  ? 'border-accent bg-accent text-canvas shadow-xs'
-                  : 'border-line-strong bg-surface text-transparent group-hover:border-accent/60',
-              ]"
-            >
-              <svg class="h-3 w-3 fill-current stroke-current stroke-[0.5]" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-              </svg>
-            </div>
-
-            <!-- Single-select radio -->
-            <div
-              v-else
-              class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface transition-colors group-hover:border-accent/60"
-            >
-              <div class="h-1.5 w-1.5 rounded-full bg-transparent group-hover:bg-accent" />
-            </div>
-
-            <div class="flex min-w-0 flex-1 flex-col gap-0.5">
-              <div class="flex items-center gap-2">
-                <span class="leading-snug" :class="opt.isSelected ? 'font-medium text-fg' : 'text-fg'">
-                  <ColorText :text="opt.cleanLabel" />
-                </span>
-                <span
-                  v-if="opt.isSelected"
-                  class="rounded bg-accent/20 px-1.5 py-0.2 text-[10.5px] font-medium text-accent"
-                >
-                  selected
-                </span>
-              </div>
-              <span
-                v-if="opt.description"
-                class="text-[11.5px] leading-relaxed text-dim transition-colors whitespace-pre-wrap group-hover:text-fg/80"
+          <template #secondary>
+            <div class="flex min-w-0 items-center gap-2">
+              <button
+                type="button"
+                class="rounded-[6px] px-2.5 py-1 text-[11.5px] text-faint transition-colors hover:bg-raised hover:text-fg"
+                @click="answer(card.dialog, { cancelled: true })"
               >
-                {{ opt.description }}
-              </span>
+                dismiss
+              </button>
+              <p v-if="card.deadline" class="font-mono text-[11px] text-warn">
+                {{ card.deadline }}
+              </p>
             </div>
-          </button>
+          </template>
+        </AskDialog>
 
-          <!-- Done selecting primary action button (if present) -->
-          <div
-            v-if="card.select.doneOption"
-            class="mt-2 flex items-center justify-end pt-1"
+        <template v-else>
+          <p class="text-[12.5px] font-medium whitespace-pre-wrap text-fg">
+            <ColorText :text="card.titleText" />
+          </p>
+          <p
+            v-if="card.dialog.message"
+            class="mt-2 text-[12.5px] leading-relaxed whitespace-pre-wrap text-dim"
           >
+            <ColorText :text="card.dialog.message" />
+          </p>
+
+          <div v-if="card.dialog.kind === 'select' && card.selectOptions" class="mt-3 flex flex-col gap-1.5">
             <button
+              v-for="opt in card.selectOptions"
+              :key="opt.label"
               :disabled="card.busy"
-              class="flex items-center gap-2 rounded-[8px] bg-accent px-4 py-2 text-[12.5px] font-medium text-canvas shadow-xs transition-all hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 disabled:cursor-not-allowed"
-              @click="onSelectOption(card.dialog, card.select.doneOption.label, card.select.doneOption.index)"
+              class="flex items-start gap-3 rounded-[8px] border border-line-strong/50 bg-surface/60 px-3.5 py-2.5 text-left text-[12.5px] text-fg transition-colors hover:border-accent/70 hover:bg-raised focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60"
+              @click="answer(card.dialog, { value: opt.label })"
             >
-              <svg class="h-3.5 w-3.5 fill-current stroke-current stroke-[0.5]" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-              </svg>
-              <span>Done selecting</span>
+              <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span class="leading-snug"><ColorText :text="opt.label" /></span>
+                <span
+                  v-if="opt.description"
+                  class="text-[11.5px] leading-relaxed whitespace-pre-wrap text-dim"
+                >
+                  {{ opt.description }}
+                </span>
+              </span>
             </button>
           </div>
-        </div>
 
-        <div v-else-if="card.dialog.kind === 'confirm'" class="mt-3 flex gap-1.5">
-          <button
-            :class="PRIMARY"
-            @click="answer(card.dialog, { confirmed: true })"
-          >
-            yes
-          </button>
-          <button
-            :class="SECONDARY"
-            @click="answer(card.dialog, { confirmed: false })"
-          >
-            no
-          </button>
-        </div>
+          <div v-else-if="card.dialog.kind === 'confirm'" class="mt-3 flex gap-1.5">
+            <button
+              :class="PRIMARY"
+              @click="answer(card.dialog, { confirmed: true })"
+            >
+              yes
+            </button>
+            <button
+              :class="SECONDARY"
+              @click="answer(card.dialog, { confirmed: false })"
+            >
+              no
+            </button>
+          </div>
 
-        <!-- `editor` exists to collect more than one line, so it gets a textarea and a
-             button; `input` gets one line, with Enter as the obvious way to send. An
-             unknown kind falls here too, which is what keeps it answerable. -->
-        <div v-else class="mt-3 flex flex-col gap-2">
-          <div
-            v-if="card.dialog.kind === 'editor'"
-            class="group relative flex flex-col rounded-[8px] border border-line-strong/60 bg-surface/80 p-2.5 transition-all focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/40"
-          >
-            <textarea
-              v-model="replies[card.dialog.id]"
-              rows="3"
-              spellcheck="false"
-              :placeholder="card.dialog.placeholder || (card.title.isCustomResponse ? 'Type your custom response...' : 'Type your response...')"
-              class="w-full resize-none bg-transparent pr-3 text-[12.5px] leading-relaxed text-fg outline-none placeholder:text-faint/70 [scrollbar-gutter:stable]"
-              @keydown="onEditorKeydown($event, card.dialog)"
-            />
-            <div class="mt-2 flex items-center justify-between border-t border-line-strong/30 pt-2">
-              <span class="flex items-center gap-1.5 text-[11px] text-faint select-none">
-                <kbd class="rounded border border-line-strong/60 bg-raised/70 px-1.5 py-0.5 text-[10px] font-mono text-dim">Enter</kbd>
-                <span>send</span>
-                <span class="opacity-40">·</span>
-                <kbd class="rounded border border-line-strong/60 bg-raised/70 px-1.5 py-0.5 text-[10px] font-mono text-dim">Shift+Enter</kbd>
-                <span>new line</span>
-              </span>
+          <!-- `editor` exists to collect more than one line, so it gets a textarea and a
+               button; `input` gets one line, with Enter as the obvious way to send. An
+               unknown kind falls here too, which is what keeps it answerable. -->
+          <div v-else class="mt-3 flex flex-col gap-2">
+            <div
+              v-if="card.dialog.kind === 'editor'"
+              class="group relative flex flex-col rounded-[8px] border border-line-strong/60 bg-surface/80 p-2.5 transition-all focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/40"
+            >
+              <textarea
+                v-model="replies[card.dialog.id]"
+                rows="3"
+                spellcheck="false"
+                :placeholder="card.dialog.placeholder || 'Type your response...'"
+                class="w-full resize-none bg-transparent pr-3 text-[12.5px] leading-relaxed text-fg outline-none placeholder:text-faint/70 [scrollbar-gutter:stable]"
+                @keydown="onEditorKeydown($event, card.dialog)"
+              />
+              <div class="mt-2 flex items-center justify-between border-t border-line-strong/30 pt-2">
+                <span class="flex items-center gap-1.5 text-[11px] text-faint select-none">
+                  <kbd class="rounded border border-line-strong/60 bg-raised/70 px-1.5 py-0.5 text-[10px] font-mono text-dim">Enter</kbd>
+                  <span>send</span>
+                  <span class="opacity-40">·</span>
+                  <kbd class="rounded border border-line-strong/60 bg-raised/70 px-1.5 py-0.5 text-[10px] font-mono text-dim">Shift+Enter</kbd>
+                  <span>new line</span>
+                </span>
+                <button
+                  :disabled="card.busy || !replies[card.dialog.id]?.trim()"
+                  class="inline-flex items-center gap-1.5 rounded-[6px] bg-accent px-3 py-1.5 text-[12px] font-medium text-canvas shadow-xs transition-all hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-35 disabled:cursor-not-allowed"
+                  @click="answer(card.dialog, { value: replies[card.dialog.id] ?? '' })"
+                >
+                  <span>Send</span>
+                  <Icon name="arrow-up" size="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+            <div
+              v-else
+              class="flex items-center gap-2"
+            >
+              <input
+                v-model="replies[card.dialog.id]"
+                :placeholder="card.dialog.placeholder ?? 'Type your answer...'"
+                spellcheck="false"
+                class="flex-1 rounded-[6px] border border-line-strong/60 bg-surface/80 px-3 py-2 text-[12.5px] text-fg outline-none placeholder:text-faint/70 focus:border-accent/80 focus:ring-1 focus:ring-accent/40"
+                @keydown.enter="answer(card.dialog, { value: replies[card.dialog.id] ?? '' })"
+              />
               <button
                 :disabled="card.busy || !replies[card.dialog.id]?.trim()"
-                class="inline-flex items-center gap-1.5 rounded-[6px] bg-accent px-3 py-1.5 text-[12px] font-medium text-canvas shadow-xs transition-all hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-35 disabled:cursor-not-allowed"
+                class="inline-flex items-center gap-1.5 rounded-[6px] bg-accent px-3 py-2 text-[12px] font-medium text-canvas shadow-xs transition-all hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-35 disabled:cursor-not-allowed"
                 @click="answer(card.dialog, { value: replies[card.dialog.id] ?? '' })"
               >
                 <span>Send</span>
@@ -744,29 +615,9 @@ function describe(cause: unknown): string {
               </button>
             </div>
           </div>
-          <div
-            v-else
-            class="flex items-center gap-2"
-          >
-            <input
-              v-model="replies[card.dialog.id]"
-              :placeholder="card.dialog.placeholder ?? 'Type your answer...'"
-              spellcheck="false"
-              class="flex-1 rounded-[6px] border border-line-strong/60 bg-surface/80 px-3 py-2 text-[12.5px] text-fg outline-none placeholder:text-faint/70 focus:border-accent/80 focus:ring-1 focus:ring-accent/40"
-              @keydown.enter="answer(card.dialog, { value: replies[card.dialog.id] ?? '' })"
-            />
-            <button
-              :disabled="card.busy || !replies[card.dialog.id]?.trim()"
-              class="inline-flex items-center gap-1.5 rounded-[6px] bg-accent px-3 py-2 text-[12px] font-medium text-canvas shadow-xs transition-all hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-35 disabled:cursor-not-allowed"
-              @click="answer(card.dialog, { value: replies[card.dialog.id] ?? '' })"
-            >
-              <span>Send</span>
-              <Icon name="arrow-up" size="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
+        </template>
 
-        <div class="mt-2.5 flex items-center justify-between">
+        <div v-if="card.dialog.kind !== 'ask'" class="mt-2.5 flex items-center justify-between">
           <p v-if="card.deadline" class="font-mono text-[11px] text-warn">
             {{ card.deadline }}
           </p>

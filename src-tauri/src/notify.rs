@@ -135,20 +135,22 @@ impl Notifier {
             return None;
         }
 
-        // The engine formats an approval as a title — `Allow tool: bash\nCommand: …`
-        // (`docs/02` §7) — and a `confirm` puts its body in `message`, so the two fields are
-        // read in that order rather than inventing a third line of our own.
-        let prompt = if request.title.trim().is_empty() {
-            request.message.clone()
+        let prompt = if !request.title.trim().is_empty() {
+            request.title.as_str()
+        } else if !request.message.trim().is_empty() {
+            request.message.as_str()
         } else {
-            request.title.clone()
+            request
+                .questions
+                .first()
+                .map_or("", |question| question.question.as_str())
         };
 
         Some(NotificationEvent {
             thread: facts.thread.clone(),
             kind: KIND_NEEDS_YOU.to_string(),
             title: title(facts),
-            body: clamp(&prompt),
+            body: clamp(prompt),
             job_id: None,
         })
     }
@@ -399,6 +401,7 @@ fn session_name(session: &LiveSession) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use omp_transport::protocol::ui::{AskQuestion, UiRequestKind};
     use serde_json::json;
 
     fn facts_of(thread: &str, name: &str) -> Facts {
@@ -422,9 +425,28 @@ mod tests {
             message: String::new(),
             options: vec!["Approve".to_string(), "Deny".to_string()],
             option_details: Vec::new(),
+            questions: Vec::new(),
             prefill: None,
             placeholder: None,
             timeout_ms: None,
+        }
+    }
+
+    fn ask(id: &str, question: &str) -> UiRequest {
+        UiRequest {
+            kind: UiRequestKind::Ask,
+            title: String::new(),
+            message: String::new(),
+            options: Vec::new(),
+            questions: vec![AskQuestion {
+                id: String::new(),
+                question: question.to_string(),
+                header: None,
+                options: Vec::new(),
+                multi: false,
+                recommended: None,
+            }],
+            ..dialog(id, "")
         }
     }
 
@@ -613,6 +635,25 @@ mod tests {
         assert!(notifier
             .dialog(&dialog("ui_2", "Allow tool: write"), &facts)
             .is_some());
+    }
+
+    /// An `ask` has no title or message: its own question text is the body, once per id.
+    #[test]
+    fn a_native_ask_announces_its_question_text_once() {
+        let mut notifier = Notifier::new();
+        let facts = facts_of("session-7", "Deploy the app");
+
+        let first = notifier
+            .dialog(&ask("ask_1", "Which framework should I use?"), &facts)
+            .expect("a new ask needs you");
+        assert_eq!(first.kind, KIND_NEEDS_YOU);
+        assert_eq!(first.body, "Which framework should I use?");
+
+        // The engine replays pending asks on resume; the same id is the same question.
+        assert_eq!(
+            notifier.dialog(&ask("ask_1", "Which framework should I use?"), &facts),
+            None
+        );
     }
 
     /// A job's departure carries the broker's own name and the engine's own fields, and an

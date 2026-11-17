@@ -6,18 +6,17 @@
  * by role — so they are editable too, and a rename is a new map rather than a moved entry.
  * Like the list editor, every edit writes the whole record: that is the shape the key takes.
  *
- * `modelRoles` is deliberately narrower in v1: OMP owns the fixed role names, so they are
- * labels rather than editable record keys and entries cannot be added or removed. Only each
- * role's model is editable, through the model picker. Picking one keeps the `:high`-style
- * effort suffix the selector already carried, so the picker changes the model and nothing else.
+ * OMP owns the fixed role names; each role edits its model and thinking suffix independently.
  */
 import { computed, inject, ref } from "vue";
-import { itemValue, recordEntries, selectorFor, selectorModel, textOf } from "../../lib/settings";
+import { effortStepTitle, supportedEffortSteps } from "../../lib/chips";
+import { itemValue, recordEntries, selectorFor, selectorModel, selectorSuffix, textOf } from "../../lib/settings";
 import ModelPicker from "../ModelPicker.vue";
 import Popover from "../Popover.vue";
 import Icon from "../ui/Icon.vue";
 import { SETTINGS_CONTEXT } from "./context";
 import SettingsField from "./SettingsField.vue";
+import SettingsSelect from "./SettingsSelect.vue";
 
 const props = defineProps<{
   /** The catalog key, which decides whether the value field gets the model picker. */
@@ -87,6 +86,26 @@ function pick(key: string, picked: { provider: string; modelId: string }): void 
   emit("write", { ...current(), [key]: selectorFor(picked.provider, picked.modelId, textOf(current()[key])) });
 }
 
+function effortChoices(value: unknown): { value: string; label: string }[] {
+  const model = context!.models.value.find(
+    (option) => `${option.provider}/${option.id}` === selectorModel(textOf(value)),
+  ) ?? null;
+  return [
+    { value: "", label: "Thinking: Default" },
+    ...[...supportedEffortSteps(model), "auto"].map((level) => ({
+      value: level,
+      label: `Thinking: ${effortStepTitle(level)}`,
+    })),
+  ];
+}
+
+function setEffort(key: string, level: unknown): void {
+  if (typeof level !== "string") return;
+  const model = selectorModel(textOf(current()[key]));
+  if (model === null) return;
+  emit("write", { ...current(), [key]: `${model}${level === "" ? "" : `:${level}`}` });
+}
+
 function commitAddition(): void {
   if (roles.value) return;
   const key = draftKey.value.trim();
@@ -131,41 +150,53 @@ function commitAddition(): void {
         not have as itself: a role pointing at a model this build has not fetched is a fact
         about the selector, not an invitation to rewrite it.
       -->
-      <Popover
-        v-if="roles"
-        :open="picking === entry.key"
-        :label="`${entry.key} model`"
-        side="below"
-        :match-trigger-width="true"
-        @close="picking = null"
-      >
-        <template #trigger>
-          <button
-            type="button"
-            :disabled="props.disabled"
-            class="flex w-full min-w-0 items-center gap-2 rounded-[6px] border border-line/60 bg-raised px-2.5 py-1.5 text-left text-[12.5px] transition-colors hover:border-line-strong hover:bg-raised/80 disabled:opacity-40"
-            data-control="role-model"
-            @click="picking = entry.key"
+      <div v-if="roles" class="flex min-w-0 flex-wrap items-center gap-2">
+        <div class="min-w-[160px] flex-1 [&>span]:w-full">
+          <Popover
+            :open="picking === entry.key"
+            :label="`${entry.key} model`"
+            side="below"
+            :match-trigger-width="true"
+            @close="picking = null"
           >
-            <span
-              class="min-w-0 flex-1 truncate font-mono text-fg"
-            >
-              {{ textOf(entry.value) === "" ? "pick a model" : textOf(entry.value) }}
-            </span>
-            <Icon name="chevron-down" class="h-3.5 w-3.5 shrink-0 text-faint" />
-          </button>
-        </template>
+            <template #trigger>
+              <button
+                type="button"
+                :disabled="props.disabled"
+                class="flex w-full min-w-0 items-center gap-2 rounded-[6px] border border-line/60 bg-raised px-2.5 py-1.5 text-left text-[12.5px] transition-colors hover:border-line-strong hover:bg-raised/80 disabled:opacity-40"
+                data-control="role-model"
+                @click="picking = entry.key"
+              >
+                <span
+                  class="min-w-0 flex-1 truncate font-mono text-fg"
+                >
+                  {{ textOf(entry.value) === "" ? "pick a model" : textOf(entry.value) }}
+                </span>
+                <Icon name="chevron-down" class="h-3.5 w-3.5 shrink-0 text-faint" />
+              </button>
+            </template>
 
-        <ModelPicker
-          :models="context.models.value"
-          :favourites="context.favourites.value"
-          :current="selectorModel(textOf(entry.value))"
-          :refreshing="context.refreshing.value"
-          @select="(picked) => pick(entry.key, picked)"
-          @favourites="context.setFavourites"
-          @close="picking = null"
-        />
-      </Popover>
+            <ModelPicker
+              :models="context.models.value"
+              :favourites="context.favourites.value"
+              :current="selectorModel(textOf(entry.value))"
+              :refreshing="context.refreshing.value"
+              @select="(picked) => pick(entry.key, picked)"
+              @favourites="context.setFavourites"
+              @close="picking = null"
+            />
+          </Popover>
+        </div>
+        <div class="w-40 [&>span]:w-full [&_button[data-control=select]]:w-full">
+          <SettingsSelect
+            :choices="effortChoices(entry.value)"
+            :value="selectorSuffix(textOf(entry.value)).slice(1)"
+            :disabled="props.disabled || !selectorModel(textOf(entry.value))"
+            :label="`${entry.key} thinking`"
+            @write="(level) => setEffort(entry.key, level)"
+          />
+        </div>
+      </div>
 
       <SettingsField
         v-else

@@ -257,6 +257,8 @@ function onCardMouseUp(event: MouseEvent, path: string): void {
   const isDragging = draggingIndex.value !== null;
   cancelLongPress();
 
+  if (event.button !== 0) return;
+
   const target = event.target as HTMLElement | null;
   if (!wasArmed && !isDragging && !target?.closest("button")) {
     toggle(path);

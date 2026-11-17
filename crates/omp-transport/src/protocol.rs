@@ -95,7 +95,7 @@ pub enum FrameClass {
     Response,
     /// A streamed `AgentSessionEvent`.
     Event,
-    /// A dialog/message the host must render (select, confirm, input, editor,
+    /// A dialog/message the host must render (select, confirm, input, editor, ask,
     /// notify, setStatus, setWidget, setTitle, set_editor_text, cancel, open_url).
     ExtensionUiRequest,
     /// The engine wants a host-owned tool executed.
@@ -298,12 +298,11 @@ pub mod commands {
     }
 
     pub fn set_fast_mode(enabled: bool) -> Value {
-        let mut value = command("set_fast_mode");
-        value
-            .as_object_mut()
-            .expect("command builds an object")
-            .insert("enabled".into(), Value::Bool(enabled));
-        value
+        flag_command("set_fast_mode", enabled)
+    }
+
+    pub fn set_ask_dialog(enabled: bool) -> Value {
+        flag_command("set_ask_dialog", enabled)
     }
 
     /// Replace the session todo list (useful to pre-seed a plan).
@@ -588,6 +587,14 @@ pub mod commands {
         json!({ "type": "extension_ui_response", "id": id, "confirmed": confirmed })
     }
 
+    pub fn extension_ui_answers(id: &str, answers: &[ui::AskAnswer]) -> Value {
+        json!({
+            "type": "extension_ui_response",
+            "id": id,
+            "answers": answers,
+        })
+    }
+
     /// Answer an `extension_ui_request` by cancelling it.
     pub fn extension_ui_cancelled(id: &str, timed_out: bool) -> Value {
         json!({
@@ -645,8 +652,8 @@ pub mod commands {
 ///
 /// `extension_ui_request` is the one family of frames that is a *request* rather
 /// than a notification, and a subset of it stops the run dead: `select`,
-/// `confirm`, `input` and `editor` are answered by the host or the agent never
-/// continues (`docs/02` §7). Everything else in the family — `notify`,
+/// `confirm`, `input`, `editor` and the opt-in `ask` form are answered by the host
+/// or the agent never continues (`docs/02` §7). Everything else in the family — `notify`,
 /// `setStatus`, `setWidget`, `setTitle`, `set_editor_text`, `open_url` — is
 /// fire-and-forget chrome and deliberately decodes to `None` here: this module
 /// answers "what must the host act on", not "what arrived".
@@ -654,6 +661,8 @@ pub mod commands {
 /// The vocabulary sits beside its response constructors so no layer above has to
 /// know the wire spelling of a dialog.
 pub mod ui {
+    use std::collections::HashSet;
+
     use super::commands;
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
@@ -665,6 +674,7 @@ pub mod ui {
         Confirm,
         Input,
         Editor,
+        Ask,
     }
 
     impl UiRequestKind {
@@ -675,6 +685,7 @@ pub mod ui {
                 "confirm" => Some(Self::Confirm),
                 "input" => Some(Self::Input),
                 "editor" => Some(Self::Editor),
+                "ask" => Some(Self::Ask),
                 _ => None,
             }
         }
@@ -686,8 +697,55 @@ pub mod ui {
                 Self::Confirm => "confirm",
                 Self::Input => "input",
                 Self::Editor => "editor",
+                Self::Ask => "ask",
             }
         }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct AskOption {
+        pub label: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub description: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub preview: Option<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct AskQuestion {
+        pub id: String,
+        pub question: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub header: Option<String>,
+        pub options: Vec<AskOption>,
+        #[serde(default)]
+        pub multi: bool,
+        #[serde(
+            default,
+            deserialize_with = "optional_index",
+            skip_serializing_if = "Option::is_none"
+        )]
+        pub recommended: Option<u32>,
+    }
+
+    fn optional_index<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Option::<Value>::deserialize(deserializer)?
+            .and_then(|value| value.as_u64())
+            .and_then(|index| u32::try_from(index).ok()))
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct AskAnswer {
+        pub id: String,
+        pub selected_options: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub custom_input: Option<String>,
     }
 
     /// Details accompanying an option in a `select` dialog.
@@ -696,8 +754,6 @@ pub mod ui {
     pub struct UiOptionDetail {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub description: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub selected: Option<bool>,
     }
 
     /// A dialog the engine is waiting on.
@@ -712,6 +768,7 @@ pub mod ui {
         pub options: Vec<String>,
         /// Optional per-option details (such as description) matching `options` by index.
         pub option_details: Vec<UiOptionDetail>,
+        pub questions: Vec<AskQuestion>,
         /// The starting text of an `editor`; `None` for the other kinds.
         pub prefill: Option<String>,
         /// The hint shown inside an `input`'s empty field.
@@ -754,6 +811,11 @@ pub mod ui {
         }
 
         let kind = UiRequestKind::from_method(method)?;
+        let questions = if kind == UiRequestKind::Ask {
+            decode_questions(frame.get("questions")?)?
+        } else {
+            Vec::new()
+        };
         let (options, option_details) = decode_options(frame);
         Some(Incoming::Request(UiRequest {
             id: frame.get("id").and_then(Value::as_str)?.to_string(),
@@ -762,6 +824,7 @@ pub mod ui {
             message: text(frame, "message"),
             options,
             option_details,
+            questions,
             prefill: frame
                 .get("prefill")
                 .and_then(Value::as_str)
@@ -774,6 +837,34 @@ pub mod ui {
         }))
     }
 
+    fn decode_questions(value: &Value) -> Option<Vec<AskQuestion>> {
+        let items = value.as_array()?;
+        if items.is_empty() {
+            return None;
+        }
+
+        let mut questions: Vec<AskQuestion> = Vec::with_capacity(items.len());
+        for item in items {
+            let question: AskQuestion = serde_json::from_value(item.clone()).ok()?;
+            if questions.iter().any(|known| known.id == question.id) {
+                return None;
+            }
+
+            let mut labels = HashSet::new();
+            if question
+                .options
+                .iter()
+                .any(|option| !labels.insert(option.label.as_str()))
+            {
+                return None;
+            }
+
+            questions.push(question);
+        }
+
+        Some(questions)
+    }
+
     fn decode_options(frame: &Value) -> (Vec<String>, Vec<UiOptionDetail>) {
         let mut labels = Vec::new();
         let mut details = Vec::new();
@@ -781,12 +872,9 @@ pub mod ui {
         if let Some(options_array) = frame.get("options").and_then(Value::as_array) {
             for item in options_array {
                 match item {
-                    Value::String(s) => {
-                        labels.push(s.clone());
-                        details.push(UiOptionDetail {
-                            description: None,
-                            selected: None,
-                        });
+                    Value::String(label) => {
+                        labels.push(label.clone());
+                        details.push(UiOptionDetail::default());
                     }
                     Value::Object(map) => {
                         let label = map
@@ -802,18 +890,10 @@ pub mod ui {
                             .or_else(|| map.get("desc"))
                             .or_else(|| map.get("hint"))
                             .and_then(Value::as_str)
-                            .map(|s| s.trim().to_string())
-                            .filter(|s| !s.is_empty());
-                        let selected = map
-                            .get("selected")
-                            .or_else(|| map.get("checked"))
-                            .or_else(|| map.get("isSelected"))
-                            .and_then(Value::as_bool);
+                            .map(|description| description.trim().to_string())
+                            .filter(|description| !description.is_empty());
                         labels.push(label);
-                        details.push(UiOptionDetail {
-                            description,
-                            selected,
-                        });
+                        details.push(UiOptionDetail { description });
                     }
                     _ => {}
                 }
@@ -827,82 +907,34 @@ pub mod ui {
             .or_else(|| frame.get("option_descriptions"));
 
         if let Some(details_array) = option_details_val.and_then(Value::as_array) {
-            for (i, item) in details_array.iter().enumerate() {
-                let (desc, sel) = match item {
-                    Value::Object(map) => {
-                        let d = map
-                            .get("description")
-                            .or_else(|| map.get("desc"))
-                            .or_else(|| map.get("hint"))
-                            .and_then(Value::as_str)
-                            .map(|s| s.trim().to_string())
-                            .filter(|s| !s.is_empty());
-                        let s = map
-                            .get("selected")
-                            .or_else(|| map.get("checked"))
-                            .or_else(|| map.get("isSelected"))
-                            .and_then(Value::as_bool);
-                        (d, s)
+            for (index, item) in details_array.iter().enumerate() {
+                let description = match item {
+                    Value::Object(map) => map
+                        .get("description")
+                        .or_else(|| map.get("desc"))
+                        .or_else(|| map.get("hint"))
+                        .and_then(Value::as_str)
+                        .map(|description| description.trim().to_string())
+                        .filter(|description| !description.is_empty()),
+                    Value::String(description) => {
+                        let trimmed = description.trim();
+                        (!trimmed.is_empty()).then(|| trimmed.to_string())
                     }
-                    Value::String(s) => {
-                        let trimmed = s.trim();
-                        (
-                            if !trimmed.is_empty() {
-                                Some(trimmed.to_string())
-                            } else {
-                                None
-                            },
-                            None,
-                        )
-                    }
-                    _ => (None, None),
+                    _ => None,
                 };
 
-                if desc.is_some() || sel.is_some() {
-                    if i < details.len() {
-                        if desc.is_some() {
-                            details[i].description = desc;
-                        }
-                        if sel.is_some() {
-                            details[i].selected = sel;
-                        }
-                    } else if i < labels.len() {
-                        while details.len() <= i {
-                            details.push(UiOptionDetail {
-                                description: None,
-                                selected: None,
-                            });
-                        }
-                        details[i].description = desc;
-                        details[i].selected = sel;
+                if description.is_some() {
+                    while details.len() <= index {
+                        details.push(UiOptionDetail::default());
                     }
+                    details[index].description = description;
                 }
             }
         }
 
-        // Also check frame-level checkedIndices / selectedIndices
-        let checked_indices = frame
-            .get("checkedIndices")
-            .or_else(|| frame.get("checked_indices"))
-            .or_else(|| frame.get("selectedIndices"))
-            .or_else(|| frame.get("selected_indices"))
-            .and_then(Value::as_array);
-
-        if let Some(indices) = checked_indices {
-            for idx_val in indices {
-                if let Some(idx) = idx_val.as_u64().map(|n| n as usize) {
-                    if idx < details.len() {
-                        details[idx].selected = Some(true);
-                    }
-                }
-            }
-        }
-
+        details.truncate(labels.len());
         while details.len() < labels.len() {
-            details.push(UiOptionDetail {
-                description: None,
-                selected: None,
-            });
+            details.push(UiOptionDetail::default());
         }
 
         (labels, details)
@@ -1013,6 +1045,7 @@ pub mod ui {
         Value(String),
         /// A yes/no answer (`confirm`).
         Confirmed(bool),
+        Answers(Vec<AskAnswer>),
         /// The host dismissed the dialog. `timed_out` distinguishes the engine's
         /// deadline expiring from the user closing it.
         Cancelled { timed_out: bool },
@@ -1036,6 +1069,9 @@ pub mod ui {
                     UiRequestKind::Select | UiRequestKind::Input | UiRequestKind::Editor,
                     Self::Value(value),
                 ) => Some(commands::extension_ui_value(id, value.clone())),
+                (UiRequestKind::Ask, Self::Answers(answers)) => {
+                    Some(commands::extension_ui_answers(id, answers))
+                }
                 _ => None,
             }
         }
@@ -1045,6 +1081,7 @@ pub mod ui {
             match self {
                 Self::Value(_) => "value",
                 Self::Confirmed(_) => "confirmed",
+                Self::Answers(_) => "answers",
                 Self::Cancelled { .. } => "cancelled",
             }
         }
@@ -1182,6 +1219,10 @@ mod tests {
             commands::negotiate_protocol(PROTOCOL_VERSION_V2),
             json!({ "type": "negotiate_protocol", "protocolVersion": 2 })
         );
+        assert_eq!(
+            commands::set_ask_dialog(true),
+            json!({ "type": "set_ask_dialog", "enabled": true })
+        );
         // No attachment, no `images` key — not an empty array. `docs/rpc.md` types it
         // as an array, and a turn with nothing attached is the common case.
         assert_eq!(
@@ -1219,7 +1260,7 @@ mod tests {
         assert_eq!(request.timeout_ms, None);
     }
 
-    /// The distinction this module exists for: only four methods stop the run, and
+    /// The distinction this module exists for: only blocking methods stop the run, and
     /// an extension pushing a widget at startup must not look like a stall.
     #[test]
     fn fire_and_forget_methods_are_not_host_obligations() {
@@ -1335,7 +1376,7 @@ mod tests {
     }
 
     /// The one invariant that keeps the two halves apart: a well-formed frame is a dialog the
-    /// host must answer or chrome it only draws, never both — the four blocking kinds must
+    /// host must answer or chrome it only draws, never both — the blocking kinds must
     /// not have grown a chrome spelling (`docs/12` §13).
     #[test]
     fn the_two_decoders_never_both_fire() {
@@ -1344,6 +1385,12 @@ mod tests {
             json!({ "type": "extension_ui_request", "id": "x", "method": "confirm", "title": "Sure?" }),
             json!({ "type": "extension_ui_request", "id": "x", "method": "input", "title": "Name" }),
             json!({ "type": "extension_ui_request", "id": "x", "method": "editor", "title": "Text" }),
+            json!({
+                "type": "extension_ui_request",
+                "id": "x",
+                "method": "ask",
+                "questions": [{ "id": "q", "question": "Q", "options": [] }]
+            }),
             json!({ "type": "extension_ui_request", "id": "x", "method": "cancel", "targetId": "x" }),
             json!({ "type": "extension_ui_request", "id": "x", "method": "notify", "message": "hi" }),
             json!({ "type": "extension_ui_request", "id": "x", "method": "setStatus", "statusText": "ok" }),
@@ -1456,16 +1503,11 @@ mod tests {
             vec![
                 ui::UiOptionDetail {
                     description: Some("Details for first".to_string()),
-                    selected: None,
                 },
                 ui::UiOptionDetail {
                     description: Some("Details for second".to_string()),
-                    selected: None,
                 },
-                ui::UiOptionDetail {
-                    description: None,
-                    selected: None,
-                },
+                ui::UiOptionDetail { description: None },
             ]
         );
 
@@ -1489,26 +1531,153 @@ mod tests {
             Some("Run batch 1")
         );
         assert_eq!(obj_req.option_details[1].description, None);
+    }
 
-        // Frame with checkedIndices and per-option selected flags
-        let multi_frame = json!({
+    #[test]
+    fn an_ask_decodes_every_question_field() {
+        let frame = json!({
             "type": "extension_ui_request",
-            "id": "ui_10",
-            "method": "select",
-            "title": "(1 selected) Choose frameworks",
-            "options": [
-                { "label": "Vue", "description": "Progressive JS framework", "selected": true },
-                { "label": "React", "description": "UI library" },
-                "Svelte"
+            "id": "ask_1",
+            "method": "ask",
+            "questions": [
+                {
+                    "id": "q1",
+                    "question": "Which framework?",
+                    "header": "Stack",
+                    "options": [
+                        { "label": "Vue", "description": "Progressive", "preview": "<app/>" },
+                        { "label": "React" }
+                    ],
+                    "recommended": 0
+                },
+                {
+                    "id": "q2",
+                    "question": "Which tools?",
+                    "options": [{ "label": "Vite" }],
+                    "multi": true
+                }
             ],
-            "checkedIndices": [0, 2]
+            "timeout": 600_000
         });
-        let Some(ui::Incoming::Request(multi_req)) = ui::decode(&multi_frame) else {
-            panic!("must decode multi select dialog");
+
+        let Some(ui::Incoming::Request(request)) = ui::decode(&frame) else {
+            panic!("an ask form must decode to a request");
         };
-        assert_eq!(multi_req.options, vec!["Vue", "React", "Svelte"]);
-        assert_eq!(multi_req.option_details[0].selected, Some(true));
-        assert_eq!(multi_req.option_details[1].selected, None);
-        assert_eq!(multi_req.option_details[2].selected, Some(true));
+        assert_eq!(request.kind, ui::UiRequestKind::Ask);
+        assert_eq!(request.timeout_ms, Some(600_000));
+        assert_eq!(request.questions.len(), 2);
+
+        let first = &request.questions[0];
+        assert_eq!(first.header.as_deref(), Some("Stack"));
+        assert_eq!(first.options[0].preview.as_deref(), Some("<app/>"));
+        assert_eq!(first.options[0].description.as_deref(), Some("Progressive"));
+        assert_eq!(first.recommended, Some(0));
+        assert!(!first.multi);
+
+        let second = &request.questions[1];
+        assert_eq!(second.header, None);
+        assert_eq!(second.recommended, None);
+        assert!(second.multi);
+    }
+
+    #[test]
+    fn an_unusable_ask_is_not_decoded() {
+        for questions in [
+            json!([]),
+            json!([{ "id": "q1", "question": "Q" }]),
+            json!([{ "question": "Q", "options": [] }]),
+            json!([
+                { "id": "q", "question": "Q", "options": [] },
+                { "id": "q", "question": "R", "options": [] }
+            ]),
+            json!([{
+                "id": "q",
+                "question": "Q",
+                "options": [{ "label": "A" }, { "label": "A" }]
+            }]),
+            json!([{ "id": "q", "question": "Q", "options": [], "multi": "yes" }]),
+        ] {
+            let frame = json!({
+                "type": "extension_ui_request",
+                "id": "ask_1",
+                "method": "ask",
+                "questions": questions,
+            });
+            assert_eq!(ui::decode(&frame), None, "decoded {questions}");
+        }
+    }
+
+    /// The engine permits an empty question id; refusing it here blocks the turn before
+    /// the form ever reaches the user.
+    #[test]
+    fn an_empty_question_id_still_decodes() {
+        let frame = json!({
+            "type": "extension_ui_request",
+            "id": "ask_1",
+            "method": "ask",
+            "questions": [{ "id": "", "question": "Q", "options": [] }],
+        });
+
+        let Some(ui::Incoming::Request(request)) = ui::decode(&frame) else {
+            panic!("an empty question id is not an unusable ask");
+        };
+        assert!(request.questions[0].id.is_empty());
+    }
+
+    #[test]
+    fn a_non_integral_recommendation_does_not_drop_the_form() {
+        let frame = json!({
+            "type": "extension_ui_request",
+            "id": "ask_1",
+            "method": "ask",
+            "questions": [{
+                "id": "q",
+                "question": "Q",
+                "options": [{ "label": "A" }],
+                "recommended": 0.5,
+            }],
+        });
+
+        let Some(ui::Incoming::Request(request)) = ui::decode(&frame) else {
+            panic!("a fractional recommendation is still an ask");
+        };
+        assert_eq!(request.questions[0].recommended, None);
+    }
+
+    #[test]
+    fn an_ask_answer_encodes_every_question_in_order() {
+        let answers = vec![
+            ui::AskAnswer {
+                id: "q1".to_string(),
+                selected_options: vec!["Vue".to_string()],
+                custom_input: None,
+            },
+            ui::AskAnswer {
+                id: "q2".to_string(),
+                selected_options: Vec::new(),
+                custom_input: Some("something else".to_string()),
+            },
+        ];
+
+        assert_eq!(
+            ui::UiResponse::Answers(answers).frame(ui::UiRequestKind::Ask, "ask_1"),
+            Some(json!({
+                "type": "extension_ui_response",
+                "id": "ask_1",
+                "answers": [
+                    { "id": "q1", "selectedOptions": ["Vue"] },
+                    { "id": "q2", "selectedOptions": [], "customInput": "something else" },
+                ],
+            }))
+        );
+
+        assert_eq!(
+            ui::UiResponse::Answers(Vec::new()).frame(ui::UiRequestKind::Select, "id"),
+            None
+        );
+        assert_eq!(
+            ui::UiResponse::Value("Vue".to_string()).frame(ui::UiRequestKind::Ask, "id"),
+            None
+        );
     }
 }

@@ -60,6 +60,7 @@ function choose(value: string): void {
       <button
         type="button"
         :disabled="props.disabled"
+        :aria-label="props.label"
         class="flex w-[200px] items-center gap-2 rounded-[6px] border border-line/60 bg-raised px-2.5 py-1.5 text-left text-[12.5px] transition-colors hover:border-line-strong hover:bg-raised/80 focus-visible:border-accent/80 focus-visible:ring-1 focus-visible:ring-accent/40 disabled:opacity-40 shadow-xs"
         data-control="select"
         @click="open = !open"

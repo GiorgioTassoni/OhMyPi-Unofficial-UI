@@ -812,14 +812,14 @@ window.__favourites = [];
 
 /** Fire a host event at the window, the way the Rust side would. */
 window.__fire = (event, payload) => {
-  const listeners = window.__calls
-    .filter((call) => call.cmd === "plugin:event|listen" && call.args.event === event)
-    .map((call) => window.__callbacks[call.args.handler])
-    .filter(Boolean);
+  const listeners = window.__calls.filter((call) =>
+    call.cmd === "plugin:event|listen" && call.args.event === event
+      && window.__callbacks[call.args.handler],
+  );
 
   window.__fired.push({ event, listeners: listeners.length });
-  for (const listener of listeners) {
-    listener({ event, id: window.__nextCallback++, payload });
+  for (const { args } of listeners) {
+    window.__callbacks[args.handler]?.({ event, id: args.handler, payload });
   }
 
   return listeners.length;
@@ -855,6 +855,12 @@ window.__TAURI_INTERNALS__ = {
       recorded.error = String(error);
       throw error;
     }
+  },
+};
+
+window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+  unregisterListener(_event, id) {
+    window.__TAURI_INTERNALS__.unregisterCallback(id);
   },
 };
 
@@ -971,6 +977,10 @@ const dispatch = async (cmd, args) => {
         return structuredClone(world.sessions);
       case "projects":
         return structuredClone(world.projects);
+      // The window reads the catalogue and the groups in one scan (`docs/12` §1), so both
+      // lists come from the same world a check may already have changed.
+      case "sidebar_snapshot":
+        return { sessions: structuredClone(world.sessions), projects: structuredClone(world.projects) };
       case "threads":
         return structuredClone(world.live);
       case "open_thread": {
@@ -1018,6 +1028,19 @@ const dispatch = async (cmd, args) => {
         return structuredClone(world.transcripts[args.thread] ?? []);
       case "ui_requests":
         return structuredClone(world.approvals[args.thread] ?? []);
+      case "respond_ui_request": {
+        if (world.uiAnswerError) throw new Error(world.uiAnswerError);
+        const pending = world.approvals[args.thread] ?? [];
+        if (!pending.some((request) => request.id === args.requestId)) {
+          throw new Error("no such pending UI request");
+        }
+        world.approvals[args.thread] = pending.filter((request) => request.id !== args.requestId);
+        window.__fire("session-ui-requests", {
+          thread: args.thread,
+          payload: structuredClone(world.approvals[args.thread]),
+        });
+        return null;
+      }
       case "prompt":
       case "steer":
       case "follow_up":
@@ -1249,7 +1272,9 @@ const dispatch = async (cmd, args) => {
         };
       }
       case "plugin:event|listen":
-        return 1;
+        return args.handler;
+      case "subagent_file_changes":
+        return [];
       case "agents": {
         return Object.entries(world.agents).map(([thread, agents]) => ({
           thread,

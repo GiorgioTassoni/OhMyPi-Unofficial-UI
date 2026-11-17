@@ -21,9 +21,8 @@ window.__helpers = {
   click: (element) => element.dispatchEvent(new MouseEvent("click", { bubbles: true })),
   calls: (cmd) => window.__calls.filter((c) => c.cmd === cmd),
   aside: () => document.querySelectorAll("aside")[0],
-  /** A thread row, by the title it carries in its tooltip. */
-  row: (title) => Array.from(document.querySelectorAll("aside button"))
-      .find((b) => (b.getAttribute("title") ?? "").startsWith(title)),
+  row: (title) => Array.from(document.querySelectorAll("aside nav ul button"))
+      .find((button) => (button.textContent ?? "").trim().startsWith(title)),
   /** The dot is the row's first child: hollow for no sidecar, and the live states after. */
   dot: (row) => (row?.children[0]?.className ?? ""),
   /** The column on screen: the visible `main > section`, not every mounted thread. */
@@ -397,6 +396,210 @@ def run(harness):
     hiddenProjectListed: aside.textContent.includes("omp-shell-archived"),
     emptyState: document.body.textContent.includes("No thread open"),
   });
+} catch (error) { window.__step = JSON.stringify({ error: String(error) }); } })()
+""")
+
+    # ---------------------------------------- a project row's own gestures
+    checked(report, "aProjectsRightClickOpensItsMenuAndLeavesItsFold", harness, r"""
+(async () => { try {
+  const h = window.__helpers;
+  const header = (name) => Array.from(h.aside()?.querySelectorAll("section [role='button']") ?? [])
+    .find((b) => (b.textContent ?? "").includes(name));
+  const folded = (el) => el.getAttribute("aria-expanded") === "true";
+  const projectMenu = () => document.querySelector("[role='menu'][aria-label^='actions for project']");
+  const press = async (el, button) => {
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button }));
+    if (button === 2) {
+      el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button, clientX: 100, clientY: 120 }));
+    }
+    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button }));
+    await h.sleep(120);
+  };
+  const closeMenu = async () => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await h.sleep(120);
+  };
+
+  if (!await h.waitFor(() => header("omp-shell-app") && header("omp-shell-other"), 4000)) {
+    throw new Error("The fixture projects did not load");
+  }
+  const rows = { open: header("omp-shell-app"), closed: header("omp-shell-other") };
+  const was = { open: folded(rows.open), closed: folded(rows.closed) };
+  const setFolded = async (el, want) => {
+    if (folded(el) !== want) await press(el, 0);
+  };
+  await setFolded(rows.open, true);
+  await setFolded(rows.closed, false);
+
+  const observed = {};
+  for (const state of ["open", "closed"]) {
+    const el = rows[state];
+    const before = folded(el);
+
+    await press(el, 2);
+    const opened = projectMenu() !== null;
+    const afterRight = folded(el);
+    await closeMenu();
+
+    await press(el, 1);
+    const afterMiddle = folded(el);
+
+    await press(el, 0);
+    const afterLeft = folded(el);
+    await press(el, 0);
+
+    observed[state] = { before, opened, afterRight, afterMiddle, afterLeft };
+  }
+
+  await setFolded(rows.open, was.open);
+  await setFolded(rows.closed, was.closed);
+
+  const unmet = [];
+  const expect = (condition, message) => {
+    if (!condition) unmet.push(message);
+  };
+  expect(observed.open.opened && observed.closed.opened,
+    "a project right-click did not open its menu");
+  expect(observed.open.afterRight === observed.open.before
+    && observed.closed.afterRight === observed.closed.before,
+    "a project right-click changed the fold");
+  expect(observed.open.afterMiddle === observed.open.before
+    && observed.closed.afterMiddle === observed.closed.before,
+    "a project middle-click changed the fold");
+  expect(observed.open.afterLeft !== observed.open.before
+    && observed.closed.afterLeft !== observed.closed.before,
+    "a project left-click no longer folds it");
+  expect(projectMenu() === null, "Escape left the project menu open");
+
+  window.__step = JSON.stringify({ ok: unmet.length === 0, unmet, observed });
+} catch (error) { window.__step = JSON.stringify({ error: String(error) }); } })()
+""")
+
+    checked(report, "livePreviewRequiresAnExplicitRequestOrClick", harness, r"""
+(async () => { try {
+  const h = window.__helpers;
+  const id = "01a0shell0001";
+  const devUrl = "http://127.0.0.1:5173/@vite/client";
+  const historyUrl = "http://127.0.0.1:41233";
+  const previewUrl = "http://127.0.0.1:41234";
+  const choiceUrl = "http://127.0.0.1:41235";
+  const writeUrl = "http://127.0.0.1:41236";
+  const original = structuredClone(window.__world.transcripts[id]);
+  const row = (role, text, tool = null) => ({
+    role, text, tool, thinking: null, streaming: false, attachments: [], customType: null, jobs: [],
+  });
+  const result = (toolName, output, toolCallId, args = "{}") => row("tool", "", {
+    toolCallId, toolName, args, output, intent: null, details: null, isError: false, finished: true,
+  });
+  const previewOutput = (url, title) => JSON.stringify({
+    status: "ready",
+    url,
+    title,
+    message: `Live preview ready at ${url}. Open this URL to view the live preview directly in OhMyPiApp.`,
+  });
+  const frame = () => document.querySelector("[aria-label='Read-only file viewer'] iframe");
+  const close = async () => {
+    document.querySelector("[aria-label='Close file viewer']")?.click();
+    await h.waitFor(() => frame() === null, 2000);
+  };
+  const publish = (rows) => {
+    window.__world.transcripts[id] = rows;
+    window.__fire("session-rows", { thread: id, payload: { from: 0, rows: structuredClone(rows) } });
+  };
+  const unmet = [];
+  const expect = (condition, message) => {
+    if (!condition) unmet.push(message);
+  };
+  try {
+    window.__world.transcripts[id] = [
+      row("user", "Show a preview"),
+      result("mcp__design_choice_preview_html", previewOutput(historyUrl, "From history"), "call-history"),
+    ];
+    const group = await h.waitFor(() => Array.from(h.aside()?.querySelectorAll("[role='button'][aria-expanded]") ?? [])
+      .find((el) => el.textContent.includes("omp-shell-app")), 4000);
+    if (!group) throw new Error("The fixture project did not load");
+    if (group.getAttribute("aria-expanded") !== "true") {
+      group.dispatchEvent(new MouseEvent("mouseup", { button: 0, bubbles: true }));
+      await h.sleep(100);
+    }
+    Array.from(h.aside().querySelectorAll("button"))
+      .find((el) => el.textContent.includes("Wire the sidebar")).click();
+    if (!await h.waitFor(() => document.querySelector("[data-conversation]"), 4000)) {
+      throw new Error("The fixture conversation did not open");
+    }
+    await h.sleep(400);
+    const historyShown = await h.waitFor(() =>
+      (document.querySelector("[data-conversation]")?.textContent ?? "")
+        .includes("Show a preview"), 4000);
+    const historyStayedClosed = frame() === null;
+
+    const rows = [
+      row("user", "Start the development server"),
+      result("bash", `Local: ${devUrl}`, "call-bash", JSON.stringify({ command: "npm run dev" })),
+      row("assistant", `[Open the local site](${devUrl})`),
+    ];
+    publish(rows);
+    await h.sleep(250);
+    const outputStayedClosed = frame() === null;
+    const link = document.querySelector(`[data-conversation] [data-href="${devUrl}"]`);
+    if (!link) throw new Error("The local Markdown link did not render");
+    link.click();
+    const clicked = await h.waitFor(() => frame()?.getAttribute("src") === devUrl ? devUrl : null);
+    await close();
+
+    const previewRows = [
+      ...rows,
+      result("mcp__design_choice_preview_html", previewOutput(previewUrl, "Card"), "call-preview"),
+      row("assistant", "The preview is ready."),
+    ];
+    publish(previewRows);
+    const requested = await h.waitFor(() => frame()?.getAttribute("src") === previewUrl ? previewUrl : null);
+    await close();
+
+    const choiceRows = [
+      ...previewRows,
+      result("mcp__design_choice_design_choice", JSON.stringify({
+        status: "rejected_request_alternatives",
+        action: "request_alternatives",
+        userFeedback: `Use the layout from ${choiceUrl}`,
+        instruction: "Discard the current options and propose new ones.",
+      }), "call-choice"),
+    ];
+    publish(choiceRows);
+    await h.sleep(250);
+    const choiceStayedClosed = frame() === null;
+
+    const writeRows = [
+      ...choiceRows,
+      result("write", previewOutput(writeUrl, "Written card"), "call-write",
+        JSON.stringify({ path: "xd://mcp__design_choice_preview_html", content: "{}" })),
+    ];
+    publish(writeRows);
+    const writeOpened = await h.waitFor(() => frame()?.getAttribute("src") === writeUrl ? writeUrl : null);
+
+    expect(historyShown, "the reopened fixture conversation never rendered");
+    expect(historyStayedClosed, "a preview result already in the reopened history opened the viewer");
+    expect(outputStayedClosed, "command output or assistant prose opened the viewer");
+    expect(clicked === devUrl, `the explicit link opened ${clicked ?? "nothing"}`);
+    expect(requested === previewUrl,
+      `a preview result followed by an assistant tail opened ${requested ?? "nothing"}`);
+    expect(choiceStayedClosed, `a design_choice result opened the URL from its feedback text (${choiceUrl})`);
+    expect(writeOpened === writeUrl, `a write to the preview device opened ${writeOpened ?? "nothing"}`);
+
+    window.__step = JSON.stringify({
+      ok: unmet.length === 0,
+      unmet,
+      historyStayedClosed,
+      outputStayedClosed,
+      clicked,
+      requested,
+      choiceStayedClosed,
+      writeOpened,
+    });
+  } finally {
+    await close();
+    publish(original);
+  }
 } catch (error) { window.__step = JSON.stringify({ error: String(error) }); } })()
 """)
 
@@ -2022,6 +2225,45 @@ def run(harness):
     dotBack: h.dot(row),
     // Lossless in the window's terms: the conversation it had is on screen again.
     transcriptBack: conversation.includes("wire the sidebar"),
+  });
+} catch (error) { window.__step = JSON.stringify({ error: String(error) }); } })()
+""")
+
+    checked(report, "clickingASuspendedTabResumesTheSameConversation", harness, r"""
+(async () => { try {
+  const h = window.__helpers;
+  if (!await h.claim("Wire the sidebar", "01a0shell0001")
+      || !await h.claim("fork me and continue", "01a0shell0002")) {
+    throw new Error("Both conversation tabs must be open before suspension");
+  }
+  const tabFor = (title) => Array.from(document.getElementsByClassName("group/tab"))
+    .find((element) => element.textContent.trim() === title);
+  const tab = tabFor("Wire the sidebar");
+  if (!tab) throw new Error("The original conversation tab is missing");
+  const before = h.calls("open_thread").length;
+  window.__suspend("01a0shell0001");
+  await h.sleep(600);
+  const notReopenedInBackground = h.calls("open_thread").length === before;
+  h.click(tab);
+  h.click(tab);
+  await h.waitFor(() => h.visible()?.textContent.includes("wire the sidebar"), 4000);
+  const opened = h.calls("open_thread").slice(before);
+  const restored = h.visible()?.textContent.includes("wire the sidebar") === true;
+  const sameTab = tabFor("Wire the sidebar") === tab;
+  const countAfterResume = h.calls("open_thread").length;
+  h.click(tab);
+  await h.sleep(100);
+  const liveTabDidNotSpawn = h.calls("open_thread").length === countAfterResume;
+  window.__step = JSON.stringify({
+    ok: notReopenedInBackground && opened.length === 1
+      && opened[0]?.args?.resume === "01a0shell0001"
+      && opened[0]?.args?.workspace === "/tmp/omp-shell-app"
+      && restored && sameTab && liveTabDidNotSpawn,
+    notReopenedInBackground,
+    opened: opened.map((call) => call.args),
+    restored,
+    sameTab,
+    liveTabDidNotSpawn,
   });
 } catch (error) { window.__step = JSON.stringify({ error: String(error) }); } })()
 """)

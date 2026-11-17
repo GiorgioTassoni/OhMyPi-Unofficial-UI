@@ -699,7 +699,7 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
           :srcdoc="content"
           sandbox="allow-scripts"
           class="h-full w-full border-0"
-          title="HTML Document Preview"
+          aria-label="HTML Document Preview"
         />
       </div>
 
@@ -713,7 +713,7 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
           :src="props.file.path"
           :sandbox="isLocalHttp ? undefined : 'allow-scripts allow-forms allow-same-origin allow-popups allow-modals'"
           class="h-full w-full border-0 flex-1 bg-canvas"
-          title="Live Web Preview"
+          aria-label="Live Web Preview"
         />
       </div>
 

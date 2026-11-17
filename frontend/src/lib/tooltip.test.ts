@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it, vi } from "bun:test";
 import {
   attachGlobalTooltipHandler,
   computeTooltipPosition,
@@ -98,6 +98,25 @@ describe("tooltip logic", () => {
       document.body.appendChild(div);
       expect(extractTooltip(div)).toBeNull();
     });
+
+    it("ignores iframe titles, keeping the accessible name without a hover tooltip", () => {
+      const frame = document.createElement("iframe");
+      frame.setAttribute("title", "Live Web Preview");
+      document.body.appendChild(frame);
+
+      expect(extractTooltip(frame)).toBeNull();
+      expect(frame.hasAttribute("title")).toBe(false);
+      expect(frame.getAttribute("aria-label")).toBe("Live Web Preview");
+      expect(frame.hasAttribute("data-tooltip")).toBe(false);
+    });
+
+    it("ignores explicit data-tooltip on an iframe viewport", () => {
+      const frame = document.createElement("iframe");
+      frame.setAttribute("data-tooltip", "Live Web Preview");
+      document.body.appendChild(frame);
+
+      expect(extractTooltip(frame)).toBeNull();
+    });
   });
 
   describe("sanitizeTitlesInSubtree", () => {
@@ -124,6 +143,19 @@ describe("tooltip logic", () => {
       expect(s1.getAttribute("data-tooltip")).toBe("Two");
 
       expect(d1.hasAttribute("data-tooltip")).toBe(false);
+    });
+
+    it("keeps an iframe accessible name without turning it into a tooltip", () => {
+      const container = document.createElement("div");
+      container.innerHTML = `<iframe id="f1" title="HTML Document Preview"></iframe>`;
+      document.body.appendChild(container);
+
+      sanitizeTitlesInSubtree(container);
+
+      const frame = document.getElementById("f1") as HTMLIFrameElement;
+      expect(frame.hasAttribute("title")).toBe(false);
+      expect(frame.getAttribute("aria-label")).toBe("HTML Document Preview");
+      expect(frame.hasAttribute("data-tooltip")).toBe(false);
     });
   });
 
@@ -164,6 +196,68 @@ describe("tooltip logic", () => {
       expect(holder.current?.visible).toBe(false);
 
       cleanup();
+    });
+
+    it("hides the current tooltip when the pointer enters an iframe viewport", () => {
+      const btn = document.createElement("button");
+      btn.setAttribute("data-tooltip", "Reload live preview");
+      btn.getBoundingClientRect = () => ({
+        top: 50,
+        bottom: 80,
+        left: 100,
+        right: 160,
+        width: 60,
+        height: 30,
+        x: 100,
+        y: 50,
+        toJSON: () => {},
+      });
+      document.body.appendChild(btn);
+
+      const holder: { current: TooltipState | null } = { current: null };
+      vi.useFakeTimers();
+      const cleanup = attachGlobalTooltipHandler((state) => {
+        holder.current = state;
+      }, { showDelay: 10 });
+
+      try {
+        btn.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true }));
+        vi.advanceTimersByTime(20);
+        expect(holder.current?.visible).toBe(true);
+
+        const frame = document.createElement("iframe");
+        frame.setAttribute("data-tooltip", "Live Web Preview");
+        document.body.appendChild(frame);
+
+        frame.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true }));
+
+        expect(holder.current?.visible).toBe(false);
+      } finally {
+        cleanup();
+        vi.useRealTimers();
+      }
+    });
+
+    it("sanitizes an iframe added later without creating a tooltip", async () => {
+      const scopedGlobal = globalThis as { MutationObserver?: typeof window.MutationObserver | undefined };
+      const originalObserver = scopedGlobal.MutationObserver;
+      scopedGlobal.MutationObserver = window.MutationObserver;
+
+      const cleanup = attachGlobalTooltipHandler(() => {});
+      try {
+        const frame = document.createElement("iframe");
+        frame.setAttribute("title", "Live Web Preview");
+        document.body.appendChild(frame);
+
+        await Promise.resolve();
+
+        expect(frame.hasAttribute("title")).toBe(false);
+        expect(frame.getAttribute("aria-label")).toBe("Live Web Preview");
+        expect(frame.hasAttribute("data-tooltip")).toBe(false);
+      } finally {
+        cleanup();
+        scopedGlobal.MutationObserver = originalObserver;
+      }
     });
   });
 });

@@ -229,20 +229,20 @@ pub struct SubcommandSnapshot {
     pub description: Option<String>,
 }
 
+pub use omp_transport::protocol::ui::{AskAnswer, AskOption, AskQuestion};
+
 /// Details accompanying an option in a `select` dialog.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UiOptionDetail {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selected: Option<bool>,
 }
 
 /// A dialog the agent is waiting on, flattened for the frontend.
 ///
-/// `kind` is the wire method (`select`, `confirm`, `input`, `editor`) as a plain
-/// string so the UI can switch on it without a second vocabulary.
+/// `kind` is the wire method (`select`, `confirm`, `input`, `editor`, `ask`) as a
+/// plain string so the UI can switch on it without a second vocabulary.
 ///
 /// The approval dialog's content requirements (`docs/12` §10) — tool name, the
 /// rendered argument summary, the engine's reason — all arrive inside `title`;
@@ -259,6 +259,7 @@ pub struct UiRequestSnapshot {
     pub options: Vec<String>,
     /// `select` option details matching `options` by index.
     pub option_details: Vec<UiOptionDetail>,
+    pub questions: Vec<AskQuestion>,
     pub prefill: Option<String>,
     /// The hint shown inside an `input`'s empty field.
     pub placeholder: Option<String>,
@@ -269,14 +270,15 @@ pub struct UiRequestSnapshot {
 
 /// How the frontend answers a dialog.
 ///
-/// Mirrors the wire response's shape: exactly one of `value`, `confirmed` or
-/// `cancelled` is supplied. Resolving it into a response is the adapter's job
-/// (`bridge.rs`), not this module's.
+/// Mirrors the wire response's shape: exactly one of `value`, `confirmed`,
+/// `answers` or `cancelled` is supplied. Resolving it into a response is the
+/// adapter's job (`bridge.rs`), not this module's.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiAnswer {
     pub value: Option<String>,
     pub confirmed: Option<bool>,
+    pub answers: Option<Vec<AskAnswer>>,
     pub cancelled: Option<bool>,
     pub timed_out: Option<bool>,
 }

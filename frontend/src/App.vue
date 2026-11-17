@@ -1590,7 +1590,7 @@ function describe(cause: unknown): string {
               ? 'bg-raised text-fg border-line/70 font-medium shadow-xs'
               : 'text-dim hover:text-fg hover:bg-raised/50 border-transparent hover:border-line/30'"
             :aria-current="tid === activeId && activeAgentTab === null ? 'page' : undefined"
-            @click="activeId = tid; activeAgentKey = null"
+            @click="select(tid)"
             @auxclick.stop.prevent="closeThreadTab(tid)"
           >
             <span

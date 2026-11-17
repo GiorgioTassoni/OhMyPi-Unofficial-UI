@@ -158,18 +158,42 @@ export interface ActivitySnapshot {
 /** Mirrors `dto::UiOptionDetail`. */
 export interface UiOptionDetail {
   description?: string | null;
-  selected?: boolean | null;
+}
+
+/** Mirrors `dto::AskOption`. */
+export interface AskOption {
+  label: string;
+  description?: string | null;
+  preview?: string | null;
+}
+
+/** Mirrors `dto::AskQuestion`. */
+export interface AskQuestion {
+  id: string;
+  question: string;
+  header?: string | null;
+  options: AskOption[];
+  multi: boolean;
+  recommended?: number | null;
+}
+
+/** Mirrors `dto::AskAnswer`. */
+export interface AskAnswer {
+  id: string;
+  selectedOptions: string[];
+  customInput?: string | null;
 }
 
 /** Mirrors `dto::UiRequestSnapshot`. */
 export interface UiRequestSnapshot {
   id: string;
-  /** The wire method: `select`, `confirm`, `input` or `editor`. */
+  /** The wire method: `select`, `confirm`, `input`, `editor` or `ask`. */
   kind: string;
   title: string;
   message: string;
   options: string[];
   optionDetails?: UiOptionDetail[];
+  questions: AskQuestion[];
   prefill: string | null;
   placeholder: string | null;
   timeoutMs: number | null;
@@ -191,7 +215,7 @@ export interface PolicyOutcome {
 }
 
 /**
- * Mirrors `dto::UiAnswer`: exactly one of `value`, `confirmed` or `cancelled`.
+ * Mirrors `dto::UiAnswer`: exactly one of `value`, `answers`, `confirmed` or `cancelled`.
  *
  * The host refuses an answer carrying none of them, so this is not a place to
  * guess — a `select` answered with an empty choice would leave the agent waiting
@@ -199,6 +223,7 @@ export interface PolicyOutcome {
  */
 export interface UiAnswer {
   value?: string;
+  answers?: AskAnswer[];
   confirmed?: boolean;
   cancelled?: boolean;
   timedOut?: boolean;
@@ -1596,6 +1621,41 @@ export async function getCatalogProviders(): Promise<CatalogProviderDto[]> {
 export async function getConfiguredProviders(): Promise<ProviderAccountDto[]> {
   return invoke<ProviderAccountDto[]>("get_configured_providers");
 }
+/** One public OpenRouter endpoint provider that can serve an OpenRouter model. */
+export interface OpenRouterProvider {
+  slug: string;
+  name: string;
+}
+
+/** One model's saved provider allowlist, as the settings overview lists it. */
+export interface OpenRouterRouting {
+  modelId: string;
+  providers: string[];
+}
+
+/** Read the per-model OpenRouter provider restriction; `null` means automatic routing. */
+export async function getOpenRouterRouting(modelId: string): Promise<string[] | null> {
+  return invoke<string[] | null>("get_openrouter_routing", { modelId });
+}
+
+/** Every model-level provider allowlist on disk, including empty ones. Never fetches. */
+export async function listOpenRouterRoutings(): Promise<OpenRouterRouting[]> {
+  return invoke<OpenRouterRouting[]>("list_openrouter_routings");
+}
+
+/** List the public endpoint providers for one OpenRouter model. */
+export async function getOpenRouterProviders(modelId: string): Promise<OpenRouterProvider[]> {
+  return invoke<OpenRouterProvider[]>("get_openrouter_providers", { modelId });
+}
+
+/** Save an allowlist, or remove this model's restriction with `null` for automatic routing. */
+export async function setOpenRouterRouting(
+  modelId: string,
+  providers: string[] | null,
+): Promise<void> {
+  return invoke<void>("set_openrouter_routing", { modelId, providers });
+}
+
 
 /** Store an API key for a catalog provider in agent.db. */
 export async function addProviderApiKey(provider: string, apiKey: string): Promise<void> {

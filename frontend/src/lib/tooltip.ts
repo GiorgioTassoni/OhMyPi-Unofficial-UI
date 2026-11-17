@@ -51,23 +51,29 @@ export function computeTooltipPosition(
   return { top, left, placement };
 }
 
+function sanitizeTitle(el: HTMLElement): void {
+  const title = el.getAttribute("title")?.trim();
+  if (!title) return;
+  el.removeAttribute("title");
+  if (!el.getAttribute("aria-label")) {
+    el.setAttribute("aria-label", title);
+  }
+  if (el.tagName !== "IFRAME") {
+    el.setAttribute("data-tooltip", title);
+  }
+}
+
 export function extractTooltip(startEl: Element | null): { text: string; target: HTMLElement } | null {
   let curr: Element | null = startEl;
   let depth = 0;
   while (curr && curr !== document.body && depth < 8) {
     if (curr instanceof HTMLElement) {
-      const explicit = curr.getAttribute("data-tooltip")?.trim();
-      if (explicit) {
-        return { text: explicit, target: curr };
-      }
-      const rawTitle = curr.getAttribute("title")?.trim();
-      if (rawTitle) {
-        curr.setAttribute("data-tooltip", rawTitle);
-        curr.removeAttribute("title");
-        if (!curr.getAttribute("aria-label")) {
-          curr.setAttribute("aria-label", rawTitle);
+      sanitizeTitle(curr);
+      if (curr.tagName !== "IFRAME") {
+        const explicit = curr.getAttribute("data-tooltip")?.trim();
+        if (explicit) {
+          return { text: explicit, target: curr };
         }
-        return { text: rawTitle, target: curr };
       }
     }
     curr = curr.parentElement;
@@ -81,14 +87,7 @@ export function sanitizeTitlesInSubtree(root: Element): void {
   for (let i = 0; i < elements.length; i++) {
     const el = elements[i];
     if (el instanceof HTMLElement) {
-      const title = el.getAttribute("title")?.trim();
-      if (title) {
-        el.setAttribute("data-tooltip", title);
-        el.removeAttribute("title");
-        if (!el.getAttribute("aria-label")) {
-          el.setAttribute("aria-label", title);
-        }
-      }
+      sanitizeTitle(el);
     }
   }
 }
@@ -204,16 +203,7 @@ export function attachGlobalTooltipHandler(
           for (let i = 0; i < m.addedNodes.length; i++) {
             const node = m.addedNodes[i];
             if (node instanceof HTMLElement) {
-              if (node.hasAttribute("title")) {
-                const title = node.getAttribute("title")?.trim();
-                if (title) {
-                  node.setAttribute("data-tooltip", title);
-                  node.removeAttribute("title");
-                  if (!node.getAttribute("aria-label")) {
-                    node.setAttribute("aria-label", title);
-                  }
-                }
-              }
+              sanitizeTitle(node);
               sanitizeTitlesInSubtree(node);
             }
           }

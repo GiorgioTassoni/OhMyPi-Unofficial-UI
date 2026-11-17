@@ -1,18 +1,22 @@
 //! The dialogs the engine is waiting on.
 //!
-//! A `select`, `confirm`, `input` or `editor` request stops the run until the host
-//! answers. That makes this store the app's safety boundary as much as its state:
+//! A `select`, `confirm`, `input`, `editor` or `ask` request stops the run until
+//! the host answers. That makes this store the app's safety boundary as much as its state:
 //! an unanswerable dialog is an agent hung forever, and an answer to a dialog the
 //! engine has withdrawn is a late write that gets matched against whatever
 //! replaced it. Both are refused here, once, rather than left to every caller to
 //! remember (`docs/11` D3, `docs/12` §10).
 //!
-//! Only the blocking four are kept. `notify`, `setStatus`, `setWidget`,
+//! Only the blocking kinds are kept. `notify`, `setStatus`, `setWidget`,
 //! `setTitle`, `set_editor_text` and `open_url` are fire-and-forget chrome; the
 //! transport decodes them to nothing, so they never reach this module
 //! (`docs/02` §7).
 
-use omp_transport::protocol::ui::{Incoming, UiRequest, UiRequestKind, UiResponse};
+use std::collections::HashSet;
+
+use omp_transport::protocol::ui::{
+    AskAnswer, AskQuestion, Incoming, UiRequest, UiRequestKind, UiResponse,
+};
 use serde_json::Value;
 
 /// Why an answer was refused.
@@ -93,6 +97,21 @@ impl UiRequests {
         };
 
         let kind = self.pending[index].kind;
+        let response = match response {
+            UiResponse::Answers(answers) if kind == UiRequestKind::Ask => {
+                match validated_answers(&self.pending[index].questions, &answers) {
+                    Some(answers) => UiResponse::Answers(answers),
+                    None => {
+                        return Err(AnswerError::Mismatch {
+                            kind,
+                            response: "answers",
+                        })
+                    }
+                }
+            }
+            other => other,
+        };
+
         let Some(frame) = response.frame(kind, id) else {
             return Err(AnswerError::Mismatch {
                 kind,
@@ -118,4 +137,53 @@ impl UiRequests {
         self.pending.clear();
         had_any
     }
+}
+
+fn validated_answers(questions: &[AskQuestion], answers: &[AskAnswer]) -> Option<Vec<AskAnswer>> {
+    if answers.len() != questions.len() {
+        return None;
+    }
+
+    let mut validated = Vec::with_capacity(answers.len());
+    for (question, answer) in questions.iter().zip(answers) {
+        if answer.id != question.id {
+            return None;
+        }
+
+        let mut selected = Vec::with_capacity(answer.selected_options.len());
+        let mut seen = HashSet::new();
+        for label in &answer.selected_options {
+            if !seen.insert(label.as_str())
+                || !question
+                    .options
+                    .iter()
+                    .any(|option| option.label.as_str() == label.as_str())
+            {
+                return None;
+            }
+            selected.push(label.clone());
+        }
+
+        let custom = answer
+            .custom_input
+            .as_deref()
+            .map(str::trim)
+            .filter(|input| !input.is_empty())
+            .map(str::to_string);
+
+        if !question.multi
+            && !((selected.len() == 1 && custom.is_none())
+                || (selected.is_empty() && custom.is_some()))
+        {
+            return None;
+        }
+
+        validated.push(AskAnswer {
+            id: question.id.clone(),
+            selected_options: selected,
+            custom_input: custom,
+        });
+    }
+
+    Some(validated)
 }

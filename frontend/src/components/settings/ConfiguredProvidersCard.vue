@@ -110,7 +110,7 @@ async function handleTestAll(): Promise<void> {
 </script>
 
 <template>
-  <div class="mb-5 rounded-[10px] border border-line bg-surface p-4 shadow-sm">
+  <div class="mb-5 rounded-[10px] border border-line bg-surface p-4">
     <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line/60 pb-3">
       <div>
         <h3 class="text-[13.5px] font-medium text-fg flex items-center gap-2">

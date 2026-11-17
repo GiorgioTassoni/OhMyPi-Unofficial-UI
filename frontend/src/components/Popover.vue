@@ -17,6 +17,7 @@
  * is *not* an outside press — the parent decides whether that reopens or toggles.
  */
 import { onUnmounted, ref, watch } from "vue";
+import { needsPlacement } from "../lib/popoverPlacement";
 
 const props = defineProps<{
   open: boolean;
@@ -49,10 +50,9 @@ const placement = ref<{ left: string; top: string; bottom: string; width: string
 });
 
 function place(event?: Event): void {
-  // Ignore scrolls that originate inside the panel (e.g. scrolling the model list):
-  // re-measuring the trigger every time the *content* scrolls causes a reactive
-  // re-render that steals pointer events from rows under the cursor.
-  if (event instanceof Event && panel.value?.contains(event.target as Node)) {
+  // A resize targets the Window (not a Node), and a scroll of something that does not hold
+  // the trigger cannot have moved it: neither is a reason to re-measure or re-render.
+  if (event !== undefined && !needsPlacement(event, panel.value, trigger.value)) {
     return;
   }
   const rect = trigger.value?.getBoundingClientRect();
@@ -156,12 +156,17 @@ onUnmounted(() => listen(false));
   </span>
 
   <Teleport to="body">
+    <!--
+      No `transition`: `left`/`top`/`max-height` are placement, not decoration. Animating them
+      makes the panel trail its trigger by a transition's worth of distance while the content
+      under it scrolls, and restarts the animation on every scroll frame.
+    -->
     <div
       v-if="open"
       ref="panel"
       role="dialog"
       :aria-label="label"
-      class="fixed z-30 flex flex-col overflow-hidden rounded-[12px] border border-line-strong/60 bg-surface/95 backdrop-blur-md shadow-2xl shadow-black/60 transition-all"
+      class="fixed z-30 flex flex-col overflow-hidden rounded-[12px] border border-line-strong/60 bg-surface/95 backdrop-blur-md shadow-2xl shadow-black/60"
       :style="placement"
     >
       <!--

@@ -210,9 +210,41 @@ def load_driver(path):
     return module
 
 
+def failed_checks(report):
+    broke = []
+    unmet = []
+    for name, value in (report or {}).items():
+        if not isinstance(value, dict):
+            continue
+        if "error" in value:
+            broke.append(name)
+        elif value.get("ok") is False:
+            unmet.append(name)
+
+    return broke, unmet
+
+
+def self_check():
+    report = {
+        "threw": {"error": "boom"},
+        "unmet": {"ok": False, "unmet": ["the menu never opened"]},
+        "asserted": {"ok": True, "aBoolean": False},
+        "observed": {"aBoolean": False},
+    }
+
+    assert failed_checks(report) == (["threw"], ["unmet"]), failed_checks(report)
+    assert failed_checks({}) == ([], [])
+    assert failed_checks({"fine": {"ok": True}}) == ([], [])
+    print("[harness] the runner's assertion self-check passed", flush=True)
+
+
 def main():
     if len(sys.argv) < 2:
-        raise SystemExit("usage: wharness.py <driver.py>")
+        raise SystemExit("usage: wharness.py <driver.py> | --self-check")
+
+    if sys.argv[1] == "--self-check":
+        self_check()
+        return
 
     driver = load_driver(sys.argv[1])
     harness = Harness()
@@ -220,16 +252,15 @@ def main():
 
     report = driver.run(harness)
 
-    # A driver that returns its report is the whole point of `checked` wrapping each one: the
-    # checks print as they go, but the summary is what says whether anything threw — and a
-    # check that threw looks exactly like a check whose subject was missing.
-    failing = [
-        name
-        for name, value in (report or {}).items()
-        if isinstance(value, dict) and "error" in value
-    ]
-    print(f"[harness] {len(report or {})} checks, {len(failing)} threw: {failing}", flush=True)
+    broke, unmet = failed_checks(report)
+    print(
+        f"[harness] {len(report or {})} checks, {len(broke)} threw, {len(unmet)} unmet: {broke + unmet}",
+        flush=True,
+    )
     print(json.dumps(report, indent=2))
+
+    if broke or unmet:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

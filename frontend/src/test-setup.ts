@@ -23,5 +23,6 @@ Object.assign(globalThis, {
   document: dom.window.document,
   Element: dom.window.Element,
   HTMLElement: dom.window.HTMLElement,
+  SVGElement: dom.window.SVGElement,
   Node: dom.window.Node,
 });

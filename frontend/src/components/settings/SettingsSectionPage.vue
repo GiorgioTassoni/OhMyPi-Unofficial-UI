@@ -27,6 +27,7 @@ import AppThemeSetting from "./AppThemeSetting.vue";
 import ConfiguredProvidersCard from "./ConfiguredProvidersCard.vue";
 import ConfiguredSkillsCard from "./ConfiguredSkillsCard.vue";
 import McpDesignChoiceSetting from "./McpDesignChoiceSetting.vue";
+import OpenRouterRoutingSetting from "./OpenRouterRoutingSetting.vue";
 import NotificationSoundSetting from "./NotificationSoundSetting.vue";
 import SettingsRow from "./SettingsRow.vue";
 
@@ -222,22 +223,26 @@ function needsFor(row: SettingsRowModel): { sectionId: string; title: string } |
       </div>
 
       <div class="flex flex-col divide-y divide-line/30">
-        <SettingsRow
-          v-for="row in group.rows"
-          :key="rowId(row)"
-          :row="row"
-          :pending="props.pending.has(rowId(row))"
-          :message="props.messages[rowId(row)] ?? null"
-          :error="props.errors[rowId(row)] ?? null"
-          :highlighted="props.highlight === rowId(row)"
-          :needs="needsFor(row)"
-          @write="emit('write', row, $event)"
-          @reset="emit('reset', row)"
-          @restart="emit('restart')"
-          @navigate="(sectionId, target) => emit('navigate', sectionId, target)"
-          @action="emit('action', $event)"
-          @changed="emit('changed')"
-        />
+        <template v-for="row in group.rows" :key="rowId(row)">
+          <SettingsRow
+            :row="row"
+            :pending="props.pending.has(rowId(row))"
+            :message="props.messages[rowId(row)] ?? null"
+            :error="props.errors[rowId(row)] ?? null"
+            :highlighted="props.highlight === rowId(row)"
+            :needs="needsFor(row)"
+            @write="emit('write', row, $event)"
+            @reset="emit('reset', row)"
+            @restart="emit('restart')"
+            @navigate="(sectionId, target) => emit('navigate', sectionId, target)"
+            @action="emit('action', $event)"
+            @changed="emit('changed')"
+          />
+          <OpenRouterRoutingSetting
+            v-if="props.section.id === 'model-and-providers' && row.role === 'setting' && row.key === 'modelRoles'"
+            class="my-5"
+          />
+        </template>
       </div>
     </section>
 

@@ -46,6 +46,7 @@ pub mod idle;
 pub mod mcp_choice;
 pub mod models;
 pub mod notify;
+pub mod openrouter;
 pub mod palette;
 pub mod panel;
 pub mod policy;
@@ -248,6 +249,10 @@ pub fn run() {
             providers::add_custom_provider,
             providers::remove_custom_provider,
             providers::get_oauth_usage_limits,
+            openrouter::get_openrouter_routing,
+            openrouter::get_openrouter_providers,
+            openrouter::list_openrouter_routings,
+            openrouter::set_openrouter_routing,
             provider_probe::test_provider_connection,
             skills::list_skills,
             skills::create_custom_skill,
