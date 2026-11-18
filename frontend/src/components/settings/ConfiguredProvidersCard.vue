@@ -110,15 +110,15 @@ async function handleTestAll(): Promise<void> {
 </script>
 
 <template>
-  <div class="mb-5 rounded-[10px] border border-line bg-surface p-4">
+  <div class="mb-5 rounded-[10px] border border-line bg-raised/35 p-4">
     <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line/60 pb-3">
       <div>
         <h3 class="text-[13.5px] font-medium text-fg flex items-center gap-2">
           <Icon name="plug" class="h-4 w-4 text-accent" />
           Configured Providers & Accounts
         </h3>
-        <p class="text-[11.5px] text-faint">
-          Active credentials stored in <code class="text-dim">agent.db</code> and custom endpoints in <code class="text-dim">models.yml</code>
+        <p class="text-[11.5px] text-dim">
+          Active credentials stored in <code class="text-fg/80">agent.db</code> and custom endpoints in <code class="text-fg/80">models.yml</code>
         </p>
       </div>
 
@@ -126,7 +126,7 @@ async function handleTestAll(): Promise<void> {
         <button
           v-if="props.providers.length > 0"
           type="button"
-          class="flex items-center gap-1.5 rounded-[6px] border border-line px-2.5 py-1 text-[12px] text-dim hover:border-line-strong hover:text-fg transition-all active:scale-95 disabled:opacity-50"
+          class="flex items-center gap-1.5 rounded-[6px] border border-line bg-surface/50 px-2.5 py-1 text-[12px] text-dim hover:border-line-strong hover:text-fg transition-colors disabled:opacity-50"
           :disabled="testingAll || loading"
           @click="handleTestAll"
         >
@@ -140,7 +140,7 @@ async function handleTestAll(): Promise<void> {
 
         <button
           type="button"
-          class="flex items-center gap-1.5 rounded-[6px] border border-line px-2.5 py-1 text-[12px] text-dim hover:border-line-strong hover:text-fg transition-all active:scale-95"
+          class="flex items-center gap-1.5 rounded-[6px] border border-line bg-surface/50 px-2.5 py-1 text-[12px] text-dim hover:border-line-strong hover:text-fg transition-colors"
           @click="emit('openTerminalLogin')"
         >
           <Icon name="terminal" class="h-3.5 w-3.5 text-faint" />
@@ -149,7 +149,7 @@ async function handleTestAll(): Promise<void> {
 
         <button
           type="button"
-          class="flex items-center gap-1.5 rounded-[6px] bg-accent px-3 py-1 text-[12px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 shadow-xs"
+          class="flex items-center gap-1.5 rounded-[6px] bg-accent px-3 py-1 text-[12px] font-semibold text-accent-contrast transition-all hover:brightness-110 active:scale-95"
           @click="emit('add')"
         >
           <Icon name="plus" class="h-3.5 w-3.5" />
@@ -158,7 +158,7 @@ async function handleTestAll(): Promise<void> {
 
         <button
           type="button"
-          class="rounded-[6px] p-1.5 text-faint hover:bg-raised hover:text-fg transition-all active:scale-95"
+          class="rounded-[6px] p-1.5 text-faint hover:bg-raised hover:text-fg transition-colors"
           aria-label="Refresh accounts"
           @click="emit('refresh')"
         >
@@ -178,7 +178,7 @@ async function handleTestAll(): Promise<void> {
         <p class="text-[11.5px] text-faint mb-3">Add an API key, OAuth account, or custom model endpoint to get started.</p>
         <button
           type="button"
-          class="rounded-[6px] bg-raised border border-line px-3.5 py-1.5 text-[12px] font-medium text-fg hover:border-line-strong hover:bg-raised/80 transition-all active:scale-95 shadow-xs"
+          class="rounded-[6px] bg-surface border border-line px-3.5 py-1.5 text-[12px] font-medium text-fg hover:border-line-strong hover:bg-raised transition-colors"
           @click="emit('add')"
         >
           + Add Your First Provider
@@ -189,7 +189,7 @@ async function handleTestAll(): Promise<void> {
         <div
           v-for="item in props.providers"
           :key="item.isCustom ? `custom-${item.provider}` : `cred-${item.id}`"
-          class="flex flex-col gap-2 rounded-[8px] border border-line/60 bg-raised/40 p-3 transition-colors hover:border-line"
+          class="flex flex-col gap-2 rounded-[8px] border border-line/70 bg-surface/60 p-3 transition-colors hover:border-line-strong"
         >
           <div class="flex items-center justify-between gap-3">
             <div class="flex flex-wrap items-center gap-2 min-w-0">
@@ -198,7 +198,7 @@ async function handleTestAll(): Promise<void> {
               </span>
               <span
                 v-if="providerDisplayName(item.provider) !== item.provider"
-                class="rounded-[4px] bg-canvas/80 px-1.5 py-0.2 text-[10px] font-mono text-faint border border-line/40"
+                class="rounded-[4px] bg-canvas/80 px-1.5 py-0.2 text-[10.5px] text-faint border border-line/40"
               >
                 {{ item.provider }}
               </span>
@@ -287,7 +287,7 @@ async function handleTestAll(): Promise<void> {
             </span>
             <span
               v-if="testResults[item.provider]?.ok && testResults[item.provider]?.latencyMs"
-              class="font-mono text-[10px] text-faint shrink-0"
+              class="tabular-nums text-[10.5px] text-faint shrink-0"
             >
               {{ testResults[item.provider]?.latencyMs }}ms
             </span>

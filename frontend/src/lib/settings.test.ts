@@ -16,6 +16,7 @@ import {
   numberValue,
   openingSection,
   originHint,
+  partitionSectionGroups,
   prioritizeSettings,
   restartHint,
   rowId,
@@ -324,5 +325,73 @@ describe("values a sub-editor writes", () => {
       tone: "normal",
     };
     expect(matchRank(action, "config")).toBe(3);
+  });
+});
+
+describe("partitionSectionGroups", () => {
+  test("separates specialist tuning groups and rows into advanced tuning", () => {
+    const partitioned = partitionSectionGroups({
+      id: "appearance",
+      title: "Appearance",
+      blurb: "",
+      navGroup: "app",
+      icon: "sparkle",
+      groups: [
+        {
+          name: "Display",
+          rows: [
+            row({ key: "display.smoothStreaming", label: "Smooth streaming" }),
+            row({ key: "tui.reactions", label: "Reactions" }),
+          ],
+        },
+        {
+          name: "Status Line",
+          rows: [row({ key: "statusLine.preset", label: "Status line preset" })],
+        },
+      ],
+    });
+
+    expect(partitioned.essentialGroups.map((g) => g.name)).toEqual(["Display"]);
+    expect(partitioned.essentialGroups[0]?.rows.map(rowId)).toEqual(["display.smoothStreaming"]);
+    expect(partitioned.advancedGroups.map((g) => g.name)).toEqual(["Display", "Status Line"]);
+    expect(partitioned.advancedCount).toBe(2);
+    expect(partitioned.forceOpenAdvanced).toBe(false);
+  });
+
+  test("auto-opens advanced tuning when a highlighted key lives inside it", () => {
+    const partitioned = partitionSectionGroups(
+      {
+        id: "general",
+        title: "General",
+        blurb: "",
+        navGroup: "app",
+        icon: "sliders",
+        groups: [
+          { name: "About", rows: [row({ key: "app.version", label: "Version" })] },
+          { name: "Housekeeping", rows: [row({ key: "gc.days", label: "Days" })] },
+        ],
+      },
+      "gc.days",
+    );
+
+    expect(partitioned.forceOpenAdvanced).toBe(true);
+  });
+
+  test("promotes first advanced group if essentialGroups would be empty", () => {
+    const partitioned = partitionSectionGroups({
+      id: "usage-and-limits",
+      title: "Usage & Limits",
+      blurb: "",
+      navGroup: "app",
+      icon: "gauge",
+      groups: [
+        { name: "Service Tiers", rows: [row({ key: "tier.openai" })] },
+        { name: "Timeouts", rows: [row({ key: "providers.streamIdleTimeoutSeconds" })] },
+      ],
+    });
+
+    expect(partitioned.essentialGroups.map((g) => g.name)).toEqual(["Service Tiers"]);
+    expect(partitioned.advancedGroups.map((g) => g.name)).toEqual(["Timeouts"]);
+    expect(partitioned.advancedCount).toBe(1);
   });
 });

@@ -102,9 +102,9 @@ function onRowClick(): void {
     @keydown.enter="onRowClick"
   >
     <Icon name="file" class="h-3.5 w-3.5 shrink-0 text-faint" />
-    <span class="min-w-0 truncate font-mono">{{ title }}</span>
+    <span class="min-w-0 truncate">{{ title }}</span>
     <span v-if="canOpenRead" class="ml-auto flex items-center gap-1 text-faint">
-      <span class="rounded bg-raised/80 px-1.5 py-0.5 font-mono text-[10px] text-faint">view</span>
+      <span class="rounded bg-raised/80 px-1.5 py-0.5 text-[10.5px] text-faint">view</span>
       <Icon name="chevron-right" class="h-3 w-3 shrink-0 text-faint" />
     </span>
     <Icon v-if="failed" name="close" class="ml-auto h-3.5 w-3.5 shrink-0 text-err" aria-label="Failed or denied" />
@@ -121,9 +121,9 @@ function onRowClick(): void {
       class="flex min-w-0 cursor-pointer list-none items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] text-dim select-none hover:bg-raised/65 hover:text-fg [&::-webkit-details-marker]:hidden"
     >
       <Icon :name="icon" class="h-3.5 w-3.5 shrink-0 text-faint" />
-      <span :class="standalone ? 'font-medium text-fg' : 'font-mono'" class="min-w-0 truncate">{{ title }}</span>
+      <span :class="standalone ? 'font-medium text-fg' : ''" class="min-w-0 truncate">{{ title }}</span>
       <code v-if="kind === 'command'" class="shrink-0 rounded-[5px] bg-raised px-1.5 py-0.5 font-mono text-[11px] text-fg">{{ commandPrefix }}</code>
-      <span v-if="counts" class="ml-auto shrink-0 font-mono text-[11px]">
+      <span v-if="counts" class="ml-auto shrink-0 tabular-nums text-[11px]">
         <span v-if="counts.added > 0" class="text-ok">+{{ counts.added }}</span>
         <span v-if="counts.added > 0 && counts.removed > 0"> </span>
         <span v-if="counts.removed > 0" class="text-err">-{{ counts.removed }}</span>
@@ -134,7 +134,7 @@ function onRowClick(): void {
         role="button"
         tabindex="0"
         title="Open in sidebar"
-        class="flex items-center gap-1 rounded bg-raised/80 px-1.5 py-0.5 font-mono text-[10px] text-faint hover:bg-raised hover:text-fg transition-colors"
+        class="flex items-center gap-1 rounded bg-raised/80 px-1.5 py-0.5 text-[10.5px] text-faint hover:bg-raised hover:text-fg transition-colors"
         @click.stop="openFileInSidebar()"
         @keydown.enter.stop="openFileInSidebar()"
       >
@@ -149,20 +149,20 @@ function onRowClick(): void {
       <template v-if="kind === 'edit'">
         <div v-if="edits?.files.length === 0" class="px-3 py-2 text-faint">No file diff was reported for this call.</div>
         <div v-for="file in edits?.files" :key="file.path" class="min-w-0 border-t border-line/40 first:border-0">
-          <div class="flex min-w-0 items-center gap-2 px-3 py-1.5 font-mono text-[11px]">
+          <div class="flex min-w-0 items-center gap-2 px-3 py-1.5 text-[11.5px]">
             <span
               class="min-w-0 flex-1 truncate cursor-pointer hover:underline hover:text-fg"
               title="Open in sidebar"
               @click="openFileInSidebar(file.path)"
             >{{ file.path }}</span>
-            <span v-if="file.added !== null" class="shrink-0">
+            <span v-if="file.added !== null" class="shrink-0 tabular-nums">
               <span v-if="file.added > 0" class="text-ok">+{{ file.added }}</span>
               <span v-if="file.added > 0 && file.removed !== null && file.removed > 0"> </span>
               <span v-if="file.removed !== null && file.removed > 0" class="text-err">-{{ file.removed }}</span>
             </span>
             <button
               type="button"
-              class="flex items-center gap-1 rounded bg-raised/80 px-1.5 py-0.5 font-mono text-[10px] text-faint hover:bg-raised hover:text-fg transition-colors"
+              class="flex items-center gap-1 rounded bg-raised/80 px-1.5 py-0.5 text-[10.5px] text-faint hover:bg-raised hover:text-fg transition-colors"
               title="Open in sidebar"
               @click="openFileInSidebar(file.path)"
             >

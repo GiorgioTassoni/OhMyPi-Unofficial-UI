@@ -373,7 +373,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="mb-5 rounded-[10px] border border-line bg-surface p-4" data-setting="openrouter-routing">
+  <section class="rounded-[10px] border border-line bg-raised/35 p-4" data-setting="openrouter-routing">
     <div class="flex flex-wrap items-start justify-between gap-3 border-b border-line/60 pb-3">
       <div class="min-w-0">
         <h3 class="text-[13.5px] font-medium text-fg">OpenRouter execution providers</h3>
@@ -444,7 +444,7 @@ onBeforeUnmount(() => {
 
     <div class="mt-4">
       <div class="flex flex-wrap items-center gap-2 border-b border-line/50 pb-2">
-        <h4 class="text-[12px] font-semibold uppercase tracking-wider text-fg/80">
+        <h4 class="text-[12px] font-medium text-dim">
           Saved restrictions
         </h4>
         <span v-if="rules.length > 0" class="text-[11px] text-faint">
@@ -712,7 +712,7 @@ onBeforeUnmount(() => {
           </button>
           <button
             type="button"
-            class="rounded-[6px] bg-accent px-3 py-1.5 text-[12px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40"
+            class="rounded-[6px] bg-accent px-3 py-1.5 text-[12px] font-semibold text-accent-contrast transition-all hover:brightness-110 active:scale-95 disabled:opacity-40"
             :disabled="!canSave"
             data-action="save-openrouter-routing"
             @click="save"

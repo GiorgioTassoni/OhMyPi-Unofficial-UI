@@ -80,7 +80,7 @@ onUnmounted(() => {
     <button
       v-if="quotePopup"
       type="button"
-      class="absolute z-50 flex items-center gap-1.5 rounded-[8px] border border-line-strong/80 bg-raised px-3 py-1.5 text-[12px] font-medium text-fg shadow-xl shadow-black/50 backdrop-blur-md transition-all hover:border-accent hover:bg-surface hover:text-accent active:scale-95 cursor-pointer select-none"
+      class="absolute z-50 flex items-center gap-1.5 rounded-[7px] border border-line/70 bg-raised/95 px-2.5 py-1 text-[11.5px] font-medium text-dim shadow-md shadow-black/25 backdrop-blur-sm transition-colors hover:border-line-strong hover:bg-selected hover:text-fg active:scale-95 cursor-pointer select-none"
       :style="{
         left: quotePopup.x + 'px',
         top: quotePopup.y + 'px',

@@ -120,7 +120,7 @@ onUnmounted(() => {
 
 <template>
   <header
-    class="flex h-8 w-full shrink-0 items-center justify-between border-b border-line/40 bg-surface/90 px-2.5 text-dim backdrop-blur-md select-none z-40"
+    class="flex h-8 w-full shrink-0 items-center justify-between bg-rail px-2.5 text-dim select-none z-40"
     data-tauri-drag-region
     @mousedown.capture="handleHeaderMouseDown"
     @dblclick="handleToggleMaximize"

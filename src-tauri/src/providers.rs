@@ -4,13 +4,21 @@
 //! - Catalog credentials live in `~/.omp/agent/agent.db` (table `auth_credentials`).
 //! - Custom endpoints live in `~/.omp/agent/models.yml` (root `providers` map).
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use rusqlite::{params, Connection};
 use serde_json::json;
 
-use crate::dto::{CatalogProviderDto, CustomProviderInput, ProviderAccountDto};
+use crate::dto::{CatalogProviderDto, CustomProviderInput, OAuthUsageLimitDto, ProviderAccountDto};
+
+static LAST_OAUTH_LIMITS: OnceLock<Mutex<HashMap<String, OAuthUsageLimitDto>>> = OnceLock::new();
+
+fn oauth_limits_cache() -> &'static Mutex<HashMap<String, OAuthUsageLimitDto>> {
+    LAST_OAUTH_LIMITS.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// Return the agent directory path.
 pub(crate) fn resolve_agent_dir() -> Result<PathBuf, String> {
@@ -559,6 +567,12 @@ pub async fn get_oauth_usage_limits() -> Result<Vec<crate::dto::OAuthUsageLimitD
         rows.flatten().collect()
     };
 
+    let active_providers: std::collections::HashSet<String> =
+        records.iter().map(|(p, _)| p.clone()).collect();
+    if let Ok(mut cache) = oauth_limits_cache().lock() {
+        cache.retain(|k, _| active_providers.contains(k));
+    }
+
     let mut limits = Vec::new();
 
     for (provider, data_str) in records {
@@ -578,76 +592,91 @@ pub async fn get_oauth_usage_limits() -> Result<Vec<crate::dto::OAuthUsageLimitD
                 .and_then(|v| v.as_str())
                 .map(String::from);
 
-            let Some(token) = token else { continue };
+            let mut fetched: Option<OAuthUsageLimitDto> = None;
 
-            let mut args = vec![
-                "-s".to_string(),
-                "-m".to_string(),
-                "5".to_string(),
-                "-H".to_string(),
-                format!("Authorization: Bearer {token}"),
-                "-H".to_string(),
-                "User-Agent: Mozilla/5.0".to_string(),
-            ];
-            if let Some(acc) = account_id {
-                args.push("-H".to_string());
-                args.push(format!("ChatGPT-Account-Id: {acc}"));
-            }
-            args.push("https://chatgpt.com/backend-api/wham/usage".to_string());
+            if let Some(token) = token {
+                let mut args = vec![
+                    "-s".to_string(),
+                    "-m".to_string(),
+                    "5".to_string(),
+                    "-H".to_string(),
+                    format!("Authorization: Bearer {token}"),
+                    "-H".to_string(),
+                    "User-Agent: Mozilla/5.0".to_string(),
+                ];
+                if let Some(acc) = account_id {
+                    args.push("-H".to_string());
+                    args.push(format!("ChatGPT-Account-Id: {acc}"));
+                }
+                args.push("https://chatgpt.com/backend-api/wham/usage".to_string());
 
-            let curl_res = tokio::time::timeout(
-                std::time::Duration::from_secs(6),
-                tokio::process::Command::new("curl").args(&args).output(),
-            )
-            .await;
+                let curl_res = tokio::time::timeout(
+                    std::time::Duration::from_secs(6),
+                    tokio::process::Command::new("curl").args(&args).output(),
+                )
+                .await;
 
-            if let Ok(Ok(out)) = curl_res {
-                if out.status.success() {
-                    if let Ok(resp) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
-                        let mut windows = Vec::new();
-                        if let Some(rate_limit) = resp.get("rate_limit") {
-                            if let Some(p) = rate_limit.get("primary_window") {
-                                windows.push(crate::dto::OAuthWindowLimitDto {
-                                    label: "5h Window".into(),
-                                    used_percent: p
-                                        .get("used_percent")
-                                        .and_then(|v| v.as_f64())
-                                        .unwrap_or(0.0),
-                                    reset_at: p.get("reset_at").and_then(|v| v.as_i64()),
-                                    reset_after_seconds: p
-                                        .get("reset_after_seconds")
-                                        .and_then(|v| v.as_i64()),
-                                });
+                if let Ok(Ok(out)) = curl_res {
+                    if out.status.success() {
+                        if let Ok(resp) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                            let mut windows = Vec::new();
+                            if let Some(rate_limit) = resp.get("rate_limit") {
+                                if let Some(p) = rate_limit.get("primary_window") {
+                                    windows.push(crate::dto::OAuthWindowLimitDto {
+                                        label: "5h Window".into(),
+                                        used_percent: p
+                                            .get("used_percent")
+                                            .and_then(|v| v.as_f64())
+                                            .unwrap_or(0.0),
+                                        reset_at: p.get("reset_at").and_then(|v| v.as_i64()),
+                                        reset_after_seconds: p
+                                            .get("reset_after_seconds")
+                                            .and_then(|v| v.as_i64()),
+                                    });
+                                }
+                                if let Some(s) = rate_limit.get("secondary_window") {
+                                    windows.push(crate::dto::OAuthWindowLimitDto {
+                                        label: "Weekly Window".into(),
+                                        used_percent: s
+                                            .get("used_percent")
+                                            .and_then(|v| v.as_f64())
+                                            .unwrap_or(0.0),
+                                        reset_at: s.get("reset_at").and_then(|v| v.as_i64()),
+                                        reset_after_seconds: s
+                                            .get("reset_after_seconds")
+                                            .and_then(|v| v.as_i64()),
+                                    });
+                                }
                             }
-                            if let Some(s) = rate_limit.get("secondary_window") {
-                                windows.push(crate::dto::OAuthWindowLimitDto {
-                                    label: "Weekly Window".into(),
-                                    used_percent: s
-                                        .get("used_percent")
-                                        .and_then(|v| v.as_f64())
-                                        .unwrap_or(0.0),
-                                    reset_at: s.get("reset_at").and_then(|v| v.as_i64()),
-                                    reset_after_seconds: s
-                                        .get("reset_after_seconds")
-                                        .and_then(|v| v.as_i64()),
+
+                            if !windows.is_empty() {
+                                let resolved_plan = resp
+                                    .get("plan_type")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from)
+                                    .or(plan_type);
+
+                                fetched = Some(OAuthUsageLimitDto {
+                                    provider: "openai-codex".into(),
+                                    display_name: "ChatGPT / Codex".into(),
+                                    plan_type: resolved_plan,
+                                    email,
+                                    windows,
                                 });
                             }
                         }
-
-                        let resolved_plan = resp
-                            .get("plan_type")
-                            .and_then(|v| v.as_str())
-                            .map(String::from)
-                            .or(plan_type);
-
-                        limits.push(crate::dto::OAuthUsageLimitDto {
-                            provider: "openai-codex".into(),
-                            display_name: "ChatGPT / Codex".into(),
-                            plan_type: resolved_plan,
-                            email,
-                            windows,
-                        });
                     }
+                }
+            }
+
+            if let Some(dto) = fetched {
+                if let Ok(mut cache) = oauth_limits_cache().lock() {
+                    cache.insert("openai-codex".into(), dto.clone());
+                }
+                limits.push(dto);
+            } else if let Ok(cache) = oauth_limits_cache().lock() {
+                if let Some(cached) = cache.get("openai-codex") {
+                    limits.push(cached.clone());
                 }
             }
         }

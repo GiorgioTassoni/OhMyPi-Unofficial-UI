@@ -253,6 +253,57 @@ export function providerGlyph(provider: string): string {
   return initials.toUpperCase();
 }
 
+const PROVIDER_BADGES: Readonly<Record<string, string>> = {
+  "openai-codex": "Codex",
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  google: "Gemini",
+  "google-antigravity": "Antigravity",
+  openrouter: "OpenRouter",
+  deepseek: "DeepSeek",
+  "github-copilot": "Copilot",
+  commandcode: "CommandCode",
+  xai: "xAI",
+  "x-ai": "xAI",
+  groq: "Groq",
+  cerebras: "Cerebras",
+  mistral: "Mistral",
+  perplexity: "Perplexity",
+  zai: "GLM",
+  minimax: "MiniMax",
+  ollama: "Ollama",
+  "ollama-cloud": "Ollama",
+  "llama.cpp": "llama.cpp",
+  "lm-studio": "LM Studio",
+  vllm: "vLLM",
+};
+
+const PROVIDER_SECTION_TITLES: Readonly<Record<string, string>> = {
+  "openai-codex": "OpenAI Codex (ChatGPT)",
+  google: "Google Gemini",
+  "google-antigravity": "Google Antigravity",
+  "github-copilot": "GitHub Copilot",
+  zai: "z.ai (GLM)",
+};
+
+export function providerBadge(provider: string): string {
+  const trimmed = provider.trim();
+  if (trimmed === "") return "Unknown";
+  const mapped = PROVIDER_BADGES[trimmed.toLowerCase()];
+  if (mapped !== undefined) return mapped;
+  return trimmed
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+export function providerSectionTitle(provider: string): string {
+  const trimmed = provider.trim();
+  if (trimmed === "") return "Unknown";
+  return PROVIDER_SECTION_TITLES[trimmed.toLowerCase()] ?? providerBadge(trimmed);
+}
+
 function groupByProvider(models: ModelOption[]): ProviderGroup[] {
   // A `Map` iterates in insertion order, which is exactly "providers in the order
   // the catalogue first mentioned them".

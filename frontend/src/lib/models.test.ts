@@ -14,7 +14,9 @@ import {
   modelKey,
   moveFavourite,
   parseKey,
+  providerBadge,
   providerGlyph,
+  providerSectionTitle,
   toggleFavourite,
   visibleGroups,
 } from "./models";
@@ -294,5 +296,30 @@ describe("providerGlyph", () => {
 
   test("an absent provider still gets a badge", () => {
     expect(providerGlyph("")).toBe("?");
+  });
+});
+
+describe("providerBadge & providerSectionTitle", () => {
+  test("maps common providers to clear human-readable badges", () => {
+    expect(providerBadge("openai-codex")).toBe("Codex");
+    expect(providerBadge("openai")).toBe("OpenAI");
+    expect(providerBadge("anthropic")).toBe("Anthropic");
+    expect(providerBadge("google")).toBe("Gemini");
+    expect(providerBadge("google-antigravity")).toBe("Antigravity");
+    expect(providerBadge("openrouter")).toBe("OpenRouter");
+    expect(providerBadge("github-copilot")).toBe("Copilot");
+    expect(providerBadge("x-ai")).toBe("xAI");
+    expect(providerBadge("ollama-cloud")).toBe("Ollama");
+  });
+
+  test("formats unknown or empty providers gracefully", () => {
+    expect(providerBadge("amazon-bedrock")).toBe("Amazon Bedrock");
+    expect(providerBadge("  ")).toBe("Unknown");
+  });
+
+  test("provides clean section titles", () => {
+    expect(providerSectionTitle("openai-codex")).toBe("OpenAI Codex (ChatGPT)");
+    expect(providerSectionTitle("anthropic")).toBe("Anthropic");
+    expect(providerSectionTitle("openrouter")).toBe("OpenRouter");
   });
 });

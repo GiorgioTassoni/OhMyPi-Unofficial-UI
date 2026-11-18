@@ -92,7 +92,7 @@ function groupToggled(index: number, event: Event): void {
           <summary class="flex min-w-0 cursor-pointer list-none items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] text-dim select-none hover:bg-raised/65 hover:text-fg [&::-webkit-details-marker]:hidden">
             <Icon :name="item.group.icon" class="h-3.5 w-3.5 shrink-0 text-faint" />
             <span class="min-w-0 flex-1 truncate font-medium text-fg">{{ item.group.label }}</span>
-            <span v-if="item.group.added !== null" class="shrink-0 font-mono text-[11px]">
+            <span v-if="item.group.added !== null" class="shrink-0 tabular-nums text-[11px]">
               <span v-if="item.group.added > 0" class="text-ok">+{{ item.group.added }}</span>
               <span v-if="item.group.added > 0 && item.group.removed !== null && item.group.removed > 0"> </span>
               <span v-if="item.group.removed !== null && item.group.removed > 0" class="text-err">-{{ item.group.removed }}</span>

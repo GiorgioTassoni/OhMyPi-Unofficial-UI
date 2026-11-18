@@ -73,6 +73,11 @@ watch(
 
 const BUTTON =
   "grid h-7 w-7 place-items-center rounded-[6px] text-dim transition-colors hover:bg-raised hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-dim";
+
+function onCloseFileViewer(): void {
+  emit("closeFileViewer");
+  tab.value = "files";
+}
 </script>
 
 <template>
@@ -83,9 +88,11 @@ const BUTTON =
   <aside class="flex w-full h-full shrink-0 flex-col border-l border-line/40 bg-canvas" aria-label="thread panel">
     <!--
       The top bar matches TitleBar and Sidebar height (h-10 / 40px) and carries data-tauri-drag-region
-      so the entire top window strip is continuous and draggable.
+      so the entire top window strip is continuous and draggable. Hidden when inspecting a file so
+      FileViewerPanel owns a single top bar.
     -->
     <header
+      v-if="!(tab === 'viewer' && props.fileRequest)"
       class="group flex h-10 shrink-0 items-center justify-between border-b border-line/40 px-2.5 select-none"
       data-tauri-drag-region
     >
@@ -99,12 +106,12 @@ const BUTTON =
           @click="tab = name"
         >
           {{ name === "todos" ? "Todos" : name === "files" ? "Files" : "Subagents" }}
-          <span v-if="name === 'todos' && activeTodosCount > 0" class="ml-1 rounded-full bg-surface px-1.5 py-0.5 font-mono text-[10px] text-accent">
+          <span v-if="name === 'todos' && activeTodosCount > 0" class="ml-1 rounded-full bg-surface px-1.5 py-0.5 tabular-nums text-[10px] text-accent">
             {{ activeTodosCount }}
           </span>
           <span
             v-else-if="name === 'subagents' && props.subagents && props.subagents.length > 0"
-            class="ml-1 rounded-full bg-surface px-1.5 py-0.5 font-mono text-[10px]"
+            class="ml-1 rounded-full bg-surface px-1.5 py-0.5 tabular-nums text-[10px]"
             :class="activeSubagentsCount > 0 ? 'text-accent font-semibold' : 'text-faint'"
           >
             {{ activeSubagentsCount > 0 ? activeSubagentsCount : props.subagents.length }}
@@ -131,21 +138,6 @@ const BUTTON =
           @click="emit('close')"
         >
           <Icon name="panels" />
-        </button>
-        <button
-          :class="[BUTTON, 'relative', tab === 'viewer' ? 'bg-raised text-accent hover:text-accent' : '']"
-          :aria-pressed="tab === 'viewer'"
-          aria-label="file viewer"
-          title="File viewer"
-          type="button"
-          @click="tab = tab === 'viewer' ? 'todos' : 'viewer'"
-        >
-          <Icon name="file" />
-          <span
-            v-if="props.fileRequest"
-            class="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-accent"
-            title="File open"
-          />
         </button>
       </div>
     </header>
@@ -197,7 +189,7 @@ const BUTTON =
           :file="props.fileRequest"
           :thread="props.thread"
           :workspace="props.workspace"
-          @close="emit('closeFileViewer')"
+          @close="onCloseFileViewer"
           @failed="emit('failed', $event)"
         />
         <div

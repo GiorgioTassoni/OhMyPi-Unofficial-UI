@@ -1474,7 +1474,7 @@ function describe(cause: unknown): string {
 </script>
 
 <template>
-  <div class="flex h-full w-full flex-col bg-canvas text-fg overflow-hidden relative">
+  <div class="flex h-full w-full flex-col bg-rail text-fg overflow-hidden relative">
     <!-- Custom integrated window frame bar -->
     <WindowFrameBar
       :project="project"
@@ -1567,6 +1567,9 @@ function describe(cause: unknown): string {
         @dblclick="resetLeftWidth"
       />
 
+      <!-- Rounded framed workspace enclosing both the main thread column and right panel -->
+      <div class="flex min-h-0 flex-1 overflow-hidden pb-1.5 pr-1.5" :class="sidebarCollapsed ? 'pl-1.5' : 'pl-1'">
+        <div class="flex min-h-0 flex-1 overflow-hidden rounded-[12px] border border-line/70 bg-canvas">
       <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
         <TitleBar
           :workspace="workspace"
@@ -1585,10 +1588,10 @@ function describe(cause: unknown): string {
           <div
             v-for="tid in openThreadTabs"
             :key="tid"
-            class="group/tab flex shrink-0 items-center h-7 rounded-[6px] px-2.5 transition-all select-none cursor-pointer border text-[12px]"
+            class="group/tab flex shrink-0 items-center h-7 rounded-[7px] px-2.5 transition-colors select-none cursor-pointer border text-[12px]"
             :class="tid === activeId && activeAgentTab === null
-              ? 'bg-raised text-fg border-line/70 font-medium shadow-xs'
-              : 'text-dim hover:text-fg hover:bg-raised/50 border-transparent hover:border-line/30'"
+              ? 'bg-raised text-fg border-line font-medium'
+              : 'text-dim hover:text-fg hover:bg-raised/60 border-transparent'"
             :aria-current="tid === activeId && activeAgentTab === null ? 'page' : undefined"
             @click="select(tid)"
             @auxclick.stop.prevent="closeThreadTab(tid)"
@@ -1633,10 +1636,10 @@ function describe(cause: unknown): string {
           <div
             v-for="tab in agentTabs"
             :key="agentKey(tab.thread, tab.id)"
-            class="group/tab flex shrink-0 items-center h-7 rounded-[6px] px-2.5 transition-all select-none cursor-pointer border text-[12px]"
+            class="group/tab flex shrink-0 items-center h-7 rounded-[7px] px-2.5 transition-colors select-none cursor-pointer border text-[12px]"
             :class="activeAgentKey === agentKey(tab.thread, tab.id)
-              ? 'bg-raised text-fg border-accent/40 font-medium shadow-xs'
-              : 'text-dim hover:text-fg hover:bg-raised/50 border-transparent hover:border-line/30'"
+              ? 'bg-raised text-fg border-accent/40 font-medium'
+              : 'text-dim hover:text-fg hover:bg-raised/60 border-transparent'"
             :aria-current="activeAgentKey === agentKey(tab.thread, tab.id) ? 'page' : undefined"
             @click="activeId = tab.thread; activeAgentKey = agentKey(tab.thread, tab.id)"
             @auxclick.stop.prevent="closeAgentTab(tab.thread, tab.id)"
@@ -1656,17 +1659,6 @@ function describe(cause: unknown): string {
               <Icon name="close" class="h-3 w-3" />
             </button>
           </div>
-
-          <button
-            v-if="workspace !== null"
-            type="button"
-            class="grid h-7 w-7 shrink-0 place-items-center rounded-[6px] text-dim hover:text-fg bg-raised/40 hover:bg-raised border border-line/40 hover:border-line/70 transition-all ml-0.5"
-            aria-label="New thread"
-            title="New thread in current project"
-            @click="open(workspace)"
-          >
-            <Icon name="plus" class="h-3.5 w-3.5" />
-          </button>
         </TitleBar>
 
         <p
@@ -1833,6 +1825,8 @@ function describe(cause: unknown): string {
           </div>
         </div>
       </Transition>
+        </div>
+      </div>
     </div>
   </div>
 

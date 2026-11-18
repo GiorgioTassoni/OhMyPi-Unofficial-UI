@@ -272,10 +272,12 @@ function describe(cause: unknown): string {
       :hits="hits"
       :identity="props.identity"
       :sessions="props.sessions"
+      :restarting="restarting"
       @back="emit('back')"
       @select="goTo($event, '')"
       @query="query = $event"
       @hit="(sectionId: string, target: string) => goTo(sectionId, target)"
+      @restart="restart"
     />
 
     <main ref="content" class="min-h-0 flex-1 overflow-auto">
@@ -337,7 +339,6 @@ function describe(cause: unknown): string {
               :mcp-design-choice-enabled="props.mcpDesignChoiceEnabled"
               @write="(row: SettingsRow, value: unknown) => request(row, value, false)"
               @reset="request($event, null, true)"
-              @restart="restart"
               @navigate="goTo"
               @action="dispatch"
               @changed="onChanged"

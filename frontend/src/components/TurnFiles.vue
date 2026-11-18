@@ -27,6 +27,14 @@ function toggleFile(path: string): void {
     ? openFiles.value.filter((open) => open !== path)
     : [...openFiles.value, path];
 }
+
+function splitRelativePath(path: string): { name: string; dir: string } {
+  const rel = relativeTo(path, props.workspace);
+  const cut = Math.max(rel.lastIndexOf("/"), rel.lastIndexOf("\\"));
+  return cut === -1
+    ? { name: rel, dir: "" }
+    : { name: rel.slice(cut + 1), dir: rel.slice(0, cut) };
+}
 </script>
 
 <template>
@@ -38,7 +46,7 @@ function toggleFile(path: string): void {
       <span class="min-w-0 flex-1 text-[12.5px] font-medium text-fg">
         Changed {{ props.summary.files.length }} file{{ props.summary.files.length === 1 ? "" : "s" }}
       </span>
-      <span v-if="props.summary.lines" class="shrink-0 font-mono text-[11px]">
+      <span v-if="props.summary.lines" class="shrink-0 tabular-nums font-medium text-[11px]">
         <span class="text-ok">+{{ props.summary.lines.added }}</span>
         <span class="ml-1 text-err">-{{ props.summary.lines.removed }}</span>
       </span>
@@ -54,14 +62,18 @@ function toggleFile(path: string): void {
 
     <div class="py-1">
       <div v-for="file in props.summary.files" :key="file.path">
-        <button
-          type="button"
-          class="flex w-full items-center gap-3 px-3 py-1.5 text-left transition-colors hover:bg-raised/70 focus-visible:bg-raised/70 focus-visible:outline-none"
+        <div
+          role="button"
+          tabindex="0"
+          class="flex w-full cursor-pointer items-center gap-3 px-3 py-1.5 text-left transition-colors hover:bg-raised/70 focus-visible:bg-raised/70 focus-visible:outline-none"
           :aria-expanded="openFiles.includes(file.path)"
           @click="toggleFile(file.path)"
+          @keydown.enter.self.prevent="toggleFile(file.path)"
+          @keydown.space.self.prevent="toggleFile(file.path)"
         >
-          <span class="min-w-0 flex-1 flex items-center gap-1.5 truncate font-mono text-[11.5px] text-dim">
-            <span class="truncate">{{ relativeTo(file.path, props.workspace) }}</span>
+          <span class="min-w-0 flex-1 flex items-baseline gap-1.5 truncate text-[12.5px]">
+            <span class="shrink-0 font-medium text-fg">{{ splitRelativePath(file.path).name }}</span>
+            <span v-if="splitRelativePath(file.path).dir" class="truncate text-[11.5px] text-faint">{{ splitRelativePath(file.path).dir }}</span>
             <span
               v-if="file.agentName && file.agentName !== 'task'"
               class="shrink-0 rounded bg-raised px-1 py-0.5 text-[10px] text-accent font-sans"
@@ -69,7 +81,7 @@ function toggleFile(path: string): void {
               {{ file.agentName }}
             </span>
           </span>
-          <span v-if="file.lines" class="shrink-0 font-mono text-[10.5px]">
+          <span v-if="file.lines" class="shrink-0 tabular-nums font-medium text-[11px]">
             <span class="text-ok">+{{ file.lines.added }}</span>
             <span class="ml-1 text-err">-{{ file.lines.removed }}</span>
           </span>
@@ -86,7 +98,7 @@ function toggleFile(path: string): void {
             class="h-3 w-3 shrink-0 text-faint transition-transform"
             :class="openFiles.includes(file.path) ? 'rotate-90' : ''"
           />
-        </button>
+        </div>
 
         <div v-if="openFiles.includes(file.path)" class="border-y border-line/40 bg-canvas/20">
           <DiffView v-if="reviews.get(file.path)?.pieces.length" :pieces="reviews.get(file.path)!.pieces" />

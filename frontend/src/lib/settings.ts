@@ -919,3 +919,159 @@ export function selectorModel(selector: string): string | null {
 export function gatedLine(reason: string, needs: string | null): string {
   return needs === null ? reason : `${reason} (needs \`${needs}\`)`;
 }
+
+const ADVANCED_GROUP_NAMES: ReadonlySet<string> = new Set([
+  "Housekeeping",
+  "Status Line",
+  "Magic Keywords",
+  "Advisor",
+  "Tiny Model",
+  "Protocol",
+  "Prewalk",
+  "Tool Exposure",
+  "Read Summaries",
+  "Isolation",
+  "Output Limits",
+  "Grep & Browser",
+  "Discovery (xdev)",
+  "Extensions",
+  "Rules (TTSR)",
+  "Experimental",
+  "Mnemopi",
+  "Hindsight",
+  "Legacy Local Memory",
+  "Sharpshooter",
+  "Shell Minimizer",
+  "Accounts & Concurrency",
+  "Service Tiers",
+  "Timeouts",
+]);
+
+const ADVANCED_ROW_KEYS: ReadonlySet<string> = new Set([
+  "colorBlindMode",
+  "tui.reactions",
+  "display.pinnedAgents",
+  "task.showResolvedModelBadge",
+  "display.cacheMissMarker",
+  "cycleOrder",
+  "modelProviderOrder",
+  "modelTags",
+  "externalThinking",
+  "model.loopGuard.enabled",
+  "model.loopGuard.checkAssistantContent",
+  "model.loopGuard.toolCallReminder",
+  "model.toolCallLoopGuard.enabled",
+  "model.toolCallLoopGuard.threshold",
+  "model.toolCallLoopGuard.exemptTools",
+  "thinkingBudgets.minimal",
+  "thinkingBudgets.low",
+  "thinkingBudgets.medium",
+  "thinkingBudgets.high",
+  "thinkingBudgets.xhigh",
+  "thinkingBudgets.max",
+  "presencePenalty",
+  "repetitionPenalty",
+  "topK",
+  "minP",
+  "providers.webSearchTimeoutSeconds",
+  "providers.webSearchExclude",
+  "providers.webSearchGeminiModel",
+  "providers.antigravityEndpoint",
+  "searxng.endpoint",
+  "searxng.token",
+  "searxng.basicUsername",
+  "searxng.basicPassword",
+  "searxng.categories",
+  "searxng.engines",
+  "searxng.language",
+  "searxng.safesearch",
+  "exa.searchDelayMs",
+  "inlineToolDescriptors",
+  "modelRoleStorage",
+  "edit.fuzzyThreshold",
+  "edit.enforceSeenLines",
+  "edit.streamingAbort",
+  "edit.recoverInlineEdits",
+  "edit.blackbox.enabled",
+  "tools.intentTracing",
+  "tools.speculativeExecution.enabled",
+  "tools.speculativeExecution.maxInFlight",
+  "irc.timeoutMs",
+  "task.maxRecursionDepth",
+  "task.maxRuntimeMs",
+  "task.agentIdleTtlMs",
+  "task.softRequestBudget",
+  "task.softRequestBudgetNotice",
+  "task.agentModelOverrides",
+  "task.agentServiceTierOverrides",
+  "task.prewalk",
+  "task.agentPrewalk",
+  "task.agentAdvisor",
+  "compaction.idleThresholdTokens",
+  "compaction.idleTimeoutSeconds",
+  "compaction.supersedeReads",
+  "compaction.dropUseless",
+  "compaction.methodOrder",
+  "compaction.handoffSaveToDisk",
+  "compaction.remoteStreamingV2Enabled",
+  "compaction.experimentalContextManagement",
+  "retry.usageReservePct",
+  "retry.usageReservePolicy",
+  "retry.fallbackChains",
+  "retry.fallbackRevertPolicy",
+  "providers.anthropic.serverSideFallback",
+]);
+
+export interface PartitionedGroups {
+  essentialGroups: SettingsGroup[];
+  advancedGroups: SettingsGroup[];
+  advancedCount: number;
+  forceOpenAdvanced: boolean;
+}
+
+export function partitionSectionGroups(
+  section: SettingsSection,
+  highlightedKey?: string | null,
+): PartitionedGroups {
+  const essentialGroups: SettingsGroup[] = [];
+  const advancedGroups: SettingsGroup[] = [];
+
+  for (const group of section.groups) {
+    if (ADVANCED_GROUP_NAMES.has(group.name)) {
+      if (group.rows.length > 0) {
+        advancedGroups.push(group);
+      }
+      continue;
+    }
+
+    const essentialRows: SettingsRow[] = [];
+    const advancedRows: SettingsRow[] = [];
+    for (const row of group.rows) {
+      if (ADVANCED_ROW_KEYS.has(rowId(row))) {
+        advancedRows.push(row);
+      } else {
+        essentialRows.push(row);
+      }
+    }
+
+    if (essentialRows.length > 0) {
+      essentialGroups.push({ name: group.name, rows: essentialRows });
+    }
+    if (advancedRows.length > 0) {
+      advancedGroups.push({ name: group.name, rows: advancedRows });
+    }
+  }
+
+  if (essentialGroups.length === 0 && advancedGroups.length > 0) {
+    const first = advancedGroups.shift()!;
+    essentialGroups.push(first);
+  }
+
+  const advancedCount = advancedGroups.reduce((sum, group) => sum + group.rows.length, 0);
+  const forceOpenAdvanced = Boolean(
+    highlightedKey &&
+      advancedGroups.some((group) => group.rows.some((row) => rowId(row) === highlightedKey)),
+  );
+
+  return { essentialGroups, advancedGroups, advancedCount, forceOpenAdvanced };
+}

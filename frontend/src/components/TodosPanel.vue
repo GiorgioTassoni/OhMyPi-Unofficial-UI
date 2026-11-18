@@ -176,7 +176,7 @@ async function flip(phase: TodoPhaseSnapshot, content: string): Promise<void> {
           >
             {{ phase.name }}
           </span>
-          <span class="shrink-0 font-mono text-[10.5px] text-faint">
+          <span class="shrink-0 tabular-nums text-[10.5px] text-faint">
             {{ phaseProgress(phase.tasks).done }}/{{ phaseProgress(phase.tasks).total }}
           </span>
         </button>
@@ -217,9 +217,13 @@ async function flip(phase: TodoPhaseSnapshot, content: string): Promise<void> {
                 {{ task.content }}
               </button>
             </div>
-            <p v-if="task.blocker" class="pl-8 pr-2 pb-1 text-[11px] text-warn">
-              {{ task.blocker }}
-            </p>
+            <div
+              v-if="task.blocker"
+              class="mt-1 mb-1.5 ml-7 mr-1.5 flex items-start gap-2 rounded-[7px] border border-warn/25 bg-warn/6 px-2.5 py-1.5 text-[11.5px] leading-relaxed text-dim"
+            >
+              <span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
+              <span class="min-w-0 flex-1">{{ task.blocker }}</span>
+            </div>
           </li>
         </ul>
       </li>

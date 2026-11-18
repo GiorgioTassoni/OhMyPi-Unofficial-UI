@@ -153,54 +153,58 @@ function onKeyDown(event: KeyboardEvent): void {
 </template>
 
 <style scoped>
-.md :deep(> * + *) {
-  margin-top: 0.5rem;
+.md {
+  font-size: 13px;
+  line-height: 1.62;
+  color: var(--color-fg);
 }
 
-/* Headings carry the hierarchy the transcript was missing: prose is 13.5px, so
-   each level has to step away from it to read as a heading at all. */
+.md :deep(> * + *) {
+  margin-top: 0.65rem;
+}
+
 .md :deep(h1),
 .md :deep(h2),
 .md :deep(h3),
 .md :deep(h4),
 .md :deep(h5),
 .md :deep(h6) {
-  font-weight: 550;
+  font-weight: 600;
   line-height: 1.35;
-  letter-spacing: -0.012em;
+  letter-spacing: -0.01em;
   color: var(--color-fg);
 }
 
 .md :deep(h1) {
-  font-size: 19px;
-  margin-top: 1rem;
+  font-size: 17px;
+  margin-top: 1.15rem;
   margin-bottom: 0.4rem;
 }
 .md :deep(h2) {
-  font-size: 16px;
-  margin-top: 0.85rem;
+  font-size: 15px;
+  margin-top: 1rem;
   margin-bottom: 0.35rem;
 }
 .md :deep(h3) {
-  font-size: 14.5px;
+  font-size: 13.5px;
+  margin-top: 0.85rem;
+  margin-bottom: 0.3rem;
+}
+.md :deep(h4) {
+  font-size: 13px;
   margin-top: 0.75rem;
   margin-bottom: 0.25rem;
 }
-.md :deep(h4) {
-  font-size: 13.5px;
-  margin-top: 0.6rem;
-  margin-bottom: 0.2rem;
-}
 .md :deep(h5),
 .md :deep(h6) {
-  font-size: 13px;
-  margin-top: 0.5rem;
+  font-size: 12.5px;
+  margin-top: 0.65rem;
   margin-bottom: 0.2rem;
 }
 
 .md :deep(ul),
 .md :deep(ol) {
-  padding-left: 1.25rem;
+  padding-left: 1.35rem;
 }
 .md :deep(ul) {
   list-style: disc;
@@ -209,26 +213,27 @@ function onKeyDown(event: KeyboardEvent): void {
   list-style: decimal;
 }
 .md :deep(li) {
-  margin-top: 0.2rem;
+  margin-top: 0.35rem;
+  line-height: 1.65;
 }
 
 .md :deep(blockquote) {
-  border-left: 1px solid var(--color-accent);
-  padding-left: 0.75rem;
+  border-left: 2px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
+  padding-left: 0.85rem;
   color: var(--color-dim);
   font-style: italic;
-  margin: 0.5rem 0;
+  margin: 0.75rem 0;
 }
 .md :deep(blockquote > * + *) {
-  margin-top: 0.4rem;
+  margin-top: 0.45rem;
 }
 
 .md :deep(details) {
   border: 1px solid var(--color-line);
   border-radius: 8px;
-  background-color: color-mix(in srgb, var(--color-raised) 35%, transparent);
-  padding: 0.45rem 0.65rem;
-  margin: 0.5rem 0;
+  background-color: var(--color-surface);
+  padding: 0.5rem 0.75rem;
+  margin: 0.65rem 0;
 }
 .md :deep(summary) {
   cursor: pointer;
@@ -236,40 +241,40 @@ function onKeyDown(event: KeyboardEvent): void {
   font-weight: 500;
 }
 .md :deep(details[open] > summary) {
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.55rem;
 }
 .md :deep(details > *:not(summary) + *) {
-  margin-top: 0.5rem;
+  margin-top: 0.55rem;
 }
 
 .md :deep(code) {
   font-family: var(--font-mono);
-  font-size: 0.86em;
-  background-color: var(--color-raised);
+  font-size: 0.87em;
+  background-color: color-mix(in srgb, var(--color-fg) 6%, transparent);
   color: var(--color-fg);
-  border-radius: 4px;
-  padding: 0.1rem 0.35rem;
-  border: 1px solid color-mix(in srgb, var(--color-line) 60%, transparent);
+  border: none;
+  border-radius: 5px;
+  padding: 0.12rem 0.38rem;
 }
 
-/* Fenced code block with header and copy button */
+/* Recessed clean fenced code block */
 .md :deep(pre) {
   background-color: var(--color-surface);
   border: 1px solid var(--color-line);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 0;
   overflow: hidden;
-  margin: 0.65rem 0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  margin: 0.85rem 0;
+  box-shadow: none;
 }
 
 .md :deep(pre .code-header) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.35rem 0.75rem;
-  background-color: color-mix(in srgb, var(--color-raised) 65%, transparent);
-  border-bottom: 1px solid var(--color-line);
+  padding: 0.4rem 0.85rem;
+  background-color: transparent;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-line) 70%, transparent);
   font-size: 11px;
 }
 
@@ -299,15 +304,15 @@ function onKeyDown(event: KeyboardEvent): void {
 
 .md :deep(pre .code-copy-btn:hover) {
   color: var(--color-fg);
-  background-color: var(--color-surface);
+  background-color: var(--color-raised);
 }
 
 .md :deep(pre code) {
   display: block;
   background-color: transparent;
-  padding: 0.65rem 0.85rem;
-  font-size: 12px;
-  line-height: 1.5;
+  padding: 0.75rem 0.95rem;
+  font-size: 12.5px;
+  line-height: 1.6;
   border-radius: 0;
   border: none;
   overflow-x: auto;

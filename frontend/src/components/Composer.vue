@@ -79,6 +79,7 @@ const props = defineProps<{
    * changes when the engine says so, and the composer only reads it.
    */
   commands: CommandEntry[];
+  statusLine?: string | null | undefined;
 }>();
 
 const emit = defineEmits<{
@@ -743,9 +744,7 @@ defineExpose({ setDraft, appendDraft, attachPaths, attachFiles, attachPastedText
     file is dropped on, so the highlight is a ring around that card rather than a second box
     around the box. (Until this pass it drew both, with tokens that no longer exist.)
   -->
-  <div
-    class="rounded-[12px] p-1 transition-shadow"
-  >
+  <div class="transition-shadow">
     <AttachmentStrip
       :attachments="attachments"
       :refusal="refusal"
@@ -769,98 +768,103 @@ defineExpose({ setDraft, appendDraft, attachPaths, attachFiles, attachPastedText
       @hover="(index) => { fileIndex = index; }"
     />
 
-    <!--
-      The card, in the reference's language: one raised rounded block with a leading `+`, the
-      prompt itself in the window's sans at reading size, and the actions appearing inside it
-      only once there is something to send.
-    -->
     <div
-      class="flex items-end gap-2 rounded-[12px] border border-line-strong/70 bg-raised/95 backdrop-blur-md px-3 py-2 transition-all focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/35 shadow-md shadow-black/20"
+      class="rounded-[14px] border border-line-strong bg-raised"
     >
-      <!-- `+` accepts images and UTF-8 files; a drop carries an OS path instead. -->
-      <button
-        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-faint transition-all hover:bg-surface hover:text-fg active:scale-95"
-        aria-label="attach"
-        @click="picker?.click()"
+      <ComposerChips
+        :thread="thread"
+        :status-line="props.statusLine"
+        v-bind="props.chips"
+        @failed="emit('failed', $event)"
+        @changed="emit('changed')"
+        @workspace="emit('workspace', $event)"
+        @terminal="emit('terminal', $event)"
+        @favourites="emit('favourites', $event)"
       >
-        <Icon name="plus" class="h-4 w-4" />
-      </button>
-      <input
-        ref="picker"
-        type="file"
-        multiple
-        class="hidden"
-        @change="onPicked"
-      />
+        <div class="px-3.5 pt-2.5 pb-1.5">
+          <span v-if="readingFiles" class="mb-1 flex items-center text-[11px] text-faint">Reading files…</span>
+          <textarea
+            ref="box"
+            :value="draft"
+            rows="1"
+            spellcheck="false"
+            placeholder="Ask anything, @ for files, / for commands"
+            class="max-h-80 min-h-[28px] w-full resize-none overflow-y-auto bg-transparent text-[13px] leading-relaxed text-fg outline-none placeholder:text-faint [scrollbar-gutter:stable]"
+            @input="onInput"
+            @keydown="onKeydown"
+            @keyup="caret = caretOf($event)"
+            @paste="onPaste"
+            @click="caret = caretOf($event)"
+            @select="caret = caretOf($event)"
+          />
+        </div>
 
-      <span v-if="readingFiles" class="flex h-7 shrink-0 items-center text-[11px] text-faint">Reading files…</span>
+        <template #attach>
+          <button
+            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] text-dim transition-colors hover:bg-selected hover:text-fg active:scale-95"
+            aria-label="attach"
+            type="button"
+            @click="picker?.click()"
+          >
+            <Icon name="plus" class="h-4 w-4" />
+          </button>
+          <input
+            ref="picker"
+            type="file"
+            multiple
+            class="hidden"
+            @change="onPicked"
+          />
+        </template>
 
-      <textarea
-        ref="box"
-        :value="draft"
-        rows="1"
-        spellcheck="false"
-        placeholder="Type / for commands, @ for files"
-        class="max-h-36 min-h-[28px] flex-1 resize-none overflow-y-auto bg-transparent py-1 pl-1 pr-3.5 text-[13px] leading-5 text-fg outline-none placeholder:text-faint [scrollbar-gutter:stable]"
-        @input="onInput"
-        @keydown="onKeydown"
-        @keyup="caret = caretOf($event)"
-        @paste="onPaste"
-        @click="caret = caretOf($event)"
-        @select="caret = caretOf($event)"
-      />
+        <template #send-actions>
+          <button
+            v-if="props.streaming || props.hasActiveAgents"
+            :disabled="stopping"
+            type="button"
+            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-line text-dim transition-all hover:border-err/60 hover:text-err hover:bg-err/10 active:scale-95 disabled:opacity-50"
+            :title="stopping ? 'Stopping…' : 'Stop generation (Esc)'"
+            :aria-label="stopping ? 'Stopping generation' : 'Stop generation'"
+            @click="stop"
+          >
+            <Icon
+              :name="stopping ? 'refresh' : 'stop'"
+              class="h-3.5 w-3.5"
+              :class="stopping ? 'animate-spin text-err' : ''"
+            />
+          </button>
 
-      <button
-        v-if="props.streaming || props.hasActiveAgents"
-        :disabled="stopping"
-        type="button"
-        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] border border-line text-dim transition-all hover:border-err/60 hover:text-err hover:bg-err/10 active:scale-95 disabled:opacity-50"
-        :title="stopping ? 'Stopping…' : 'Stop generation (Esc)'"
-        :aria-label="stopping ? 'Stopping generation' : 'Stop generation'"
-        @click="stop"
-      >
-        <Icon
-          :name="stopping ? 'refresh' : 'stop'"
-          class="h-3.5 w-3.5"
-          :class="stopping ? 'animate-spin text-err' : ''"
-        />
-      </button>
+          <button
+            v-if="props.streaming && (hasInput || queueingPending)"
+            :disabled="!canSend || queueingPending || steeringPending"
+            type="button"
+            class="flex h-7 shrink-0 items-center gap-1 rounded-[7px] border border-line-strong/60 bg-surface/60 px-2 text-[11.5px] font-medium text-dim transition-all hover:border-line-strong hover:bg-selected hover:text-fg active:scale-95 disabled:opacity-40"
+            title="Queue behind running turn (Alt+Enter)"
+            @click="send('follow-up')"
+          >
+            <Icon v-if="queueingPending" name="refresh" class="h-3 w-3 animate-spin text-accent" />
+            <Icon v-else name="clock" class="h-3 w-3 text-faint" />
+            <span>{{ queueingPending ? "queueing…" : "Queue" }}</span>
+          </button>
 
-      <button
-        v-if="props.streaming && (hasInput || queueingPending)"
-        :disabled="!canSend || queueingPending || steeringPending"
-        type="button"
-        class="flex h-7 shrink-0 items-center gap-1 rounded-[6px] border border-line-strong/60 bg-raised px-2 text-[11.5px] font-medium text-dim transition-all hover:border-line-strong hover:bg-surface hover:text-fg active:scale-95 disabled:opacity-40 shadow-sm"
-        title="Queue behind running turn (Alt+Enter)"
-        @click="send('follow-up')"
-      >
-        <Icon v-if="queueingPending" name="refresh" class="h-3 w-3 animate-spin text-accent" />
-        <Icon v-else name="clock" class="h-3 w-3 text-faint" />
-        <span>{{ queueingPending ? "queueing…" : "Queue" }}</span>
-      </button>
-
-      <button
-        v-if="hasInput || steeringPending"
-        :disabled="!canSend || steeringPending || queueingPending"
-        type="button"
-        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-accent text-canvas transition-all hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:hover:brightness-100 shadow-sm"
-        :title="props.streaming ? 'Steer running turn (Enter)' : 'Send message (Enter)'"
-        :aria-label="props.streaming ? 'Steer' : 'Send'"
-        @click="send(props.streaming ? 'steer' : 'prompt')"
-      >
-        <Icon v-if="steeringPending" name="refresh" class="h-3.5 w-3.5 animate-spin text-canvas" />
-        <Icon v-else name="arrow-up" class="h-4 w-4 text-canvas" />
-      </button>
+          <button
+            :disabled="!canSend || steeringPending || queueingPending"
+            type="button"
+            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-all active:scale-95"
+            :class="
+              hasInput || steeringPending
+                ? 'bg-accent text-accent-contrast hover:brightness-110 shadow-xs'
+                : 'bg-selected/60 text-faint opacity-50 cursor-default'
+            "
+            :title="props.streaming ? 'Steer running turn (Enter)' : 'Send message (Enter)'"
+            :aria-label="props.streaming ? 'Steer' : 'Send'"
+            @click="send(props.streaming ? 'steer' : 'prompt')"
+          >
+            <Icon v-if="steeringPending" name="refresh" class="h-3.5 w-3.5 animate-spin" />
+            <Icon v-else name="arrow-up" class="h-4 w-4" />
+          </button>
+        </template>
+      </ComposerChips>
     </div>
-
-    <ComposerChips
-      :thread="thread"
-      v-bind="props.chips"
-      @failed="emit('failed', $event)"
-      @changed="emit('changed')"
-      @workspace="emit('workspace', $event)"
-      @terminal="emit('terminal', $event)"
-      @favourites="emit('favourites', $event)"
-    />
   </div>
 </template>

@@ -1,5 +1,6 @@
 /** App-owned themes. OMP's `theme.dark` setting controls its own terminal UI, not this shell. */
 export const APP_THEMES = [
+  { id: "obsidian-graphite", name: "Obsidian Graphite", description: "Deep matte obsidian with warm champagne accents" },
   { id: "midnight-violet", name: "Midnight Violet", description: "The original deep-plum palette" },
   { id: "graphite-amber", name: "Graphite Amber", description: "Charcoal with warm gold" },
   { id: "deep-ocean", name: "Deep Ocean", description: "Midnight navy with clear blue" },
@@ -9,8 +10,8 @@ export const APP_THEMES = [
 ] as const;
 
 export type AppTheme = (typeof APP_THEMES)[number]["id"];
-export const DEFAULT_APP_THEME: AppTheme = "midnight-violet";
-const STORAGE_KEY = "omp:app-theme";
+export const DEFAULT_APP_THEME: AppTheme = "obsidian-graphite";
+const STORAGE_KEY = "omp:app-theme-v2";
 
 export function parseAppTheme(value: string | null): AppTheme {
   return APP_THEMES.find((theme) => theme.id === value)?.id ?? DEFAULT_APP_THEME;

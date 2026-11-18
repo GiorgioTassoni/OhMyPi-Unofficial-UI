@@ -27,6 +27,8 @@ const props = defineProps<{
   identity: { user: string | null; version: string };
   /** How many sessions the catalogue holds. */
   sessions: number;
+  /** Whether a bulk session restart is in flight. */
+  restarting?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -37,6 +39,8 @@ const emit = defineEmits<{
   query: [text: string];
   /** A hit was chosen: go to its section and put its row under the reader's eye. */
   hit: [sectionId: string, rowId: string];
+  /** Restart every live session so saved settings take effect. */
+  restart: [];
 }>();
 
 /** The hit's secondary line: a setting's key, or nothing for the other two roles. */
@@ -46,10 +50,10 @@ function hitKey(row: SettingsRow): string | null {
 </script>
 
 <template>
-  <aside class="flex w-64 shrink-0 flex-col bg-rail">
+  <aside class="flex w-64 shrink-0 flex-col border-r border-line/50 bg-rail">
     <div class="flex flex-col gap-0.5 p-2">
       <button
-        class="group flex items-center gap-2.5 rounded-[6px] px-2.5 py-2 text-left text-[13px] text-dim transition-all hover:bg-raised hover:text-fg active:scale-98"
+        class="group flex items-center gap-2.5 rounded-[7px] px-2.5 py-2 text-left text-[13px] font-medium text-dim transition-colors hover:bg-raised hover:text-fg active:scale-98"
         aria-label="back to the thread view"
         data-action="settings-back"
         @click="emit('back')"
@@ -60,7 +64,7 @@ function hitKey(row: SettingsRow): string | null {
     </div>
 
     <div class="px-2 pb-1">
-      <div class="flex items-center gap-2 rounded-[6px] border border-line/60 bg-raised px-2.5 py-1.5 transition-colors focus-within:border-accent/80 focus-within:ring-1 focus-within:ring-accent/40 shadow-xs">
+      <div class="flex items-center gap-2 rounded-[7px] border border-line/70 bg-raised px-2.5 py-1.5 transition-colors focus-within:border-line-strong focus-within:ring-1 focus-within:ring-accent/30">
         <Icon name="search" class="h-3.5 w-3.5 shrink-0 text-faint" />
         <input
           :value="props.query"
@@ -88,18 +92,18 @@ function hitKey(row: SettingsRow): string | null {
     <nav class="min-h-0 flex-1 overflow-auto px-2 pb-2">
       <!-- Hits: grouped by section, in the catalog's own order. -->
       <template v-if="props.query.trim() !== ''">
-        <p class="px-1.5 pb-1 pt-2 text-[10.5px] text-faint" data-hits="">
+        <p class="px-2 pb-1 pt-2 text-[11px] text-faint" data-hits="">
           {{ hitCount(props.hits) }} {{ hitCount(props.hits) === 1 ? "setting" : "settings" }}
         </p>
 
         <div v-for="group in props.hits" :key="group.section.id" class="mb-1">
-          <p class="px-1.5 pb-0.5 pt-1.5 text-[10.5px] font-medium uppercase tracking-[0.09em] text-faint">
+          <p class="px-2 pb-1 pt-2 text-[11.5px] font-medium text-faint">
             {{ group.section.title }}
           </p>
           <button
             v-for="hit in group.rows"
             :key="rowId(hit.row)"
-            class="flex w-full flex-col gap-0.5 rounded-[6px] px-2.5 py-1.5 text-left hover:bg-raised"
+            class="flex w-full flex-col gap-0.5 rounded-[7px] px-2.5 py-1.5 text-left hover:bg-raised"
             data-hit=""
             :data-row-key="rowId(hit.row)"
             @click="emit('hit', group.section.id, rowId(hit.row))"
@@ -111,7 +115,7 @@ function hitKey(row: SettingsRow): string | null {
           </button>
         </div>
 
-        <p v-if="props.hits.length === 0" class="px-1.5 py-2 text-[12px] text-faint">
+        <p v-if="props.hits.length === 0" class="px-2 py-2 text-[12px] text-faint">
           No setting matches “{{ props.query.trim() }}”.
         </p>
       </template>
@@ -119,13 +123,13 @@ function hitKey(row: SettingsRow): string | null {
       <!-- The nav, grouped into the catalog's three columns. -->
       <template v-else>
         <div v-for="group in props.groups" :key="group.id" class="mb-1" :data-nav-group="group.id">
-          <p class="px-1.5 pb-0.5 pt-2 text-[10.5px] font-medium uppercase tracking-[0.09em] text-faint">
+          <p class="px-2 pb-1 pt-3 text-[11.5px] font-medium text-faint">
             {{ group.label }}
           </p>
           <button
             v-for="section in group.sections"
             :key="section.id"
-            class="group relative flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12.5px] transition-colors"
+            class="group relative flex w-full items-center gap-2.5 rounded-[7px] px-2.5 py-1.5 text-left text-[12.5px] transition-colors"
             :class="section.id === props.active ? 'bg-selected text-fg font-medium' : 'text-dim hover:bg-raised hover:text-fg'"
             :data-section="section.id"
             @click="emit('select', section.id)"
@@ -146,16 +150,35 @@ function hitKey(row: SettingsRow): string | null {
       </template>
     </nav>
 
+    <!-- Always-reachable session restart action for sidecar-scoped settings -->
+    <div class="mt-auto px-2.5 pb-2 pt-1">
+      <button
+        type="button"
+        :disabled="props.restarting === true"
+        data-action="restart-sessions"
+        class="flex w-full items-center gap-2 rounded-[7px] border border-line bg-raised px-2.5 py-1.5 text-left text-[12px] font-medium text-dim transition-colors hover:border-line-strong hover:bg-selected hover:text-fg active:scale-[0.99] disabled:opacity-50"
+        title="Restart every live session so saved settings take effect"
+        @click="emit('restart')"
+      >
+        <Icon
+          name="refresh"
+          class="h-3.5 w-3.5 shrink-0 text-accent"
+          :class="props.restarting ? 'animate-spin' : ''"
+        />
+        <span class="truncate">{{ props.restarting ? "Restarting sessions…" : "Restart sessions" }}</span>
+      </button>
+    </div>
+
     <!-- The identity row, the same one the sidebar's footer carries (`docs/12` §2.2). -->
-    <div class="mt-auto flex items-center gap-2.5 px-3 py-2.5">
+    <div class="flex items-center gap-2.5 border-t border-line/40 px-3 py-2.5">
       <span
-        class="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-raised text-[13px] text-accent"
+        class="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-accent/30 bg-accent/15 text-[12px] font-medium text-accent"
         aria-hidden="true"
       >
-        π
+        {{ props.identity.user ? props.identity.user.charAt(0).toUpperCase() : "π" }}
       </span>
       <div class="min-w-0 flex-1">
-        <p class="truncate text-[12.5px] text-fg">{{ props.identity.user ?? "local" }}</p>
+        <p class="truncate text-[12.5px] font-medium text-fg/90">{{ props.identity.user ?? "local" }}</p>
         <p class="truncate text-[11px] text-faint">
           {{ props.sessions }} {{ props.sessions === 1 ? "session" : "sessions" }} · v{{
             props.identity.version

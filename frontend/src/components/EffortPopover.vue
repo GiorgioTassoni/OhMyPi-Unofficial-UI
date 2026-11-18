@@ -336,39 +336,29 @@ function describe(cause: unknown): string {
           :style="{
             width: !isReasoningSupported || (displayedLevel === 'off' && !isAuto)
               ? '0%'
-              : `calc(14px + ${activeStepRatio} * (100% - 28px))`
+              : `calc(28px + ${activeStepRatio} * (100% - 28px))`
           }"
         />
 
-        <!-- Step tick dots -->
-        <div
-          v-for="(step, idx) in steps"
-          :key="step"
-          class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 rounded-full pointer-events-none transition-colors"
-          :class="[
-            (idx <= activeIndex && displayedLevel !== 'off') || (isAuto && idx <= activeIndex && dragIndex === null)
-              ? 'w-1.5 h-1.5 bg-white/70'
-              : 'w-1.5 h-1.5 bg-fg/20'
-          ]"
-          :style="{ left: `calc(14px + ${(steps.length > 1 ? idx / (steps.length - 1) : 0)} * (100% - 28px))` }"
-        />
+        <!-- Step tick dots (only on unfilled steps beyond active thumb) -->
+        <template v-for="(step, idx) in steps" :key="step">
+          <div
+            v-if="idx > activeIndex"
+            class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-fg/25 pointer-events-none transition-colors"
+            :style="{ left: `calc(14px + ${(steps.length > 1 ? idx / (steps.length - 1) : 0)} * (100% - 28px))` }"
+          />
+        </template>
 
         <!-- Thumb disc -->
         <div
           v-if="isReasoningSupported"
-          class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-[22px] h-[22px] rounded-full bg-white shadow-md shadow-black/50 pointer-events-none flex items-center justify-center"
+          class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-[22px] h-[22px] rounded-full bg-white shadow-md shadow-black/40 pointer-events-none"
           :class="[
             isDragging ? 'scale-105 shadow-lg' : 'transition-transform hover:scale-105',
             isAuto && dragIndex === null ? 'ring-2 ring-accent ring-offset-2 ring-offset-surface' : ''
           ]"
           :style="{ left: `calc(14px + ${activeStepRatio} * (100% - 28px))` }"
-        >
-          <!-- Subtle center dot inside thumb for precision -->
-          <div
-            class="w-1.5 h-1.5 rounded-full"
-            :class="isAuto && dragIndex === null ? 'bg-accent' : 'bg-black/30'"
-          />
-        </div>
+        />
       </div>
 
       <!-- Tick Labels below track -->
@@ -378,7 +368,7 @@ function describe(cause: unknown): string {
           :key="step"
           type="button"
           :disabled="switching !== null"
-          class="absolute -translate-x-1/2 text-[10.5px] transition-colors hover:text-fg font-mono disabled:opacity-40"
+          class="absolute -translate-x-1/2 text-[10.5px] transition-colors hover:text-fg disabled:opacity-40"
           :class="[
             idx === activeIndex && !isAuto && dragIndex === null
               ? 'text-accent font-semibold'

@@ -7,7 +7,7 @@
  * file owns the vertical rhythm between them. Their already-prioritized order arrives from the
  * screen model, so this renderer contains no second ordering policy.
  */
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import {
   getCatalogProviders,
   getConfiguredProviders,
@@ -20,7 +20,8 @@ import {
   type SettingsSection,
 } from "../../bridge";
 import type { AppTheme } from "../../lib/appTheme";
-import { rowId } from "../../lib/settings";
+import { partitionSectionGroups, rowId } from "../../lib/settings";
+import Icon from "../ui/Icon.vue";
 import AddProviderModal from "./AddProviderModal.vue";
 import AddSkillModal from "./AddSkillModal.vue";
 import AppThemeSetting from "./AppThemeSetting.vue";
@@ -52,7 +53,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: "write", row: SettingsRowModel, value: unknown): void;
   (event: "reset", row: SettingsRowModel): void;
-  (event: "restart"): void;
   (event: "navigate", sectionId: string, rowId: string): void;
   (event: "action", action: string): void;
   (event: "changed"): void;
@@ -92,9 +92,14 @@ async function loadProviders(): Promise<void> {
   }
 }
 
+const advancedOpen = ref(false);
+
+const partitioned = computed(() => partitionSectionGroups(props.section, props.highlight));
+
 watch(
   () => props.section.id,
   (id) => {
+    advancedOpen.value = false;
     if (id === "model-and-providers") {
       void loadProviders();
     }
@@ -215,16 +220,16 @@ function needsFor(row: SettingsRowModel): { sectionId: string; title: string } |
       @added="onSkillAdded"
     />
 
-    <section v-for="group in props.section.groups" :key="group.name" class="mt-8">
-      <div class="flex items-center gap-3 border-b border-line/50 pb-2">
-        <h2 class="text-[12px] font-semibold uppercase tracking-wider text-fg/80">
+    <template v-for="group in partitioned.essentialGroups" :key="group.name">
+      <section class="mt-7">
+        <h2 class="px-1 pb-2 text-[12px] font-medium text-dim">
           {{ group.name }}
         </h2>
-      </div>
 
-      <div class="flex flex-col divide-y divide-line/30">
-        <template v-for="row in group.rows" :key="rowId(row)">
+        <div class="flex flex-col divide-y divide-line/60 overflow-hidden rounded-[10px] border border-line bg-raised/35">
           <SettingsRow
+            v-for="row in group.rows"
+            :key="rowId(row)"
             :row="row"
             :pending="props.pending.has(rowId(row))"
             :message="props.messages[rowId(row)] ?? null"
@@ -233,18 +238,64 @@ function needsFor(row: SettingsRowModel): { sectionId: string; title: string } |
             :needs="needsFor(row)"
             @write="emit('write', row, $event)"
             @reset="emit('reset', row)"
-            @restart="emit('restart')"
             @navigate="(sectionId, target) => emit('navigate', sectionId, target)"
             @action="emit('action', $event)"
             @changed="emit('changed')"
           />
-          <OpenRouterRoutingSetting
-            v-if="props.section.id === 'model-and-providers' && row.role === 'setting' && row.key === 'modelRoles'"
-            class="my-5"
-          />
-        </template>
+        </div>
+      </section>
+
+      <OpenRouterRoutingSetting
+        v-if="props.section.id === 'model-and-providers' && group.rows.some((r) => r.role === 'setting' && r.key === 'modelRoles')"
+        class="mt-7"
+      />
+    </template>
+
+    <details
+      v-if="partitioned.advancedCount > 0"
+      :open="partitioned.forceOpenAdvanced || advancedOpen"
+      class="mt-8 group/adv"
+      @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open"
+    >
+      <summary class="flex cursor-pointer list-none items-center justify-between gap-3 rounded-[10px] border border-line/80 bg-raised/25 px-4 py-3 text-[13px] font-medium text-fg transition-colors hover:bg-raised/45 select-none [&::-webkit-details-marker]:hidden">
+        <span class="flex items-center gap-2.5">
+          <Icon name="sliders" class="h-4 w-4 text-dim" />
+          <span>Advanced Tuning</span>
+        </span>
+        <span class="flex items-center gap-2">
+          <span class="rounded-full border border-line bg-surface/70 px-2 py-0.5 tabular-nums text-[10.5px] text-faint">
+            {{ partitioned.advancedCount }} {{ partitioned.advancedCount === 1 ? 'setting' : 'settings' }}
+          </span>
+          <Icon name="chevron-down" class="h-3.5 w-3.5 text-faint transition-transform group-open/adv:rotate-180" />
+        </span>
+      </summary>
+
+      <div class="mt-4 flex flex-col gap-7">
+        <section v-for="group in partitioned.advancedGroups" :key="group.name">
+          <h2 class="px-1 pb-2 text-[12px] font-medium text-dim">
+            {{ group.name }}
+          </h2>
+
+          <div class="flex flex-col divide-y divide-line/60 overflow-hidden rounded-[10px] border border-line bg-raised/35">
+            <SettingsRow
+              v-for="row in group.rows"
+              :key="rowId(row)"
+              :row="row"
+              :pending="props.pending.has(rowId(row))"
+              :message="props.messages[rowId(row)] ?? null"
+              :error="props.errors[rowId(row)] ?? null"
+              :highlighted="props.highlight === rowId(row)"
+              :needs="needsFor(row)"
+              @write="emit('write', row, $event)"
+              @reset="emit('reset', row)"
+              @navigate="(sectionId, target) => emit('navigate', sectionId, target)"
+              @action="emit('action', $event)"
+              @changed="emit('changed')"
+            />
+          </div>
+        </section>
       </div>
-    </section>
+    </details>
 
     <p v-if="props.section.groups.length === 0" class="mt-8 text-[12.5px] text-faint">
       This section has no rows in this build.

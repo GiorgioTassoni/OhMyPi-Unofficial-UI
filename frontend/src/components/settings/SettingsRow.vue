@@ -46,7 +46,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: "write", value: unknown): void;
   (event: "reset"): void;
-  (event: "restart"): void;
   (event: "navigate", sectionId: string, rowId: string): void;
   (event: "action", action: string): void;
   (event: "changed"): void;
@@ -61,6 +60,11 @@ const modelRoles = computed(() => props.row.role === "setting" && props.row.key 
 const compoundEditor = computed(
   () => props.row.role === "setting" && (props.row.control === "list" || props.row.control === "record"),
 );
+const hasVisibleMeta = computed(
+  () =>
+    props.row.role === "setting" &&
+    (props.row.origin !== "default" || props.pending || Boolean(props.message) || Boolean(props.error)),
+);
 </script>
 
 <template>
@@ -70,10 +74,10 @@ const compoundEditor = computed(
   -->
   <div
     v-if="props.row.role === 'setting'"
-    class="flex rounded-[8px] px-3 py-3 transition-colors"
+    class="group/srow flex px-4 py-3.5 transition-colors"
     :class="[
       compoundEditor ? 'flex-col gap-3' : 'items-start gap-6',
-      props.highlighted === true ? 'bg-selected ring-1 ring-accent' : 'hover:bg-raised/40',
+      props.highlighted === true ? 'bg-selected ring-1 ring-inset ring-accent/60' : 'hover:bg-raised/40',
     ]"
     :data-row-key="props.row.key"
     data-role="setting"
@@ -84,9 +88,9 @@ const compoundEditor = computed(
     :data-layout="compoundEditor ? 'stacked' : 'inline'"
   >
     <div class="min-w-0" :class="compoundEditor ? 'w-full' : 'flex-1'">
-      <p class="text-[13.5px] font-medium text-fg">{{ props.row.label }}</p>
+      <p class="text-[13.5px] font-medium text-fg" :title="cost?.detail">{{ props.row.label }}</p>
 
-      <p v-if="props.row.description !== ''" class="mt-0.5 text-[12px] leading-relaxed text-faint">
+      <p v-if="props.row.description !== ''" class="mt-0.5 text-[12px] leading-relaxed text-dim">
         {{ props.row.description }}
       </p>
       <!-- No description in the schema: the key is the honest thing to put here. -->
@@ -96,34 +100,38 @@ const compoundEditor = computed(
 
       <p
         v-if="props.row.danger"
-        class="mt-1.5 flex items-start gap-1.5 text-[11px] leading-relaxed"
+        class="mt-1.5 flex items-start gap-1.5 text-[11.5px] leading-relaxed"
         :class="props.row.danger.level === 'confirm' ? 'text-err' : 'text-warn'"
         :data-danger="props.row.danger.level"
       >
-        <Icon name="alert" class="mt-0.5 h-3 w-3 shrink-0" />
+        <Icon name="alert" class="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <span>{{ props.row.danger.why }}</span>
       </p>
 
-      <!-- What the write costs, and where the value is written. -->
-      <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10.5px] text-faint">
-        <span class="rounded-full border border-line/40 bg-raised/70 px-2 py-0.5">{{ from?.chip }}</span>
-        <span class="rounded-full border border-line/40 bg-raised/70 px-2 py-0.5">{{ cost?.chip }}</span>
-        <span>{{ cost?.note }}</span>
-        <button
-          v-if="cost?.action === 'restart' && !props.row.gated"
-          type="button"
-          class="rounded-[6px] border border-line bg-surface/50 px-2 py-0.5 text-dim transition-colors hover:border-line-strong hover:bg-raised hover:text-fg"
-          data-action="restart-sessions"
-          @click="emit('restart')"
+      <div
+        v-if="hasVisibleMeta"
+        class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]"
+      >
+        <span
+          v-if="props.row.origin !== 'default'"
+          class="rounded-[4px] border border-accent/30 bg-accent/10 px-1.5 py-0.2 text-[10px] font-medium text-accent"
         >
-          Restart sessions
+          Custom · {{ from?.chip }}
+        </span>
+        <button
+          v-if="props.row.origin !== 'default' && props.row.origin !== 'overlay' && !props.row.gated"
+          type="button"
+          class="text-[10.5px] text-faint transition-colors hover:text-fg"
+          @click="emit('reset')"
+        >
+          Reset
         </button>
         <span
-          v-else-if="cost?.action === 'relaunch' && !props.row.gated"
-          class="rounded-full border border-warn/40 bg-warn/10 px-2 py-0.5 text-[10.5px] text-warn"
+          v-if="cost?.action === 'relaunch' && !props.row.gated && Boolean(props.message)"
+          class="rounded-[4px] border border-warn/30 bg-warn/10 px-1.5 py-0.2 text-[10px] text-warn"
           data-action="relaunch"
         >
-          relaunch needed
+          Relaunch needed
         </span>
         <span v-if="props.pending" class="flex items-center gap-1 text-accent" data-writing="">
           <span class="size-1.5 animate-pulse rounded-full bg-accent" />
@@ -131,10 +139,10 @@ const compoundEditor = computed(
         </span>
       </div>
 
-      <p v-if="props.message" class="mt-1 text-[11px] leading-relaxed text-ok" data-message="">
+      <p v-if="props.message" class="mt-1.5 text-[11px] leading-relaxed text-ok" data-message="">
         {{ props.message }}
       </p>
-      <p v-if="props.error" class="mt-1 text-[11px] leading-relaxed text-err" data-error="">
+      <p v-if="props.error" class="mt-1.5 text-[11px] leading-relaxed text-err" data-error="">
         {{ props.error }}
       </p>
     </div>
@@ -171,13 +179,13 @@ const compoundEditor = computed(
   <!-- A fact the app reports: the value is the whole of it. -->
   <div
     v-else-if="props.row.role === 'static'"
-    class="flex items-start gap-4 rounded-[6px] px-3 py-2.5 hover:bg-raised"
+    class="flex items-start gap-4 px-4 py-3.5 transition-colors hover:bg-raised/40"
     :data-row-key="props.row.id"
     data-role="static"
   >
     <div class="min-w-0 flex-1">
-      <p class="text-[13px] text-fg">{{ props.row.label }}</p>
-      <p v-if="props.row.description !== ''" class="mt-0.5 text-[11.5px] leading-relaxed text-faint">
+      <p class="text-[13.5px] font-medium text-fg">{{ props.row.label }}</p>
+      <p v-if="props.row.description !== ''" class="mt-0.5 text-[12px] leading-relaxed text-dim">
         {{ props.row.description }}
       </p>
       <p v-else class="mt-0.5 font-mono text-[11.5px] text-faint">{{ props.row.id }}</p>
@@ -192,15 +200,15 @@ const compoundEditor = computed(
   <!-- A control that does something. -->
   <div
     v-else
-    class="flex items-start gap-4 rounded-[6px] px-3 py-2.5 hover:bg-raised"
+    class="flex items-start gap-4 px-4 py-3.5 transition-colors hover:bg-raised/40"
     :data-row-key="props.row.id"
     data-role="action"
     :data-action-row="props.row.action"
     :data-tone="props.row.tone"
   >
     <div class="min-w-0 flex-1">
-      <p class="text-[13px] text-fg">{{ props.row.label }}</p>
-      <p v-if="props.row.description !== ''" class="mt-0.5 text-[11.5px] leading-relaxed text-faint">
+      <p class="text-[13.5px] font-medium text-fg">{{ props.row.label }}</p>
+      <p v-if="props.row.description !== ''" class="mt-0.5 text-[12px] leading-relaxed text-dim">
         {{ props.row.description }}
       </p>
       <p v-else class="mt-0.5 font-mono text-[11.5px] text-faint">{{ props.row.id }}</p>

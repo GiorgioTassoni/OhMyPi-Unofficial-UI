@@ -40,7 +40,7 @@ import { isNoLiveThreadError } from "../lib/threads";
 import type { ThreadChrome } from "../lib/chrome";
 import { stripAnsi } from "../lib/ansi";
 import { jumpTarget } from "../lib/search";
-import { type ChipRow } from "../lib/chips";
+import { folderName, type ChipRow } from "../lib/chips";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { useViewDragDrop } from "../lib/dragDrop";
 import { useOptimisticSteer } from "../lib/optimisticSteer";
@@ -571,13 +571,6 @@ async function jumpTo(hit: SearchHit): Promise<void> {
  * resume looks like for its first moment — and greeting someone who is waiting for their own
  * conversation to load is the one way this could be wrong rather than merely quaint.
  */
-const greeting = computed(() => {
-  const hour = new Date().getHours();
-  const part =
-    hour < 5 ? "Late night" : hour < 12 ? "Morning" : hour < 18 ? "Afternoon" : "Evening";
-  return props.user === null || props.user === "" ? part : `${part}, ${props.user}`;
-});
-
 const nothingSaidYet = computed(
   () => rows.value.length === 0 && remainingArchivedTurns.value === 0 && status.value?.control.messageCount === 0 && !streaming.value,
 );
@@ -777,12 +770,20 @@ defineExpose({
         class="my-auto flex flex-col items-center justify-center py-16 pl-4 pr-6 sm:pr-8 text-center select-none"
         data-greeting
       >
-        <p class="text-[30px] font-normal leading-tight text-fg">{{ greeting }}</p>
-        <p class="mt-2 text-[13px] text-faint">A fresh thread — nothing said yet.</p>
+        <div class="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl border border-line/70 bg-raised/50 text-dim">
+          <Icon name="terminal" class="h-5 w-5" />
+        </div>
+        <h2 class="text-[24px] font-normal tracking-tight text-dim">
+          <template v-if="chips.workspace">
+            What should we build in
+            <span class="font-medium text-fg underline decoration-dashed decoration-line-strong underline-offset-4">{{ folderName(chips.workspace) }}</span>?
+          </template>
+          <template v-else>What should we build today?</template>
+        </h2>
       </div>
 
       <div v-else class="min-h-full w-full shrink-0 pl-4 pr-6 sm:pr-8 select-text" data-selection-surface>
-        <div class="mx-auto w-full max-w-[46rem] pt-4 pb-12 select-text">
+        <div class="mx-auto w-full max-w-[48rem] pt-5 pb-12 select-text">
           <!-- Archived history banner -->
           <ArchivedTurnsBanner
             :remaining="remainingArchivedTurns"
@@ -794,8 +795,8 @@ defineExpose({
             v-for="turn in turns"
             :key="turn.start"
             :data-turn-start="turn.start"
-            class="flex min-w-0 flex-col gap-2 border-line/50 pb-4"
-            :class="turn.start === turns[0]?.start ? '' : 'border-t pt-4'"
+            class="flex min-w-0 flex-col gap-3 border-line/40 pb-5"
+            :class="turn.start === turns[0]?.start ? '' : 'border-t pt-5'"
           >
             <div
               v-if="turn.user"
@@ -881,7 +882,7 @@ defineExpose({
         />
       </Transition>
 
-      <div class="relative mx-auto w-full max-w-[46rem] px-4 pb-4">
+      <div class="relative mx-auto w-full max-w-[48rem] px-4 pb-4">
         <!-- Floating scroll-to-bottom button when reading history -->
       <Transition
         enter-active-class="transition duration-150 ease-out"
@@ -920,13 +921,6 @@ defineExpose({
         class="mb-1.5 overflow-x-auto whitespace-pre-wrap break-all rounded-[6px] bg-raised/50 px-2 py-1 font-mono text-[11px] leading-snug text-dim"
         data-widget
       >{{ props.chrome.widget.map(stripAnsi).join("\n") }}</pre>
-      <div
-        v-if="props.chrome.status !== null"
-        class="mb-1 flex items-center gap-1.5 px-0.5 text-[11px] select-none"
-        data-status
-      >
-        <span class="font-mono text-[10.5px] tracking-tight text-dim/80">{{ stripAnsi(props.chrome.status) }}</span>
-      </div>
 
       <!-- Unexpected close banner: shown when thread is idle but background subagents were revived by the engine -->
       <UnexpectedResumeBanner
@@ -952,6 +946,7 @@ defineExpose({
         :frame-limit="status?.ready.maxFrameBytes ?? 0"
         :commands="commands"
         :chips="chips"
+        :status-line="props.chrome.status !== null ? stripAnsi(props.chrome.status) : null"
         @failed="emit('failed', $event)"
         @changed="onChanged"
         @steering="onSteering"

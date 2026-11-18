@@ -43,14 +43,14 @@ defineExpose({
 </script>
 
 <template>
-  <div class="mb-6 rounded-[10px] border border-line bg-surface p-4 shadow-sm">
-    <div class="flex items-center justify-between border-b border-line/50 pb-3">
+  <div class="mb-6 rounded-[10px] border border-line bg-raised/35 p-4">
+    <div class="flex items-center justify-between border-b border-line/60 pb-3">
       <div class="flex items-center gap-2">
         <Icon name="zap" class="h-4 w-4 text-accent" />
-        <h3 class="text-[13px] font-semibold text-fg">Active Skills</h3>
+        <h3 class="text-[13.5px] font-medium text-fg">Active Skills</h3>
         <span
           v-if="!loading"
-          class="rounded-full bg-raised px-2 py-0.5 text-[11px] font-medium text-dim"
+          class="rounded-full border border-line bg-surface/60 px-2 py-0.5 tabular-nums text-[10.5px] font-medium text-dim"
         >
           {{ skills.length }}
         </span>
@@ -59,7 +59,7 @@ defineExpose({
       <div class="flex items-center gap-2">
         <button
           type="button"
-          class="flex items-center gap-1.5 rounded-[6px] border border-line/60 bg-canvas px-2.5 py-1 text-[11.5px] font-medium text-dim transition-all hover:bg-raised hover:text-fg active:scale-95"
+          class="flex items-center gap-1.5 rounded-[6px] border border-line bg-surface/50 px-2.5 py-1 text-[11.5px] font-medium text-dim transition-colors hover:border-line-strong hover:text-fg"
           @click="handleOpenFolder('user')"
         >
           <Icon name="folder" class="h-3.5 w-3.5" />
@@ -68,7 +68,7 @@ defineExpose({
 
         <button
           type="button"
-          class="flex items-center gap-1.5 rounded-[6px] bg-accent px-3 py-1 text-[12px] font-semibold text-canvas transition-all hover:brightness-110 active:scale-95 shadow-xs"
+          class="flex items-center gap-1.5 rounded-[6px] bg-accent px-3 py-1 text-[12px] font-semibold text-accent-contrast transition-all hover:brightness-110 active:scale-95"
           @click="emit('openAddModal')"
         >
           <Icon name="plus" class="h-3.5 w-3.5" />

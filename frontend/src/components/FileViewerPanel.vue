@@ -2,7 +2,6 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { openExternal, openPath, readArtifact, readFileBase64, readFileContent, toggleDevtools } from "../bridge";
 import {
-  formatLanguageLabel,
   isImageExtension,
   isMarkdownExtension,
   isSvgExtension,
@@ -17,7 +16,6 @@ import { highlightCode } from "../lib/highlighter";
 import { parseFrontmatter } from "../lib/frontmatter";
 import Icon from "./ui/Icon.vue";
 import MarkdownBody from "./MarkdownBody.vue";
-import Popover from "./Popover.vue";
 
 export interface FileViewRequest {
   path: string;
@@ -41,14 +39,12 @@ const loading = ref(true);
 const error = ref<string | null>(null);
 
 const imageDataUrl = ref<string | null>(null);
-const imageDimensions = ref<{ width: number; height: number } | null>(null);
 const imageZoom = ref<"fit" | "actual">("fit");
 
 const meta = computed(() => parseFilePath(props.file.path));
 const cleanPath = computed(() => meta.value.cleanPath);
 const lineRange = computed(() => meta.value.lineRange);
 const basename = computed(() => meta.value.basename);
-const directory = computed(() => meta.value.directory);
 const extension = computed(() => meta.value.extension);
 
 const isHttp = computed(() => /^https?:\/\//i.test(props.file.path));
@@ -101,7 +97,6 @@ watch([extension, isMarkdown, isHtml], () => {
 async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
-  imageDimensions.value = null;
   imageDataUrl.value = null;
   content.value = props.file.content ?? "";
 
@@ -167,24 +162,9 @@ watch(
   { immediate: true },
 );
 
-function onImageLoad(e: Event): void {
-  const target = e.target as HTMLImageElement;
-  if (target) {
-    imageDimensions.value = {
-      width: target.naturalWidth,
-      height: target.naturalHeight,
-    };
-  }
-}
-
 function onImageError(): void {
   error.value = "Failed to load image.";
 }
-
-const lines = computed(() => {
-  if (!content.value) return [""];
-  return content.value.split(/\r?\n/);
-});
 
 const copied = ref(false);
 let copyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -250,15 +230,7 @@ function markCopied(): void {
   }, 1800);
 }
 
-const menuOpen = ref(false);
-
-const copiedFullPath = ref(false);
-let fullPathCopyTimer: ReturnType<typeof setTimeout> | null = null;
-const copiedRelPath = ref(false);
-let relPathCopyTimer: ReturnType<typeof setTimeout> | null = null;
-
 async function openInDefaultApp(): Promise<void> {
-  menuOpen.value = false;
   try {
     await openPath(fullPath.value);
   } catch (err) {
@@ -267,7 +239,6 @@ async function openInDefaultApp(): Promise<void> {
 }
 
 async function revealInFileManager(): Promise<void> {
-  menuOpen.value = false;
   try {
     await openPath(parentDirectory.value);
   } catch (err) {
@@ -278,24 +249,7 @@ async function revealInFileManager(): Promise<void> {
 async function copyFullPath(): Promise<void> {
   try {
     await navigator.clipboard.writeText(fullPath.value);
-    copiedFullPath.value = true;
-    if (fullPathCopyTimer) clearTimeout(fullPathCopyTimer);
-    fullPathCopyTimer = setTimeout(() => {
-      copiedFullPath.value = false;
-    }, 1800);
-  } catch (err) {
-    emit("failed", `Could not copy path: ${String(err)}`);
-  }
-}
-
-async function copyRelativePath(): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(cleanPath.value);
-    copiedRelPath.value = true;
-    if (relPathCopyTimer) clearTimeout(relPathCopyTimer);
-    relPathCopyTimer = setTimeout(() => {
-      copiedRelPath.value = false;
-    }, 1800);
+    markCopied();
   } catch (err) {
     emit("failed", `Could not copy path: ${String(err)}`);
   }
@@ -304,10 +258,6 @@ async function copyRelativePath(): Promise<void> {
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === "Escape") {
     e.preventDefault();
-    if (menuOpen.value) {
-      menuOpen.value = false;
-      return;
-    }
     emit("close");
   }
 }
@@ -319,15 +269,6 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener("keydown", onKeydown);
   if (copyTimer) clearTimeout(copyTimer);
-  if (fullPathCopyTimer) clearTimeout(fullPathCopyTimer);
-  if (relPathCopyTimer) clearTimeout(relPathCopyTimer);
-});
-
-const languageLabel = computed(() => {
-  if (isAgent.value) return "AGENT";
-  if (isSkill.value) return "SKILL";
-  if (isMarkdown.value) return "MARKDOWN";
-  return formatLanguageLabel(extension.value);
 });
 
 const formattedLines = computed(() => highlightCode(content.value, isMarkdown.value ? "md" : extension.value));
@@ -335,77 +276,62 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
 
 <template>
   <div class="flex h-full w-full min-w-0 flex-col bg-canvas text-fg" role="region" aria-label="Read-only file viewer">
-    <!-- Top Bar -->
-    <header class="flex h-10 shrink-0 items-center justify-between border-b border-line/50 bg-surface/60 px-2.5 backdrop-blur-sm select-none">
-      <div class="flex items-center gap-2 min-w-0 flex-1 pr-2">
-        <!-- Close Button -->
-        <button
-          type="button"
-          class="flex items-center gap-1.5 rounded-[5px] px-2 py-1 text-[11.5px] font-medium text-dim transition-colors hover:bg-raised hover:text-fg"
-          aria-label="Close file viewer"
-          title="Close file preview"
-          @click="emit('close')"
-        >
-          <Icon name="close" class="h-3.5 w-3.5 shrink-0" />
-          <span class="hidden sm:inline">Close</span>
-        </button>
-
-        <span class="h-3.5 w-px bg-line/60" />
-
-        <!-- File Identity -->
-        <div class="flex items-center gap-1.5 min-w-0 truncate">
-          <Icon :name="isLiveWeb ? 'panels' : (isVideo ? 'video' : (isImage ? 'image' : (isAgent ? 'bot' : 'file')))" class="h-3.5 w-3.5 shrink-0 text-accent" />
-          <span class="truncate font-mono text-[12.5px] font-semibold text-fg">
-            {{ isLiveWeb ? (props.file.path.includes('choose') || props.file.path.includes('127.0.0.1') ? 'Design Choice Preview' : 'Live Preview') : basename }}
-          </span>
-          <span v-if="lineRange" class="shrink-0 rounded bg-raised px-1 py-0.5 font-mono text-[10.5px] text-accent font-medium">
-            :{{ lineRange }}
-          </span>
-          <span v-if="directory" class="hidden md:inline truncate font-mono text-[11px] text-faint">
-            {{ isLiveWeb ? props.file.path : directory }}
-          </span>
-        </div>
+    <!-- Single Clean Top Bar -->
+    <header
+      class="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-line/50 bg-surface/60 px-2.5 select-none"
+      data-tauri-drag-region
+    >
+      <div class="flex items-center gap-2 min-w-0 flex-1">
+        <Icon
+          :name="isLiveWeb ? 'panels' : (isVideo ? 'video' : (isImage ? 'image' : (isAgent ? 'bot' : 'file')))"
+          class="h-3.5 w-3.5 shrink-0 text-accent"
+        />
+        <span class="truncate font-mono text-[12.5px] font-medium text-fg" :title="props.file.path">
+          {{ isLiveWeb ? (props.file.path.includes('choose') || props.file.path.includes('127.0.0.1') ? 'Design Choice Preview' : 'Live Preview') : basename }}
+        </span>
+        <span v-if="lineRange" class="shrink-0 rounded bg-raised px-1 py-0.5 font-mono text-[10.5px] text-accent font-medium">
+          :{{ lineRange }}
+        </span>
       </div>
 
-      <!-- Actions & Controls -->
-      <div class="flex items-center gap-2 shrink-0">
+      <div class="flex items-center gap-1 shrink-0">
         <!-- Live Web Preview Controls -->
-        <div v-if="isLiveWeb" class="flex items-center gap-1.5">
+        <template v-if="isLiveWeb">
           <button
             type="button"
-            class="flex items-center gap-1 rounded-[5px] border border-line/50 bg-raised/40 px-2 py-1 text-[11px] text-dim transition-colors hover:border-line-strong hover:bg-raised hover:text-fg"
+            class="grid h-7 w-7 place-items-center rounded-[6px] text-dim transition-colors hover:bg-raised hover:text-fg"
             title="Inspect preview / Toggle DevTools (F12)"
+            aria-label="Inspect preview"
             @click="onInspect"
           >
             <Icon name="terminal" class="h-3.5 w-3.5" />
-            <span class="hidden sm:inline">Inspect</span>
           </button>
           <button
             type="button"
-            class="flex items-center gap-1 rounded-[5px] border border-line/50 bg-raised/40 px-2 py-1 text-[11px] text-dim transition-colors hover:border-line-strong hover:bg-raised hover:text-fg"
+            class="grid h-7 w-7 place-items-center rounded-[6px] text-dim transition-colors hover:bg-raised hover:text-fg"
             title="Reload live preview"
+            aria-label="Reload live preview"
             @click="iframeKey++"
           >
             <Icon name="refresh" class="h-3.5 w-3.5" />
-            <span class="hidden sm:inline">Refresh</span>
           </button>
           <button
             type="button"
-            class="flex items-center gap-1 rounded-[5px] border border-line/50 bg-raised/40 px-2 py-1 text-[11px] text-dim transition-colors hover:border-line-strong hover:bg-raised hover:text-fg"
+            class="grid h-7 w-7 place-items-center rounded-[6px] text-dim transition-colors hover:bg-raised hover:text-fg"
             title="Open in external browser"
+            aria-label="Open in external browser"
             @click="openExternal(props.file.path)"
           >
             <Icon name="external" class="h-3.5 w-3.5" />
-            <span class="hidden sm:inline">Browser</span>
           </button>
-        </div>
+        </template>
 
-        <!-- Markdown, SVG & HTML Preview vs Raw Toggle -->
-        <div v-else-if="isMarkdown || isSvg || isHtml" class="flex items-center rounded-[5px] border border-line/60 bg-raised/50 p-0.5 text-[11px]">
+        <!-- Markdown, SVG & HTML Preview vs Code Toggle -->
+        <div v-else-if="isMarkdown || isSvg || isHtml" class="mr-1 flex items-center rounded-[6px] border border-line/60 bg-raised/60 p-0.5 text-[11px]">
           <button
             type="button"
             class="rounded-[4px] px-2 py-0.5 font-medium transition-colors"
-            :class="mode === 'preview' ? 'bg-canvas text-fg shadow-xs' : 'text-dim hover:text-fg'"
+            :class="mode === 'preview' ? 'bg-canvas text-fg' : 'text-dim hover:text-fg'"
             @click="mode = 'preview'"
           >
             Preview
@@ -413,19 +339,19 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
           <button
             type="button"
             class="rounded-[4px] px-2 py-0.5 font-medium transition-colors"
-            :class="mode === 'raw' ? 'bg-canvas text-fg shadow-xs' : 'text-dim hover:text-fg'"
+            :class="mode === 'raw' ? 'bg-canvas text-fg' : 'text-dim hover:text-fg'"
             @click="mode = 'raw'"
           >
-            Raw
+            Code
           </button>
         </div>
 
         <!-- Image Zoom Toggle (Fit vs 100%) -->
-        <div v-else-if="isImage" class="flex items-center rounded-[5px] border border-line/60 bg-raised/50 p-0.5 text-[11px]">
+        <div v-else-if="isImage" class="mr-1 flex items-center rounded-[6px] border border-line/60 bg-raised/60 p-0.5 text-[11px]">
           <button
             type="button"
             class="rounded-[4px] px-2 py-0.5 font-medium transition-colors"
-            :class="imageZoom === 'fit' ? 'bg-canvas text-fg shadow-xs' : 'text-dim hover:text-fg'"
+            :class="imageZoom === 'fit' ? 'bg-canvas text-fg' : 'text-dim hover:text-fg'"
             title="Fit image inside view"
             @click="imageZoom = 'fit'"
           >
@@ -434,7 +360,7 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
           <button
             type="button"
             class="rounded-[4px] px-2 py-0.5 font-medium transition-colors"
-            :class="imageZoom === 'actual' ? 'bg-canvas text-fg shadow-xs' : 'text-dim hover:text-fg'"
+            :class="imageZoom === 'actual' ? 'bg-canvas text-fg' : 'text-dim hover:text-fg'"
             title="View at 100% natural size"
             @click="imageZoom = 'actual'"
           >
@@ -442,128 +368,42 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
           </button>
         </div>
 
-        <!-- Language / Format & Dimension / Line Count Badges -->
-        <span class="rounded bg-raised px-1.5 py-0.5 font-mono text-[10.5px] text-dim">
-          {{ languageLabel }}
-        </span>
-        <span v-if="isImage && imageDimensions" class="hidden sm:inline font-mono text-[11px] text-faint">
-          {{ imageDimensions.width }} × {{ imageDimensions.height }}
-        </span>
-        <span v-else-if="!isImage && !isVideo && !loading && !error" class="hidden sm:inline font-mono text-[11px] text-faint">
-          {{ lines.length }} {{ lines.length === 1 ? 'line' : 'lines' }}
-        </span>
-
-        <span class="h-3.5 w-px bg-line/60" />
-
-        <!-- Copy File / Image / Path -->
+        <!-- Copy Icon Button -->
         <button
           type="button"
-          class="flex items-center gap-1 rounded-[5px] border border-line/50 bg-raised/40 px-2 py-1 text-[11.5px] text-dim transition-colors hover:border-line-strong hover:bg-raised hover:text-fg"
-          :aria-label="isVideo ? 'Copy path' : (isImage && (!isSvg || mode === 'preview') ? 'Copy image' : 'Copy file contents')"
+          class="grid h-7 w-7 place-items-center rounded-[6px] text-dim transition-colors hover:bg-raised hover:text-fg disabled:opacity-40"
+          :aria-label="isVideo ? 'Copy path' : (isImage && (!isSvg || mode === 'preview') ? 'Copy image' : 'Copy contents')"
+          :title="copied ? 'Copied' : 'Copy contents'"
           :disabled="loading || Boolean(error)"
           @click="isVideo ? copyFullPath() : (isImage && (!isSvg || mode === 'preview') ? copyImage() : copyContent())"
         >
-          <Icon :name="copied ? 'check' : 'copy'" class="h-3.5 w-3.5 shrink-0" :class="copied ? 'text-ok' : ''" />
-          <span :class="copied ? 'text-ok font-medium' : ''">{{ copied ? 'Copied' : 'Copy' }}</span>
+          <Icon :name="copied ? 'check' : 'copy'" class="h-3.5 w-3.5" :class="copied ? 'text-ok' : ''" />
         </button>
 
-        <!-- More Actions / 3-dot Menu via canonical Popover -->
-        <Popover
-          :open="menuOpen"
-          label="File options"
-          :width="210"
-          side="below"
-          hide-header
-          @close="menuOpen = false"
+        <!-- Open in External Editor Icon Button -->
+        <button
+          v-if="isRealFileSystemPath"
+          type="button"
+          class="grid h-7 w-7 place-items-center rounded-[6px] text-dim transition-colors hover:bg-raised hover:text-fg"
+          aria-label="Open in external editor"
+          title="Open in external editor"
+          @click="openInDefaultApp"
         >
-          <template #trigger>
-            <button
-              type="button"
-              class="rounded-[5px] p-1 text-dim transition-colors hover:bg-raised hover:text-fg"
-              :class="menuOpen ? 'bg-raised text-fg' : ''"
-              aria-label="More file actions"
-              :aria-expanded="menuOpen"
-              @click="menuOpen = !menuOpen"
-            >
-              <Icon name="ellipsis" class="h-3.5 w-3.5" />
-            </button>
-          </template>
+          <Icon name="external" class="h-3.5 w-3.5" />
+        </button>
 
-          <div class="p-1 select-none" role="menu" aria-label="File options">
-            <button
-              role="menuitem"
-              class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
-              :disabled="!isRealFileSystemPath"
-              @click="openInDefaultApp"
-            >
-              <Icon name="external" class="h-3.5 w-3.5 shrink-0 text-faint" />
-              <span class="min-w-0 flex-1 truncate">Open in default app</span>
-            </button>
-
-            <button
-              role="menuitem"
-              class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
-              :disabled="!isRealFileSystemPath"
-              @click="revealInFileManager"
-            >
-              <Icon name="folder-open" class="h-3.5 w-3.5 shrink-0 text-faint" />
-              <span class="min-w-0 flex-1 truncate">Reveal in file manager</span>
-            </button>
-
-            <hr class="my-1 border-t border-line/50" />
-
-            <button
-              role="menuitem"
-              class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg"
-              @click="copyFullPath"
-            >
-              <Icon :name="copiedFullPath ? 'check' : 'copy'" class="h-3.5 w-3.5 shrink-0" :class="copiedFullPath ? 'text-ok' : 'text-faint'" />
-              <span class="min-w-0 flex-1 truncate" :class="copiedFullPath ? 'text-ok font-medium' : ''">
-                {{ copiedFullPath ? 'Full path copied' : 'Copy full path' }}
-              </span>
-            </button>
-
-            <button
-              v-if="cleanPath !== fullPath"
-              role="menuitem"
-              class="flex w-full items-center gap-2.5 rounded-[6px] px-2.5 py-1.5 text-left text-[12px] text-dim transition-colors hover:bg-raised hover:text-fg"
-              @click="copyRelativePath"
-            >
-              <Icon :name="copiedRelPath ? 'check' : 'file'" class="h-3.5 w-3.5 shrink-0" :class="copiedRelPath ? 'text-ok' : 'text-faint'" />
-              <span class="min-w-0 flex-1 truncate" :class="copiedRelPath ? 'text-ok font-medium' : ''">
-                {{ copiedRelPath ? 'Relative path copied' : 'Copy relative path' }}
-              </span>
-            </button>
-          </div>
-        </Popover>
-
-        <!-- Close Button -->
+        <!-- Single Close X Icon Button -->
         <button
           type="button"
-          class="rounded-[5px] p-1 text-faint transition-colors hover:bg-raised hover:text-fg"
+          class="grid h-7 w-7 place-items-center rounded-[6px] text-dim transition-colors hover:bg-raised hover:text-fg"
           aria-label="Close file viewer"
+          title="Close (Esc)"
           @click="emit('close')"
         >
           <Icon name="close" class="h-3.5 w-3.5" />
         </button>
       </div>
     </header>
-
-    <!-- Subtitle metadata strip -->
-    <div class="flex items-center justify-between border-b border-line/30 bg-surface/30 px-3.5 py-1 text-[11px] text-faint select-none">
-      <div class="flex items-center gap-2 truncate">
-        <span class="flex items-center gap-1 text-accent/90 font-medium">
-          <span class="h-1.5 w-1.5 rounded-full bg-accent" />
-          {{ isLiveWeb ? 'Live Web Preview' : (isVideo ? 'Video' : (isImage && (!isSvg || mode === 'preview') ? 'Image preview' : (isHtml && mode === 'preview' ? 'HTML preview' : (isMarkdown && mode === 'preview' ? (isAgent ? 'Agent report' : (isSkill ? 'Skill preview' : 'Markdown preview')) : 'Read-only view')))) }}
-        </span>
-        <span>·</span>
-        <span class="truncate font-mono text-faint/80">{{ props.file.path }}</span>
-      </div>
-      <div class="flex items-center gap-2 shrink-0 font-mono text-[10.5px] text-faint/70">
-        <span v-if="isImage && (!isSvg || mode === 'preview')" class="hidden sm:inline">click image to zoom ·</span>
-        <span class="hidden sm:inline">esc to close</span>
-      </div>
-    </div>
 
     <!-- Main Content Area -->
     <main class="min-h-0 flex-1 overflow-hidden relative">
@@ -643,7 +483,6 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
             :class="[
               imageZoom === 'fit' ? 'max-h-full max-w-full object-contain cursor-zoom-in' : 'cursor-zoom-out',
             ]"
-            @load="onImageLoad"
             @error="onImageError"
             @click="imageZoom = imageZoom === 'fit' ? 'actual' : 'fit'"
           />

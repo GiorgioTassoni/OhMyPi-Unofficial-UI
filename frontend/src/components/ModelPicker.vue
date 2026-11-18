@@ -23,7 +23,8 @@ import {
   type ModelOption,
   modelKey,
   moveFavourite,
-  providerGlyph,
+  providerBadge,
+  providerSectionTitle,
   toggleFavourite,
   visibleGroups,
 } from "../lib/models";
@@ -123,10 +124,8 @@ const sections = computed<Section[]>(() => {
   }
 
   for (const group of visible.groups) {
-    const providerLabel =
-      group.provider === "openai-codex" ? "OpenAI Codex (ChatGPT)" : group.provider;
     sections.push({
-      header: `${providerGlyph(group.provider)} ${providerLabel}`,
+      header: providerSectionTitle(group.provider),
       favourite: false,
       rows: group.models.map((model) => ({ model, key: modelKey(model), index: index++ })),
     });
@@ -344,7 +343,7 @@ function onDrop(key: string): void {
 
       <section v-for="section in sections" :key="section.header" class="pt-2 first:pt-0.5">
         <div class="flex items-baseline gap-2 px-2.5 pb-1">
-          <span class="text-[10.5px] font-medium uppercase tracking-[0.09em] text-faint">
+          <span class="text-[11px] font-medium text-faint">
             {{ section.header }}
           </span>
           <!-- Only the favourites drag, so only they carry the hint. -->
@@ -379,8 +378,8 @@ function onDrop(key: string): void {
             <Icon name="grip" class="h-3.5 w-3.5" />
           </span>
 
-          <span class="w-4 shrink-0 font-mono text-[10.5px] text-faint">
-            {{ providerGlyph(entry.model.provider) }}
+          <span class="shrink-0 rounded-[4px] border border-line-strong/50 bg-raised/90 px-1.5 py-0.5 text-[10.5px] font-medium text-dim">
+            {{ providerBadge(entry.model.provider) }}
           </span>
 
           <span

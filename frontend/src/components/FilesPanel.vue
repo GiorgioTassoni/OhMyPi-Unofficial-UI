@@ -230,8 +230,8 @@ async function copy(text: string): Promise<void> {
         @click="view = tab"
       >
         {{ tab === 'changed' && props.review ? 'review' : tab }}
-        <span v-if="tab === 'changed' && !props.review && changed.length" class="font-mono text-[10.5px] text-faint">{{ changed.length }}</span>
-        <span v-else-if="tab === 'artifacts' && spilled.length" class="font-mono text-[10.5px] text-faint">{{ spilled.length }}</span>
+        <span v-if="tab === 'changed' && !props.review && changed.length" class="tabular-nums text-[10.5px] text-faint">{{ changed.length }}</span>
+        <span v-else-if="tab === 'artifacts' && spilled.length" class="tabular-nums text-[10.5px] text-faint">{{ spilled.length }}</span>
       </button>
     </div>
 
@@ -278,11 +278,12 @@ async function copy(text: string): Promise<void> {
             <Icon :name="file.kind === 'written' ? 'file' : 'pencil'" class="h-3.5 w-3.5" />
           </span>
           <button
-            class="min-w-0 flex-1 truncate text-left font-mono text-[12px] text-fg hover:underline cursor-pointer"
+            class="min-w-0 flex-1 truncate text-left text-[12.5px] hover:underline cursor-pointer"
             title="View file in-app"
             @click="emit('openFile', { path: file.path })"
           >
-            <span class="text-faint">{{ file.folder }}</span><span>{{ file.name }}</span>
+            <span class="font-medium text-fg">{{ file.name }}</span>
+            <span v-if="file.folder" class="ml-1.5 text-[11.5px] text-faint">{{ file.folder.replace(/\/$/, '') }}</span>
             <span
               v-if="file.agentName && file.agentName !== 'task'"
               class="ml-1.5 shrink-0 rounded bg-raised px-1 py-0.5 text-[10px] text-accent font-sans"
@@ -290,10 +291,10 @@ async function copy(text: string): Promise<void> {
               {{ file.agentName }}
             </span>
           </button>
-          <span v-if="file.touches > 1" class="shrink-0 font-mono text-[10.5px] text-faint">
+          <span v-if="file.touches > 1" class="shrink-0 tabular-nums text-[10.5px] text-faint">
             ×{{ file.touches }}
           </span>
-          <span v-if="file.stats" class="shrink-0 font-mono text-[10.5px]">
+          <span v-if="file.stats" class="shrink-0 tabular-nums font-medium text-[10.5px]">
             <span class="text-ok">+{{ file.stats.added }}</span> <span class="text-err">−{{ file.stats.removed }}</span>
           </span>
           <button
@@ -349,7 +350,7 @@ async function copy(text: string): Promise<void> {
             artifact://{{ entry.id }}
           </button>
           <span v-if="entry.truncated" class="shrink-0 text-[11px] text-warn">truncated</span>
-          <span v-if="entry.bytes !== null" class="shrink-0 font-mono text-[10.5px] text-faint">
+          <span v-if="entry.bytes !== null" class="shrink-0 tabular-nums text-[10.5px] text-faint">
             {{ formatBytes(entry.bytes) }}
           </span>
           <button
@@ -368,7 +369,7 @@ async function copy(text: string): Promise<void> {
           <span class="min-w-0 flex-1 truncate font-mono text-[10.5px] text-faint">
             {{ artifact.path }}
           </span>
-          <span class="shrink-0 font-mono text-[10.5px] text-faint">{{ formatBytes(artifact.bytes) }}</span>
+          <span class="shrink-0 tabular-nums text-[10.5px] text-faint">{{ formatBytes(artifact.bytes) }}</span>
           <button
             class="shrink-0 rounded-[5px] px-2 py-0.5 text-[11.5px] text-dim hover:bg-raised hover:text-fg"
             @click="copy(artifact.text)"

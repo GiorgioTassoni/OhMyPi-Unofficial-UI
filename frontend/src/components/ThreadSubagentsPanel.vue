@@ -68,7 +68,7 @@ const showOlder = ref(false);
     <div v-else class="flex flex-col p-2.5">
       <div class="mb-2 flex items-center justify-between px-1 text-[11px] text-faint">
         <span>{{ props.subagents.length }} {{ props.subagents.length === 1 ? 'subagent' : 'subagents' }}</span>
-        <span v-if="activeCount > 0" class="flex items-center gap-1 font-mono text-accent">
+        <span v-if="activeCount > 0" class="flex items-center gap-1 tabular-nums text-accent">
           <span class="inline-block size-1.5 rounded-full bg-accent animate-pulse" />
           {{ activeCount }} running
         </span>
@@ -101,7 +101,7 @@ const showOlder = ref(false);
               </span>
 
               <span
-                class="shrink-0 font-mono text-[10.5px]"
+                class="shrink-0 tabular-nums text-[10.5px]"
                 :class="agent.running ? 'text-accent font-medium' : 'text-faint'"
               >
                 {{ agent.running ? 'working' : (agent.finishedAt ? formatAgentAge(agent.finishedAt) : 'finished') }}
@@ -142,7 +142,7 @@ const showOlder = ref(false);
             class="flex items-center justify-between rounded border border-line/20 bg-surface/20 px-2.5 py-1 text-[11.5px]"
           >
             <span class="truncate font-medium text-dim">{{ agent.name }}</span>
-            <span class="shrink-0 font-mono text-[10px] text-faint">finished</span>
+            <span class="shrink-0 text-[10.5px] text-faint">finished</span>
           </li>
         </ul>
       </div>

@@ -103,7 +103,7 @@ function parent(target: string): string {
         <span class="min-w-0 truncate text-[12.5px] text-dim">{{ label }}</span>
       </button>
 
-      <span v-if="props.node !== null && !props.node.isDir" class="shrink-0 font-mono text-[10.5px] text-faint">
+      <span v-if="props.node !== null && !props.node.isDir" class="shrink-0 tabular-nums text-[10.5px] text-faint">
         {{ formatBytes(props.node.size) }}
       </span>
       <button

@@ -152,7 +152,7 @@ const skillPrompt = computed(() => parseSkillPrompt(props.row));
         class="group/message flex max-w-[80%] min-w-0 flex-col items-end gap-1.5"
       >
         <p
-          class="whitespace-pre-wrap break-words rounded-[14px] bg-raised/75 border border-line/50 px-3.5 py-2.5 text-[13px] leading-relaxed text-fg select-text"
+          class="whitespace-pre-wrap break-words rounded-[14px] bg-raised border border-line/70 px-4 py-2.5 text-[14px] leading-relaxed text-fg select-text"
         >
           {{ skillPrompt.args }}
         </p>
@@ -193,7 +193,7 @@ const skillPrompt = computed(() => parseSkillPrompt(props.row));
     <div v-else-if="row.text" class="group/message flex max-w-[80%] min-w-0 flex-col items-end gap-1.5">
       <p
         v-if="userMessage.text"
-        class="whitespace-pre-wrap break-words rounded-[14px] bg-raised/75 border border-line/50 px-3.5 py-2.5 text-[13px] leading-relaxed text-fg select-text"
+        class="whitespace-pre-wrap break-words rounded-[14px] bg-raised border border-line/70 px-3.5 py-2 text-[13px] leading-relaxed text-fg select-text"
       >
         {{ userMessage.text }}
       </p>
@@ -233,7 +233,7 @@ const skillPrompt = computed(() => parseSkillPrompt(props.row));
         <Icon name="chevron-right" class="h-3 w-3 text-faint transition-transform group-open:rotate-90" />
       </summary>
       <div
-        class="mt-1.5 whitespace-pre-wrap break-words rounded-r-[8px] border-l border-line-strong/80 bg-surface/50 px-3.5 py-2 text-[12px] italic leading-relaxed text-dim select-text"
+        class="mt-1.5 whitespace-pre-wrap break-words rounded-r-[8px] border-l-2 border-line-strong/60 bg-surface/60 px-3.5 py-2 text-[12.5px] leading-relaxed text-dim select-text"
       >
         {{ row.thinking }}
       </div>
@@ -249,7 +249,7 @@ const skillPrompt = computed(() => parseSkillPrompt(props.row));
     </div>
 
     <div v-if="row.text" class="group/message flex flex-col gap-1.5">
-      <div class="text-[13.5px] leading-relaxed text-fg select-text">
+      <div class="text-[13px] leading-[1.62] text-fg select-text">
         <MarkdownBody :text="row.text" @failed="emit('failed', $event)" @open-file="emit('openFile', $event)" />
       </div>
       <button

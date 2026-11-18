@@ -13,12 +13,12 @@ import { pickDirectory } from "../bridge";
 import {
   formatFriendlyTime,
   formatFullDate,
+  formatRelativeTime,
   projectName,
   reorderItems,
   type ProjectGroup,
   type ThreadRow,
 } from "../lib/threads";
-import logo from "../assets/ohmypi-logo.svg";
 import ProjectMenu from "./ProjectMenu.vue";
 import OAuthUsageSidebarWidget from "./OAuthUsageSidebarWidget.vue";
 import Icon from "./ui/Icon.vue";
@@ -36,13 +36,7 @@ const props = defineProps<{
   sessions: number;
   /** The thread whose title is being edited in place, if any. */
   renameId: string | null;
-  /**
-   * How many subagents are in flight across every live thread (`docs/12` §2.1).
-   *
-   * App-wide rather than per project, because a subagent is work running *beside* the
-   * conversation: "3" here means the app is busy, which is the question this row answers.
-   */
-  agents: number;
+  agents?: number;
 }>();
 
 const emit = defineEmits<{
@@ -51,7 +45,6 @@ const emit = defineEmits<{
   open: [workspace: string];
   /** Open cross-thread search (`docs/12` §2.1) — the overlay lives in the shell. */
   search: [];
-  /** Open the global agents panel (`docs/12` §9) — also in the shell. */
   agents: [];
   /** Open the settings screen (`docs/12` §12), whose own rail carries this footer row too. */
   settings: [];
@@ -204,78 +197,20 @@ function attention(rows: ThreadRow[]): number {
   return rows.filter((row) => row.dot === "attention" || row.unread).length;
 }
 
+function toggleAllProjects(): void {
+  if (openProjects.value.size > 0) {
+    openProjects.value = new Set();
+    return;
+  }
+  openProjects.value = new Set(props.groups.map((g) => g.path));
+}
+
 const draggingIndex = ref<number | null>(null);
 const dropTargetIndex = ref<number | null>(null);
 const dropPosition = ref<"above" | "below" | null>(null);
-const longPressArmed = ref(false);
-const longPressIndex = ref<number | null>(null);
-let longPressTimer: ReturnType<typeof setTimeout> | null = null;
-let dragStartPos = { x: 0, y: 0 };
-
-function cancelLongPress(): void {
-  if (longPressTimer) {
-    clearTimeout(longPressTimer);
-    longPressTimer = null;
-  }
-  longPressArmed.value = false;
-  longPressIndex.value = null;
-}
-
-function onCardMouseDown(event: MouseEvent, index: number): void {
-  if (event.button !== 0) return;
-  const target = event.target as HTMLElement | null;
-  if (target?.closest("button")) return;
-
-  cancelLongPress();
-  longPressIndex.value = index;
-  dragStartPos = { x: event.clientX, y: event.clientY };
-
-  longPressTimer = setTimeout(() => {
-    longPressArmed.value = true;
-  }, 220);
-}
-
-function onGripDragStart(event: DragEvent, index: number): void {
-  cancelLongPress();
-  draggingIndex.value = index;
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", String(index));
-  }
-}
-
-function onCardMouseMove(event: MouseEvent): void {
-  if (!longPressTimer) return;
-  const dist = Math.hypot(event.clientX - dragStartPos.x, event.clientY - dragStartPos.y);
-  if (dist > 6 && !longPressArmed.value) {
-    cancelLongPress();
-  }
-}
-
-function onCardMouseUp(event: MouseEvent, path: string): void {
-  const wasArmed = longPressArmed.value;
-  const isDragging = draggingIndex.value !== null;
-  cancelLongPress();
-
-  if (event.button !== 0) return;
-
-  const target = event.target as HTMLElement | null;
-  if (!wasArmed && !isDragging && !target?.closest("button")) {
-    toggle(path);
-  }
-}
-
-function onCardMouseLeave(): void {
-  if (draggingIndex.value === null) {
-    cancelLongPress();
-  }
-}
 
 function onDragStart(event: DragEvent, index: number): void {
-  if (!longPressArmed.value || longPressIndex.value !== index) {
-    event.preventDefault();
-    return;
-  }
+  onRowMouseLeave();
   draggingIndex.value = index;
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = "move";
@@ -311,7 +246,6 @@ function onDrop(): void {
   const fromIndex = draggingIndex.value;
   const toIndex = dropTargetIndex.value;
   const position = dropPosition.value;
-  cancelLongPress();
   draggingIndex.value = null;
   dropTargetIndex.value = null;
   dropPosition.value = null;
@@ -322,7 +256,6 @@ function onDrop(): void {
 }
 
 function onDragEnd(): void {
-  cancelLongPress();
   draggingIndex.value = null;
   dropTargetIndex.value = null;
   dropPosition.value = null;
@@ -333,7 +266,7 @@ const hoverPosition = ref<{ top: number; left: number }>({ top: 0, left: 0 });
 let hoverTimer: ReturnType<typeof setTimeout> | null = null;
 
 function onRowMouseEnter(event: MouseEvent, row: ThreadRow): void {
-  if (props.renameId === row.id) return;
+  if (props.renameId === row.id || draggingIndex.value !== null) return;
   if (hoverTimer) clearTimeout(hoverTimer);
   const target = event.currentTarget as HTMLElement | null;
   if (!target) return;
@@ -357,7 +290,6 @@ function onRowMouseLeave(): void {
 
 onUnmounted(() => {
   if (hoverTimer) clearTimeout(hoverTimer);
-  cancelLongPress();
 });
 
 const total = computed(() => props.groups.reduce((count, group) => count + group.threads.length, 0));
@@ -368,13 +300,13 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
 </script>
 
 <template>
-  <aside class="flex w-full h-full shrink-0 flex-col border-r border-line/40 bg-rail">
+  <aside class="flex w-full h-full shrink-0 flex-col bg-rail">
     <!-- Top window drag region matching TitleBar's height -->
     <div
-      class="flex h-10 shrink-0 items-center justify-between border-b border-line/40 px-2.5 select-none"
+      class="flex h-10 shrink-0 items-center justify-between px-2.5 select-none"
       data-tauri-drag-region
     >
-      <div class="flex items-center gap-1.5">
+      <div class="flex items-center gap-2">
         <button
           class="grid h-6 w-6 place-items-center rounded-[6px] text-dim transition-colors hover:bg-raised hover:text-fg"
           aria-label="collapse sidebar"
@@ -383,86 +315,62 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
         >
           <Icon name="panels" class="h-3.5 w-3.5" />
         </button>
-        <img :src="logo" alt="" class="h-4 w-4 shrink-0" />
-        <span class="text-[12.5px] font-semibold tracking-tight text-fg/80">OhMyPi</span>
+        <span class="text-[12.5px] font-semibold tracking-tight text-fg/85">OhMyPi</span>
       </div>
+    </div>
+
+    <div class="flex flex-col gap-1.5 px-2.5 pt-2.5 pb-1.5">
       <button
         :disabled="props.busy || props.workspace === null"
-        class="grid h-6 w-6 place-items-center rounded-[6px] text-dim transition-colors hover:bg-raised hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent"
-        aria-label="new thread"
+        class="flex items-center justify-start gap-2.5 rounded-[7px] border border-line/60 bg-raised px-2.5 py-1.5 text-left text-[13px] font-medium text-fg transition-all hover:bg-selected hover:border-line-strong active:scale-[0.99] disabled:opacity-40 disabled:hover:bg-raised"
+        data-row="new-thread"
         type="button"
         @click="props.workspace && emit('open', props.workspace)"
       >
-        <Icon name="plus" class="h-3.5 w-3.5" />
+        <Icon name="plus" class="h-3.5 w-3.5 text-accent" />
+        <span>New thread</span>
       </button>
-    </div>
 
-    <!--
-      `docs/12` §2.1's first three rows, in the reference's language: quiet icon rows that fill
-      in on hover, no borders between them, and the shortcut named on the right where it is read
-      rather than hunted for.
-    -->
-    <div class="flex flex-col gap-0.5 p-2">
       <button
-        class="group flex items-center gap-2.5 rounded-[6px] px-2.5 py-2 text-left text-[13px] text-dim transition-colors hover:bg-raised hover:text-fg"
+        class="group flex items-center gap-2.5 rounded-[7px] px-2.5 py-1.5 text-left text-[13px] text-dim transition-colors hover:bg-raised hover:text-fg"
         data-row="search"
+        type="button"
         @click="emit('search')"
       >
-        <Icon name="search" class="h-4 w-4 text-faint group-hover:text-dim" />
-        Search
-        <span class="ml-auto text-[11.5px] text-faint group-hover:text-dim">
+        <Icon name="search" class="h-3.5 w-3.5 text-faint group-hover:text-dim" />
+        <span>Search</span>
+        <span class="ml-auto text-[11px] text-faint group-hover:text-dim">
           {{ searchShortcut }}
         </span>
       </button>
-
-      <button
-        :disabled="props.busy || props.workspace === null"
-        class="group flex items-center gap-2.5 rounded-[6px] px-2.5 py-2 text-left text-[13px] text-dim hover:bg-raised hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent"
-        data-row="new-thread"
-        @click="props.workspace && emit('open', props.workspace)"
-      >
-        <Icon name="plus" class="h-4 w-4 text-faint group-hover:text-dim" />
-        New thread
-      </button>
-
-      <button
-        class="group flex items-center gap-2.5 rounded-[6px] px-2.5 py-2 text-left text-[13px] text-dim hover:bg-raised hover:text-fg"
-        data-row="agents"
-        type="button"
-        @click="emit('agents')"
-      >
-        <Icon name="sparkle" class="h-4 w-4 text-faint group-hover:text-dim" />
-        Subagents
-        <!--
-          The count is the point of the row: work happening beside the conversation has to be
-          visible while the thread on screen is idle.
-        -->
-        <span
-          class="ml-auto font-mono text-[11px]"
-          :class="props.agents > 0 ? 'text-accent' : 'text-faint'"
-        >
-          {{ props.agents }}
-        </span>
-      </button>
     </div>
 
-    <!--
-      The projects. `+` here is where a directory nobody has opened yet comes from: it is the
-      sidebar's own subject, and the titlebar is chrome.
-    -->
-    <div class="flex items-center gap-1 px-2 pb-1 pt-2">
-      <span class="px-1.5 text-[10.5px] font-medium uppercase tracking-[0.09em] text-faint">
+    <div class="flex items-center gap-1 px-2.5 pb-1 pt-2">
+      <span class="px-1 text-[12px] font-medium text-faint">
         Projects
       </span>
-      <button
-        class="ml-auto grid h-6 w-6 place-items-center rounded-[6px] text-faint hover:bg-raised hover:text-fg"
-        aria-label="open a project folder"
-        data-action="open-directory"
-        type="button"
-        @click="chooseDirectory"
-      >
-        <Icon name="plus" class="h-3.5 w-3.5" />
-      </button>
+      <div class="ml-auto flex items-center gap-0.5">
+        <button
+          v-if="props.groups.length > 0"
+          class="grid h-6 w-6 place-items-center rounded-[6px] text-faint transition-colors hover:bg-raised hover:text-fg"
+          :aria-label="openProjects.size > 0 ? 'Collapse all projects' : 'Expand all projects'"
+          :title="openProjects.size > 0 ? 'Collapse all projects' : 'Expand all projects'"
+          type="button"
+          @click="toggleAllProjects"
+        >
+          <Icon :name="openProjects.size > 0 ? 'chevron-up' : 'chevron-down'" class="h-3.5 w-3.5" />
+        </button>
+        <button
+          class="grid h-6 w-6 place-items-center rounded-[6px] text-faint transition-colors hover:bg-raised hover:text-fg"
+          aria-label="open a project folder"
+          title="Open project folder"
+          data-action="open-directory"
+          type="button"
+          @click="chooseDirectory"
+        >
+          <Icon name="plus" class="h-3.5 w-3.5" />
+        </button>
+      </div>
     </div>
 
     <div v-if="adding" class="px-2 pb-1">
@@ -514,48 +422,38 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
         @drop.prevent="onDrop"
       >
         <div
-          class="group flex items-center gap-1 rounded-[6px] px-1.5 py-1.5 hover:bg-raised select-none cursor-pointer transition-all duration-150"
+          class="group flex h-8 items-center gap-1 rounded-[7px] px-1.5 hover:bg-raised select-none cursor-pointer transition-colors"
           :class="{
-            'cursor-grab': longPressArmed && longPressIndex === index && draggingIndex === null,
-            'cursor-grabbing ring-2 ring-accent bg-accent/15 shadow-md scale-[1.01] -translate-y-0.5': longPressArmed && longPressIndex === index && draggingIndex === null,
-            'cursor-grabbing ring-1 ring-accent/60 opacity-40': draggingIndex === index,
+            'cursor-grabbing opacity-50': draggingIndex === index,
           }"
-          :draggable="longPressArmed && longPressIndex === index"
+          draggable="true"
           tabindex="0"
           role="button"
           :aria-expanded="isOpen(group.path)"
+          @click="toggle(group.path)"
           @keydown.enter="toggle(group.path)"
           @keydown.space.prevent="toggle(group.path)"
-          @mousedown="onCardMouseDown($event, index)"
-          @mousemove="onCardMouseMove"
-          @mouseup="onCardMouseUp($event, group.path)"
-          @mouseleave="onCardMouseLeave"
           @dragstart="onDragStart($event, index)"
           @dragend="onDragEnd"
           @contextmenu.prevent="onProjectContext($event, group)"
         >
           <span
-            class="grid h-4 w-3.5 shrink-0 place-items-center text-faint opacity-0 group-hover:opacity-70 hover:!opacity-100 hover:text-accent cursor-grab active:cursor-grabbing transition-opacity"
-            :class="{ '!opacity-100 !text-accent': longPressArmed && longPressIndex === index }"
+            class="grid h-4 w-3.5 shrink-0 place-items-center text-faint opacity-0 group-hover:opacity-65 hover:!opacity-100 hover:text-accent cursor-grab active:cursor-grabbing transition-opacity"
             title="Drag to reorder"
             aria-label="Drag to reorder"
-            draggable="true"
-            @mousedown.stop
-            @dragstart.stop="onGripDragStart($event, index)"
-            @dragend="onDragEnd"
           >
             <Icon name="grip" class="h-3 w-3" />
           </span>
           <div class="flex min-w-0 flex-1 items-center gap-1.5 text-left pointer-events-none">
             <Icon
               :name="isOpen(group.path) ? 'folder-open' : 'folder'"
-              class="h-3.5 w-3.5 shrink-0 text-accent/80"
+              class="h-3.5 w-3.5 shrink-0 text-dim group-hover:text-fg"
             />
             <span class="truncate text-[12.5px] font-medium text-dim group-hover:text-fg">{{ group.name }}</span>
           </div>
           <span
             v-if="!isOpen(group.path) && attention(group.threads) > 0"
-            class="shrink-0 rounded-full bg-warn/15 px-1.5 font-mono text-[10px] text-warn pointer-events-none"
+            class="shrink-0 rounded-full bg-warn/15 px-1.5 tabular-nums text-[10px] font-medium text-warn pointer-events-none"
           >
             {{ attention(group.threads) }}
           </span>
@@ -563,7 +461,6 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
             :disabled="props.busy || group.path === ''"
             class="grid h-5 w-5 shrink-0 place-items-center rounded-[5px] text-faint opacity-0 hover:bg-surface hover:text-fg group-hover:opacity-100 disabled:opacity-0"
             aria-label="new thread here"
-            @mousedown.stop
             @click.stop="openProjects.add(group.path); emit('open', group.path)"
           >
             <Icon name="plus" class="h-3.5 w-3.5" />
@@ -572,7 +469,6 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
             :disabled="props.busy"
             class="grid h-5 w-5 shrink-0 place-items-center rounded-[5px] text-faint opacity-0 hover:bg-surface hover:text-err group-hover:opacity-100 disabled:opacity-0"
             aria-label="delete project and its sessions"
-            @mousedown.stop
             @click.stop="emit('deleteProject', group)"
           >
             <Icon name="trash" class="h-3.5 w-3.5" />
@@ -582,7 +478,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
         <ul v-if="isOpen(group.path)" class="my-0.5 flex flex-col gap-0.5">
           <li v-for="row in group.threads" :key="row.id">
             <button
-              class="group/row relative flex w-full items-center justify-between gap-2 rounded-[6px] py-1.5 pr-2.5 text-left transition-colors"
+              class="group/row relative flex h-8 w-full items-center justify-between gap-2 rounded-[7px] pr-2.5 text-left transition-colors"
               :class="
                 row.id === props.activeId
                   ? 'bg-selected text-fg font-medium'
@@ -613,13 +509,13 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
               <span
                 v-else
                 class="min-w-0 flex-1 truncate text-[12.5px]"
-                :class="row.unread ? 'font-medium text-fg' : 'group-hover/row:text-fg/90'"
+                :class="row.unread ? 'font-medium text-fg' : 'group-hover/row:text-fg'"
               >
                 {{ row.title }}
               </span>
 
-              <!-- Right-hand status / meta area: LED dot and delete action -->
-              <div class="flex items-center gap-1.5 shrink-0">
+              <!-- Right-hand status / meta area: LED dot, relative timestamp, and delete action -->
+              <div class="flex h-5 items-center gap-1.5 shrink-0">
                 <Icon
                   v-if="row.pinned"
                   name="pin"
@@ -632,7 +528,13 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
                   :title="LED_CONFIG[row.led].title"
                 />
                 <span
-                  class="grid h-5 w-5 place-items-center rounded-[5px] text-faint opacity-0 hover:bg-surface hover:text-err group-hover/row:opacity-100 transition-opacity"
+                  v-if="formatRelativeTime(row.modifiedAt)"
+                  class="text-[11px] text-faint tabular-nums group-hover/row:hidden"
+                >
+                  {{ formatRelativeTime(row.modifiedAt) }}
+                </span>
+                <span
+                  class="hidden h-5 w-5 place-items-center rounded-[5px] text-faint hover:bg-surface hover:text-err group-hover/row:grid"
                   aria-label="delete conversation"
                   @click.stop="emit('delete', row.id)"
                 >
@@ -751,7 +653,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
                   }}
                 </span>
               </div>
-              <span class="rounded bg-raised/80 px-1.5 py-0.5 font-mono text-[10px] text-faint border border-line/40 shrink-0">
+              <span class="rounded bg-raised/80 px-1.5 py-0.5 text-[10.5px] text-faint border border-line/40 shrink-0 tabular-nums">
                 {{ hoveredRow.messageCount }} {{ hoveredRow.messageCount === 1 ? 'turn' : 'turns' }}
               </span>
             </div>
@@ -760,7 +662,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
             <div class="flex items-center gap-1.5 text-dim">
               <Icon name="clock" class="h-3 w-3 shrink-0 text-faint" />
               <span class="text-faint">{{ formatFriendlyTime(hoveredRow.modifiedAt) }}</span>
-              <span v-if="hoveredRow.modifiedAt" class="font-mono text-[10px] text-faint/70">
+              <span v-if="hoveredRow.modifiedAt" class="text-[10.5px] text-faint/70">
                 · {{ formatFullDate(hoveredRow.modifiedAt) }}
               </span>
             </div>
@@ -768,7 +670,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
             <!-- Project path segment -->
             <div v-if="hoveredRow.project" class="flex items-center gap-1.5 text-dim truncate">
               <Icon name="folder" class="h-3 w-3 shrink-0 text-faint" />
-              <span class="truncate font-mono text-[10.5px] text-faint">
+              <span class="truncate text-[11px] text-faint">
                 {{ projectName(hoveredRow.project) }}
               </span>
             </div>

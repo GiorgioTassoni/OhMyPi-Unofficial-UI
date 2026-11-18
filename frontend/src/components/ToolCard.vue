@@ -71,7 +71,7 @@ const diffStats = computed(() => {
 </script>
 
 <template>
-  <div class="my-1 overflow-hidden rounded-[10px] border border-line/70 bg-surface/90 shadow-sm transition-all hover:border-line-strong/60">
+  <div class="my-1 overflow-hidden rounded-[10px] border border-line bg-surface transition-colors hover:border-line-strong/60">
     <!-- Case 1: File Mutations -->
     <div v-if="isMutation">
       <button
@@ -85,7 +85,7 @@ const diffStats = computed(() => {
           <Icon name="pencil" class="h-3.5 w-3.5 shrink-0 text-accent" />
           <span class="flex min-w-0 flex-col gap-0.5">
             <span class="truncate text-[12.5px] font-medium text-fg">{{ mutationTitle }}</span>
-            <span v-if="diffStats" class="flex items-center gap-1 font-mono text-[10.5px] leading-none">
+            <span v-if="diffStats" class="flex items-center gap-1 tabular-nums text-[10.5px] leading-none">
               <span v-if="diffStats.added > 0" class="rounded bg-ok/10 px-1 py-0.5 font-semibold text-ok">+{{ diffStats.added }}</span>
               <span v-if="diffStats.removed > 0" class="rounded bg-err/10 px-1 py-0.5 font-semibold text-err">-{{ diffStats.removed }}</span>
             </span>
@@ -108,7 +108,7 @@ const diffStats = computed(() => {
         <div
           v-for="file in touched"
           :key="file.path"
-          class="flex items-start gap-2 py-1 font-mono text-dim"
+          class="flex items-start gap-2 py-1 text-dim"
         >
           <Icon name="file" class="mt-0.5 h-3.5 w-3.5 shrink-0 text-faint select-none" />
           <span class="min-w-0 break-all">{{ file.path }}</span>
