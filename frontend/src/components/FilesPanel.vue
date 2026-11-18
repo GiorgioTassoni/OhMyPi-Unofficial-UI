@@ -282,7 +282,7 @@ async function copy(text: string): Promise<void> {
             title="View file in-app"
             @click="emit('openFile', { path: file.path })"
           >
-            <span class="font-medium text-fg">{{ file.name }}</span>
+            <span class="text-fg">{{ file.name }}</span>
             <span v-if="file.folder" class="ml-1.5 text-[11.5px] text-faint">{{ file.folder.replace(/\/$/, '') }}</span>
             <span
               v-if="file.agentName && file.agentName !== 'task'"

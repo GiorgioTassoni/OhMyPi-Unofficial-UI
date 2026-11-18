@@ -154,7 +154,7 @@ function onKeyDown(event: KeyboardEvent): void {
 
 <style scoped>
 .md {
-  font-size: 13px;
+  font-size: 13.5px;
   line-height: 1.62;
   color: var(--color-fg);
 }
@@ -171,7 +171,7 @@ function onKeyDown(event: KeyboardEvent): void {
 .md :deep(h6) {
   font-weight: 600;
   line-height: 1.35;
-  letter-spacing: -0.01em;
+  letter-spacing: normal;
   color: var(--color-fg);
 }
 

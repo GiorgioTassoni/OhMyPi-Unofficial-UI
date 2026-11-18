@@ -72,7 +72,7 @@ function splitRelativePath(path: string): { name: string; dir: string } {
           @keydown.space.self.prevent="toggleFile(file.path)"
         >
           <span class="min-w-0 flex-1 flex items-baseline gap-1.5 truncate text-[12.5px]">
-            <span class="shrink-0 font-medium text-fg">{{ splitRelativePath(file.path).name }}</span>
+            <span class="shrink-0 text-fg">{{ splitRelativePath(file.path).name }}</span>
             <span v-if="splitRelativePath(file.path).dir" class="truncate text-[11.5px] text-faint">{{ splitRelativePath(file.path).dir }}</span>
             <span
               v-if="file.agentName && file.agentName !== 'task'"

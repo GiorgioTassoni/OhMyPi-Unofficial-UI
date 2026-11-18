@@ -110,6 +110,9 @@ function source(attachment: AttachmentSnapshot): string {
 
 const showSkillDetails = ref(false);
 const skillPrompt = computed(() => parseSkillPrompt(props.row));
+
+const USER_BUBBLE_CLASS =
+  "whitespace-pre-wrap break-words rounded-[18px] rounded-tr-[6px] bg-raised/90 border border-line/45 px-4 py-2.5 text-[13.5px] leading-[1.55] text-fg shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_4px_18px_rgba(0,0,0,0.32)] select-text";
 </script>
 
 <template>
@@ -151,9 +154,7 @@ const skillPrompt = computed(() => parseSkillPrompt(props.row));
         v-if="skillPrompt.args"
         class="group/message flex max-w-[80%] min-w-0 flex-col items-end gap-1.5"
       >
-        <p
-          class="whitespace-pre-wrap break-words rounded-[14px] bg-raised border border-line/70 px-4 py-2.5 text-[14px] leading-relaxed text-fg select-text"
-        >
+        <p :class="USER_BUBBLE_CLASS">
           {{ skillPrompt.args }}
         </p>
         <button
@@ -193,7 +194,7 @@ const skillPrompt = computed(() => parseSkillPrompt(props.row));
     <div v-else-if="row.text" class="group/message flex max-w-[80%] min-w-0 flex-col items-end gap-1.5">
       <p
         v-if="userMessage.text"
-        class="whitespace-pre-wrap break-words rounded-[14px] bg-raised border border-line/70 px-3.5 py-2 text-[13px] leading-relaxed text-fg select-text"
+        :class="USER_BUBBLE_CLASS"
       >
         {{ userMessage.text }}
       </p>
@@ -249,7 +250,7 @@ const skillPrompt = computed(() => parseSkillPrompt(props.row));
     </div>
 
     <div v-if="row.text" class="group/message flex flex-col gap-1.5">
-      <div class="text-[13px] leading-[1.62] text-fg select-text">
+      <div class="text-[13.5px] leading-[1.62] text-fg select-text">
         <MarkdownBody :text="row.text" @failed="emit('failed', $event)" @open-file="emit('openFile', $event)" />
       </div>
       <button

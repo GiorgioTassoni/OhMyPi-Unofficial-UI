@@ -767,7 +767,7 @@ defineExpose({
       -->
       <div
         v-if="nothingSaidYet"
-        class="my-auto flex flex-col items-center justify-center py-16 pl-4 pr-6 sm:pr-8 text-center select-none"
+        class="my-auto flex flex-col items-center justify-center py-16 px-6 text-center select-none"
         data-greeting
       >
         <div class="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl border border-line/70 bg-raised/50 text-dim">
@@ -782,7 +782,7 @@ defineExpose({
         </h2>
       </div>
 
-      <div v-else class="min-h-full w-full shrink-0 pl-4 pr-6 sm:pr-8 select-text" data-selection-surface>
+      <div v-else class="min-h-full w-full shrink-0 px-6 select-text" data-selection-surface>
         <div class="mx-auto w-full max-w-[48rem] pt-5 pb-12 select-text">
           <!-- Archived history banner -->
           <ArchivedTurnsBanner
@@ -882,7 +882,8 @@ defineExpose({
         />
       </Transition>
 
-      <div class="relative mx-auto w-full max-w-[48rem] px-4 pb-4">
+      <div class="w-full px-6 pb-4">
+        <div class="relative mx-auto w-full max-w-[48rem]">
         <!-- Floating scroll-to-bottom button when reading history -->
       <Transition
         enter-active-class="transition duration-150 ease-out"
@@ -955,6 +956,7 @@ defineExpose({
         @favourites="emit('favourites', $event)"
         @app-action="emit('app-action', $event)"
       />
+        </div>
       </div>
     </div>
   </section>

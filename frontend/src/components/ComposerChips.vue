@@ -13,7 +13,6 @@ import { computed, ref } from "vue";
 import { setModel } from "../bridge";
 import { modelKey, providerBadge } from "../lib/models";
 import {
-  folderName,
   modelChipLabel,
   modeLabel,
   percentLabel,
@@ -43,7 +42,7 @@ const emit = defineEmits<{
 }>();
 
 /** Which chip is open. One at a time, by construction. */
-const openChip = ref<null | "folder" | "mode" | "model" | "effort" | "context">(null);
+const openChip = ref<null | "mode" | "model" | "effort" | "context">(null);
 const selecting = ref(false);
 
 function toggle(chip: typeof openChip.value): void {
@@ -65,27 +64,6 @@ const modelPopoverLabel = computed(() => {
 
 const contextPercent = computed(() => props.context?.percent ?? null);
 const ring = computed(() => ringDash(contextPercent.value, 7));
-
-/** Every known directory but the current one — what the switcher offers. */
-const otherWorkspaces = computed(() =>
-  (props.recent ?? []).filter((path) => path !== props.workspace),
-);
-
-function openWorkspace(path: string): void {
-  openChip.value = null;
-  emit("workspace", path);
-}
-
-/**
- * The terminal panel, opened in *this* session's directory.
- *
- * The panel is the app's rather than the session's (it survives switching threads), but the
- * directory it starts in is the one on screen, which is the only useful default.
- */
-function openTerminal(): void {
-  openChip.value = null;
-  emit("terminal", props.workspace);
-}
 
 async function chooseModel(choice: { provider: string; modelId: string }): Promise<void> {
   if (selecting.value) {
@@ -126,101 +104,17 @@ function describe(cause: unknown): string {
 
 <template>
   <div class="flex flex-col">
-    <!-- Top context strip inside the unified composer card -->
-    <div class="flex items-center justify-between gap-2 rounded-t-[14px] border-b border-line/20 bg-transparent px-3 py-1.5 text-[11.5px] select-none">
-      <div class="flex items-center gap-2 min-w-0">
-        <Popover :open="openChip === 'folder'" label="workspace" :width="420" @close="openChip = null">
-          <template #trigger>
-            <button
-              type="button"
-              class="flex items-center gap-1.5 rounded-[6px] px-1.5 py-0.5 text-[11.5px] font-medium text-dim transition-colors hover:bg-selected hover:text-fg"
-              data-chip="folder"
-              @click="toggle('folder')"
-            >
-              <Icon name="folder" class="h-3.5 w-3.5 shrink-0 text-faint" />
-              <span class="truncate max-w-[12rem]">{{ folderName(props.workspace) }}</span>
-              <Icon name="chevron-down" class="h-3 w-3 shrink-0 text-faint" />
-            </button>
-          </template>
-          <div class="flex flex-col gap-1 px-1 py-0.5">
-            <p class="px-2 pb-1 font-mono text-[11px] break-all text-dim">{{ props.workspace }}</p>
-            <button
-              v-for="path in otherWorkspaces"
-              :key="path"
-              type="button"
-              class="flex items-center gap-2 rounded-[6px] px-2 py-1.5 text-left font-mono text-[11.5px] break-all text-dim hover:bg-raised hover:text-fg"
-              @click="openWorkspace(path)"
-            >
-              <Icon name="folder" class="h-3.5 w-3.5 shrink-0 text-faint" />
-              {{ path }}
-            </button>
-            <button
-              type="button"
-              class="flex items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-[12px] text-dim hover:bg-raised hover:text-fg"
-              @click="openTerminal"
-            >
-              <Icon name="terminal" class="h-3.5 w-3.5 shrink-0 text-faint" />
-              Open a terminal here
-            </button>
-            <p class="px-2 pb-0.5 pt-1 text-[11px] text-faint">
-              Opening another directory starts a new session there. Add-dir entries land here too.
-            </p>
-          </div>
-        </Popover>
-
-        <span
-          v-if="props.statusLine !== null && props.statusLine !== undefined"
-          data-status
-          class="inline-flex items-center gap-1 rounded-[5px] border border-line/60 bg-raised/70 px-1.5 py-0.5 text-[11px] text-dim truncate max-w-[16rem]"
-        >
-          {{ props.statusLine }}
-        </span>
-      </div>
-
-      <div class="flex items-center gap-1 shrink-0">
-        <Popover
-          :open="openChip === 'context'"
-          label="context"
-          :width="360"
-          @close="openChip = null"
-        >
-          <template #trigger>
-            <button
-              type="button"
-              class="flex items-center gap-1.5 rounded-[5px] px-1.5 py-0.5 text-[11px] text-dim transition-colors hover:bg-selected hover:text-fg"
-              aria-label="Context usage"
-              @click="toggle('context')"
-            >
-              <svg viewBox="0 0 20 20" class="h-3.5 w-3.5 shrink-0" aria-hidden="true">
-                <circle cx="10" cy="10" r="7" fill="none" stroke="var(--color-line-strong)" stroke-width="2" />
-                <circle
-                  v-if="!ring.empty"
-                  cx="10"
-                  cy="10"
-                  r="7"
-                  fill="none"
-                  :stroke-dasharray="ring.dash"
-                  :stroke="(contextPercent ?? 0) >= 90 ? 'var(--color-err)' : (contextPercent ?? 0) >= 70 ? 'var(--color-warn)' : 'var(--color-accent)'"
-                  stroke-width="2.5"
-                  stroke-linecap="round"
-                  transform="rotate(-90 10 10)"
-                />
-              </svg>
-              {{ percentLabel(contextPercent) }}
-            </button>
-          </template>
-          <ContextPopover
-            :thread="props.thread"
-            :open="openChip === 'context'"
-            :context="props.context"
-            :auto-compaction="props.autoCompaction"
-            :compacting="props.compacting"
-            @close="openChip = null"
-            @changed="emit('changed')"
-            @failed="emit('failed', $event)"
-          />
-        </Popover>
-      </div>
+    <!-- Optional extension status line (only shown when an extension pushes one) -->
+    <div
+      v-if="props.statusLine !== null && props.statusLine !== undefined"
+      class="flex items-center px-3 pt-2 text-[11.5px] select-none"
+    >
+      <span
+        data-status
+        class="inline-flex items-center gap-1 rounded-[5px] border border-line/60 bg-surface/70 px-1.5 py-0.5 text-[11px] text-dim truncate max-w-[16rem]"
+      >
+        {{ props.statusLine }}
+      </span>
     </div>
 
     <!-- Middle prompt area -->
@@ -309,6 +203,49 @@ function describe(cause: unknown): string {
             :open="openChip === 'effort'"
             :level="props.thinkingLevel"
             :model="currentModel"
+            @close="openChip = null"
+            @changed="emit('changed')"
+            @failed="emit('failed', $event)"
+          />
+        </Popover>
+
+        <Popover
+          :open="openChip === 'context'"
+          label="context"
+          :width="360"
+          @close="openChip = null"
+        >
+          <template #trigger>
+            <button
+              type="button"
+              :class="CHIP"
+              aria-label="Context usage"
+              @click="toggle('context')"
+            >
+              <svg viewBox="0 0 20 20" class="h-3.5 w-3.5 shrink-0" aria-hidden="true">
+                <circle cx="10" cy="10" r="7" fill="none" stroke="var(--color-line-strong)" stroke-width="2" />
+                <circle
+                  v-if="!ring.empty"
+                  cx="10"
+                  cy="10"
+                  r="7"
+                  fill="none"
+                  :stroke-dasharray="ring.dash"
+                  :stroke="(contextPercent ?? 0) >= 90 ? 'var(--color-err)' : (contextPercent ?? 0) >= 70 ? 'var(--color-warn)' : 'var(--color-accent)'"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                  transform="rotate(-90 10 10)"
+                />
+              </svg>
+              <span class="tabular-nums">{{ percentLabel(contextPercent) }}</span>
+            </button>
+          </template>
+          <ContextPopover
+            :thread="props.thread"
+            :open="openChip === 'context'"
+            :context="props.context"
+            :auto-compaction="props.autoCompaction"
+            :compacting="props.compacting"
             @close="openChip = null"
             @changed="emit('changed')"
             @failed="emit('failed', $event)"
