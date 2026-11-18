@@ -202,16 +202,19 @@ pub fn scan_skills_in_dir(base_dir: &Path, scope: &str) -> Vec<SkillInfo> {
     skills
 }
 
-/// Copy directory recursively.
+/// Copy directory recursively, skipping symlinks so untrusted repos cannot copy host files.
 pub fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let ty = entry.file_type()?;
+        if ty.is_symlink() {
+            continue;
+        }
         let dest_path = dst.join(entry.file_name());
         if ty.is_dir() {
             copy_dir_all(&entry.path(), &dest_path)?;
-        } else {
+        } else if ty.is_file() {
             fs::copy(entry.path(), &dest_path)?;
         }
     }
@@ -333,8 +336,30 @@ pub fn find_skills_in_tree(root: &Path) -> Vec<DetectedSkill> {
 // Tauri Commands
 // -----------------------------------------------------------------------------
 
+#[derive(serde::Serialize)]
+struct NewSkillFrontmatter<'a> {
+    name: &'a str,
+    description: &'a str,
+}
+
+fn format_skill_markdown(name: &str, description: &str, body: &str) -> Result<String, String> {
+    let yaml = serde_yaml::to_string(&NewSkillFrontmatter {
+        name,
+        description: description.trim(),
+    })
+    .map_err(|e| format!("failed to serialize skill frontmatter: {e}"))?;
+    let yaml_body = yaml.trim_start_matches("---\n").trim_end();
+    Ok(format!("---\n{yaml_body}\n---\n\n{}\n", body.trim()))
+}
+
 #[tauri::command]
 pub async fn list_skills(workspace: Option<String>) -> Result<Vec<SkillInfo>, String> {
+    tokio::task::spawn_blocking(move || list_skills_sync(workspace))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+fn list_skills_sync(workspace: Option<String>) -> Result<Vec<SkillInfo>, String> {
     let mut all = Vec::new();
 
     // 1. User skills
@@ -370,19 +395,19 @@ pub async fn list_skills(workspace: Option<String>) -> Result<Vec<SkillInfo>, St
 
 #[tauri::command]
 pub async fn create_custom_skill(input: CreateSkillInput) -> Result<SkillInfo, String> {
+    tokio::task::spawn_blocking(move || create_custom_skill_sync(input))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+fn create_custom_skill_sync(input: CreateSkillInput) -> Result<SkillInfo, String> {
     let name = sanitize_skill_name(&input.name)?;
     let target_dir = resolve_target_skill_dir(&input.scope, &name, input.workspace.as_deref())?;
 
     fs::create_dir_all(&target_dir)
         .map_err(|e| format!("failed to create skill directory: {e}"))?;
 
-    let description_clean = input.description.trim().replace('"', "\\\"");
-    let full_content = format!(
-        "---\nname: {name}\ndescription: \"{description_clean}\"\n---\n\n{body}\n",
-        name = name,
-        description_clean = description_clean,
-        body = input.content.trim()
-    );
+    let full_content = format_skill_markdown(&name, &input.description, &input.content)?;
 
     let skill_md_path = target_dir.join("SKILL.md");
     fs::write(&skill_md_path, full_content)
@@ -399,7 +424,7 @@ pub async fn create_custom_skill(input: CreateSkillInput) -> Result<SkillInfo, S
 }
 
 /// Clone a remote repository into a secure, unique temporary directory and execute an action on it.
-/// Automatically cleans up the directory on drop (RAII) and uses `--` argument isolation.
+/// Automatically cleans up the directory on drop (RAII) and uses `--` argument isolation with a timeout.
 fn with_cloned_repo<T, F>(source_url: &str, f: F) -> Result<T, String>
 where
     F: FnOnce(&Path, &str) -> Result<T, String>,
@@ -411,11 +436,33 @@ where
         .tempdir()
         .map_err(|e| format!("failed to create temporary directory: {e}"))?;
 
-    let output = Command::new("git")
+    let mut child = Command::new("git")
         .args(["clone", "--depth", "1", "--", &git_url])
         .arg(temp_dir.path())
-        .output()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| format!("failed to run git clone: {e}"))?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("git clone timed out after 30 seconds".to_string());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("failed waiting for git clone: {e}")),
+        }
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("failed to collect git clone output: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -427,21 +474,31 @@ where
 
 #[tauri::command]
 pub async fn inspect_remote_skill(source_url: String) -> Result<InspectSkillResult, String> {
-    with_cloned_repo(&source_url, |temp_path, repo_name| {
-        let skills = find_skills_in_tree(temp_path);
-        if skills.is_empty() {
-            return Err("no skills (SKILL.md) found in repository".to_string());
-        }
+    tokio::task::spawn_blocking(move || {
+        with_cloned_repo(&source_url, |temp_path, repo_name| {
+            let skills = find_skills_in_tree(temp_path);
+            if skills.is_empty() {
+                return Err("no skills (SKILL.md) found in repository".to_string());
+            }
 
-        Ok(InspectSkillResult {
-            repo_name: repo_name.to_string(),
-            skills,
+            Ok(InspectSkillResult {
+                repo_name: repo_name.to_string(),
+                skills,
+            })
         })
     })
+    .await
+    .map_err(|e| format!("task join error: {e}"))?
 }
 
 #[tauri::command]
 pub async fn import_remote_skill(input: ImportSkillInput) -> Result<SkillInfo, String> {
+    tokio::task::spawn_blocking(move || import_remote_skill_sync(input))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+fn import_remote_skill_sync(input: ImportSkillInput) -> Result<SkillInfo, String> {
     let target_scope = input.scope.clone();
     let target_workspace = input.workspace.clone();
     let target_skill_name = input.skill_name.clone();
@@ -470,11 +527,21 @@ pub async fn import_remote_skill(input: ImportSkillInput) -> Result<SkillInfo, S
             temp_path.join(&skill.relative_path)
         };
 
+        let canonical_temp = temp_path
+            .canonicalize()
+            .map_err(|e| format!("failed to canonicalize temp repo: {e}"))?;
+        let canonical_source = source_dir
+            .canonicalize()
+            .map_err(|e| format!("failed to canonicalize skill source directory: {e}"))?;
+        if !canonical_source.starts_with(&canonical_temp) {
+            return Err("skill source directory escapes cloned repository".to_string());
+        }
+
         if target_dir.exists() {
             let _ = fs::remove_dir_all(&target_dir);
         }
 
-        copy_dir_all(&source_dir, &target_dir)
+        copy_dir_all(&canonical_source, &target_dir)
             .map_err(|e| format!("failed to copy skill files to destination: {e}"))?;
 
         Ok(SkillInfo {
@@ -490,16 +557,20 @@ pub async fn import_remote_skill(input: ImportSkillInput) -> Result<SkillInfo, S
 
 #[tauri::command]
 pub async fn open_skills_folder(scope: String, workspace: Option<String>) -> Result<(), String> {
-    let dir = if scope == "project" {
-        let ws =
-            workspace.ok_or_else(|| "project scope requires an active workspace".to_string())?;
-        PathBuf::from(ws).join(".omp").join("skills")
-    } else {
-        user_skills_dir()?
-    };
+    tokio::task::spawn_blocking(move || {
+        let dir = if scope == "project" {
+            let ws = workspace
+                .ok_or_else(|| "project scope requires an active workspace".to_string())?;
+            PathBuf::from(ws).join(".omp").join("skills")
+        } else {
+            user_skills_dir()?
+        };
 
-    fs::create_dir_all(&dir).map_err(|e| format!("failed to create directory: {e}"))?;
-    open::that_detached(&dir).map_err(|e| format!("could not open directory: {e}"))
+        fs::create_dir_all(&dir).map_err(|e| format!("failed to create directory: {e}"))?;
+        open::that_detached(&dir).map_err(|e| format!("could not open directory: {e}"))
+    })
+    .await
+    .map_err(|e| format!("task join error: {e}"))?
 }
 
 #[cfg(test)]
@@ -545,5 +616,30 @@ Check everything carefully.
         assert!(normalize_github_source("   ").is_err());
         assert!(normalize_github_source("--upload-pack=evil").is_err());
         assert!(normalize_github_source("-oProxyCommand=calc").is_err());
+    }
+
+    #[test]
+    fn format_skill_markdown_handles_multiline_descriptions() {
+        let md = format_skill_markdown("my-skill", "Line one\nLine \"two\"", "Body text").unwrap();
+        let (name, desc, body) = parse_skill_markdown(&md);
+        assert_eq!(name, "my-skill");
+        assert!(desc.contains("Line one"));
+        assert!(desc.contains("Line \"two\""));
+        assert_eq!(body.trim(), "Body text");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_dir_all_skips_symlinks() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        fs::write(outside.path(), "secret").unwrap();
+        fs::write(src.path().join("SKILL.md"), "ok").unwrap();
+        std::os::unix::fs::symlink(outside.path(), src.path().join("leak.txt")).unwrap();
+
+        copy_dir_all(src.path(), dst.path()).unwrap();
+        assert!(dst.path().join("SKILL.md").is_file());
+        assert!(!dst.path().join("leak.txt").exists());
     }
 }

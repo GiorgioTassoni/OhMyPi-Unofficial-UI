@@ -229,15 +229,7 @@ pub struct SubcommandSnapshot {
     pub description: Option<String>,
 }
 
-pub use omp_transport::protocol::ui::{AskAnswer, AskOption, AskQuestion};
-
-/// Details accompanying an option in a `select` dialog.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct UiOptionDetail {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-}
+pub use omp_transport::protocol::ui::{AskAnswer, AskOption, AskQuestion, UiOptionDetail};
 
 /// A dialog the agent is waiting on, flattened for the frontend.
 ///

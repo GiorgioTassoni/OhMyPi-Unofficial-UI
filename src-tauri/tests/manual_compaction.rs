@@ -17,6 +17,7 @@ output({type:'ready', protocolVersion:1, supportedProtocolVersions:[1], maxFrame
 readline.createInterface({input:process.stdin}).on('line', async line => {
   const command = JSON.parse(line);
   let data = {};
+  if (command.type === 'set_ask_dialog') data = { enabled: true };
   if (command.type === 'get_state') data = {
     sessionId:'compaction-test', sessionName:'Compaction test', isCompacting:false,
     contextUsage:{tokens, contextWindow:100000, percent:tokens / 1000}

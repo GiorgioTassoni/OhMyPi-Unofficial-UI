@@ -398,6 +398,114 @@ fn session_name(session: &LiveSession) -> Option<String> {
     control.session_name
 }
 
+/// Show an OS notification.
+#[tauri::command]
+pub async fn notify_os(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|error| format!("the notification was not shown: {error}"))
+}
+
+/// Play a notification chime through the operating system's audio facilities.
+///
+/// Bypasses webview AudioContext/WebKitGTK limitations on Linux desktop.
+#[tauri::command]
+pub fn play_notification_sound(kind: String) {
+    std::thread::spawn(move || {
+        play_sound_sync(&kind);
+    });
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy)]
+enum LinuxAudioBackend {
+    Canberra,
+    PipeWire,
+    PulseAudio,
+    None,
+}
+
+#[cfg(target_os = "linux")]
+fn detect_linux_audio() -> LinuxAudioBackend {
+    fn has_bin(name: &str) -> bool {
+        if let Ok(path) = std::env::var("PATH") {
+            for dir in std::env::split_paths(&path) {
+                if dir.join(name).is_file() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    if has_bin("canberra-gtk-play") {
+        LinuxAudioBackend::Canberra
+    } else if has_bin("pw-play") {
+        LinuxAudioBackend::PipeWire
+    } else if has_bin("paplay") {
+        LinuxAudioBackend::PulseAudio
+    } else {
+        LinuxAudioBackend::None
+    }
+}
+
+fn play_sound_sync(kind: &str) {
+    #[cfg(target_os = "linux")]
+    {
+        static AUDIO_BACKEND: std::sync::OnceLock<LinuxAudioBackend> = std::sync::OnceLock::new();
+        let backend = AUDIO_BACKEND.get_or_init(detect_linux_audio);
+
+        let (sound_id, oga_file) = match kind {
+            "needs-you" => (
+                "message-new-instant",
+                "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga",
+            ),
+            _ => (
+                "complete",
+                "/usr/share/sounds/freedesktop/stereo/complete.oga",
+            ),
+        };
+
+        match backend {
+            LinuxAudioBackend::Canberra => {
+                let _ = std::process::Command::new("canberra-gtk-play")
+                    .args(["-i", sound_id])
+                    .spawn();
+            }
+            LinuxAudioBackend::PipeWire if std::path::Path::new(oga_file).exists() => {
+                let _ = std::process::Command::new("pw-play").arg(oga_file).spawn();
+            }
+            LinuxAudioBackend::PulseAudio if std::path::Path::new(oga_file).exists() => {
+                let _ = std::process::Command::new("paplay").arg(oga_file).spawn();
+            }
+            _ => {
+                eprint!("\x07");
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let sound = match kind {
+            "needs-you" => "/System/Library/Sounds/Ping.aiff",
+            _ => "/System/Library/Sounds/Glass.aiff",
+        };
+        let _ = std::process::Command::new("afplay").arg(sound).spawn();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("powershell")
+            .args(["-c", "[System.Media.SystemSounds]::Asterisk.Play()"])
+            .spawn();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

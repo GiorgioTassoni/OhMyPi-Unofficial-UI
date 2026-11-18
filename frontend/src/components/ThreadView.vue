@@ -72,8 +72,6 @@ const props = defineProps<{
   models: ModelOption[];
   refreshing: boolean;
   favourites: string[];
-  /** Directories this window has been pointed at, for the folder chip. */
-  recent: string[];
   /** The OS user, for the empty thread's greeting (`docs/12` §4). */
   user: string | null;
   /**
@@ -97,10 +95,6 @@ const emit = defineEmits<{
    * the moment the palette offers more than one.
    */
   "app-action": [id: string];
-  /** The folder chip asked for another directory: a *new* thread, not this one. */
-  workspace: [path: string];
-  /** The folder chip asked for a terminal: the app's own shell, in this session's directory. */
-  terminal: [path: string];
   favourites: [keys: string[]];
   review: [summary: TurnFileSummary];
   /** A spawned agent was selected from this conversation. */
@@ -448,7 +442,6 @@ function isNoLiveThread(cause: unknown): boolean {
  */
 const chips = computed<ChipRow>(() => ({
   workspace: status.value?.workspace ?? "",
-  recent: props.recent,
   mode: status.value?.approvalMode ?? null,
   model: status.value?.control.model ?? null,
   models: props.models,
@@ -951,8 +944,6 @@ defineExpose({
         @failed="emit('failed', $event)"
         @changed="onChanged"
         @steering="onSteering"
-        @workspace="emit('workspace', $event)"
-        @terminal="emit('terminal', $event)"
         @favourites="emit('favourites', $event)"
         @app-action="emit('app-action', $event)"
       />

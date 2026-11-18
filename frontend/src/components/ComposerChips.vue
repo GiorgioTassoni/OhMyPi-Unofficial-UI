@@ -33,10 +33,6 @@ const emit = defineEmits<{
   (event: "failed", message: string): void;
   /** The session answered differently than it did before, so the screen re-reads it. */
   (event: "changed"): void;
-  /** Open another directory: a new thread there, since a session's cwd is fixed. */
-  (event: "workspace", path: string): void;
-  /** Open the app's own terminal in the session's directory (`docs/12` §11). */
-  (event: "terminal", path: string): void;
   /** The favourites order changed and should be stored. */
   (event: "favourites", keys: string[]): void;
 }>();

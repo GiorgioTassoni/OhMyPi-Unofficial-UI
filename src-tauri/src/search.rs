@@ -297,10 +297,12 @@ impl Index {
             return 0;
         }
 
-        let count = connect(&path).and_then(|connection| {
-            connection.query_row("SELECT COUNT(*) FROM sessions", [], |row| {
-                row.get::<_, i64>(0)
-            })
+        let count = self.open_readonly().and_then(|connection| {
+            connection
+                .query_row("SELECT COUNT(*) FROM sessions", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .map_err(|error| error.to_string())
         });
 
         match count {
@@ -314,7 +316,7 @@ impl Index {
 
     /// The rows an FTS5 expression matches, best first.
     fn hits(&self, expression: &str, limit: u32) -> Result<Vec<SearchHit>, String> {
-        let connection = self.open()?;
+        let connection = self.open_readonly()?;
         let mut statement = connection
             .prepare(
                 "SELECT thread, kind, ordinal, text FROM records
@@ -385,6 +387,29 @@ impl Index {
     /// The index file, when the platform gave a directory to keep it in.
     fn path(&self) -> Option<PathBuf> {
         self.dir.as_ref().map(|dir| dir.join(INDEX_FILE))
+    }
+
+    /// Open the index read-only for queries, skipping DDL and WAL pragmas when it already exists.
+    fn open_readonly(&self) -> Result<Connection, String> {
+        if let Some(path) = self.path().filter(|p| p.exists()) {
+            if let Ok(connection) = Connection::open_with_flags(
+                &path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            ) {
+                if connection.busy_timeout(BUSY_TIMEOUT).is_ok()
+                    && connection
+                        .query_row(
+                            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sessions'",
+                            [],
+                            |_| Ok(()),
+                        )
+                        .is_ok()
+                {
+                    return Ok(connection);
+                }
+            }
+        }
+        self.open()
     }
 
     /// Open the index, ready to be read or written.
@@ -477,6 +502,7 @@ pub fn scan_in_background(
 /// is one nothing can leave mid-transaction.
 fn connect(path: &Path) -> Result<Connection, rusqlite::Error> {
     let connection = Connection::open(path)?;
+    connection.busy_timeout(BUSY_TIMEOUT)?;
 
     // WAL, because the index does two things at once: a scan writes while the overlay's
     // keystrokes read, and in the default rollback journal the two take turns on the whole file.
@@ -484,7 +510,6 @@ fn connect(path: &Path) -> Result<Connection, rusqlite::Error> {
     // The documented pairing with WAL: a commit is not fsynced, and the worst a power cut can
     // cost is the pass that was running — which the next one repeats.
     connection.pragma_update(None, "synchronous", "NORMAL")?;
-    connection.busy_timeout(BUSY_TIMEOUT)?;
     connection.execute_batch(SCHEMA)?;
 
     Ok(connection)

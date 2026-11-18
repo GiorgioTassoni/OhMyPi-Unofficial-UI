@@ -151,25 +151,6 @@ pub async fn sync_mcp_design_choice(
     sync_all_configs(enabled, ws_path)
 }
 
-#[tauri::command]
-pub fn get_mcp_design_choice_status(workspace: Option<String>) -> Result<bool, String> {
-    let ws_path = workspace.as_deref().map(Path::new);
-    for path in candidate_mcp_config_paths(ws_path) {
-        if path.exists() {
-            if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(val) = serde_json::from_str::<Value>(&content) {
-                    if let Some(servers) = val.get("mcpServers").and_then(|s| s.as_object()) {
-                        if servers.contains_key(SERVER_NAME) {
-                            return Ok(true);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Ok(true)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

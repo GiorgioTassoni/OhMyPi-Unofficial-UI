@@ -17,33 +17,25 @@
 //! below (the transport) knows nothing about windows.
 
 use std::collections::HashSet;
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use omp_session::{restore, AgentRoster, Message, SessionControl, Subagent, TodoPhase, Transcript};
 use omp_transport::palette::{self, AdvertisedCommand};
-use omp_transport::protocol::ui::{self, UiResponse};
+use omp_transport::protocol::ui::UiResponse;
 use omp_transport::protocol::{self, commands, ImageContent};
-use omp_transport::{ClientOptions, OmpClient, SessionEvent, SidecarSpec};
-use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter};
+use omp_transport::{ClientOptions, OmpClient, SidecarSpec};
 
-use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 
 use crate::dialogs::Dialogs;
 use crate::dto::{
-    ActivitySnapshot, AgentProgressSnapshot, AgentRetrySnapshot, AgentSnapshot, AttachmentSnapshot,
-    ChromeEvent, CommandSnapshot, ContextSnapshot, ControlSnapshot, CounterSnapshot,
-    JobDeliverySnapshot, ModelSnapshot, NotificationEvent, ReadySnapshot, RowPatch, RowSnapshot,
-    SessionStatus, SubcommandSnapshot, ThreadEvent, ThreadSnapshot, ToolSnapshot,
-    UiRequestSnapshot, ACTIVITY_EVENT, AGENTS_EVENT, CHROME_EVENT, COMMANDS_EVENT,
-    NOTIFICATIONS_EVENT, ROWS_EVENT, THREADS_EVENT, UI_REQUESTS_EVENT,
+    CommandSnapshot, ContextSnapshot, ControlSnapshot, CounterSnapshot, ModelSnapshot,
+    ReadySnapshot, RowSnapshot, SessionStatus, SubcommandSnapshot, ThreadSnapshot,
+    UiRequestSnapshot,
 };
-use crate::notify::{Facts, Notifier};
 
 /// How often a changed conversation is sent to the UI.
 ///
@@ -51,7 +43,7 @@ use crate::notify::{Facts, Notifier};
 /// re-rendering per delta is the jank `docs/12` §3.4 rules out. Nothing is lost by
 /// waiting a tick: a patch always starts at the earliest change, so a quiet tick
 /// sends nothing at all.
-const ROWS_PUBLISH_INTERVAL: Duration = Duration::from_millis(100);
+pub(super) const ROWS_PUBLISH_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Two idle samples avoid mistaking the gap between an accepted RPC prompt and
 /// OMP's `agent_start` for a finished turn.
@@ -82,7 +74,7 @@ const TITLE_GENERATION_TIMEOUT: Duration = Duration::from_secs(120);
 /// `AgentSessionEvent` stream; the panel reads a subagent's transcript on demand through
 /// `get_subagent_messages`' byte cursor instead, so paying for a live firehose per
 /// subagent would buy a second way to see the same thing.
-const SUBAGENT_SUBSCRIPTION: &str = "progress";
+pub(super) const SUBAGENT_SUBSCRIPTION: &str = "progress";
 
 /// Counters shared between the pump and the status reads.
 ///
@@ -856,7 +848,7 @@ impl LiveSession {
             let _ = task.await;
         }
 
-        let client = self.client.lock().ok().and_then(|slot| slot.clone());
+        let client = self.client.lock().ok().and_then(|mut slot| slot.take());
         let Some(client) = client else {
             return;
         };
@@ -891,229 +883,22 @@ fn mode_switch_idle(
 }
 
 /// One page of a subagent's transcript, as the engine served it.
-pub struct AgentPage {
-    /// The file the page came from, per the engine.
-    pub session_file: String,
-    /// Where the next page starts.
-    pub next_byte: u64,
-    /// The file shrank under the cursor, so this page replaces what was shown.
-    pub reset: bool,
-    pub rows: Vec<RowSnapshot>,
-}
 
-/// Where streamed activity goes.
-///
-/// A seam rather than a direct `AppHandle` dependency: it keeps the session actor
-/// free of Tauri types, so it can be exercised headlessly (`tests/m0.rs`,
-/// `tests/approval.rs`) instead of only through a window. The same shape as
-/// `PageSource` in `omp_session`.
-///
-/// Every session-scoped stream carries the thread it came from. Two live sessions are
-/// otherwise indistinguishable to a subscriber, and a row patch from one folded into the
-/// other's conversation is the exact bug `docs/12` §2.2's sidebar exists to avoid.
-pub trait ActivitySink: Send + Sync + 'static {
-    fn activity(&self, thread: &str, activity: ActivitySnapshot);
+mod grants;
+mod pump;
+mod sink;
+mod snapshot;
 
-    /// The full pending-dialog set, after any change to it.
-    fn ui_requests(&self, thread: &str, requests: Vec<UiRequestSnapshot>);
+use grants::{command_from_approval, grantable_command_programs};
+use pump::refresh_control;
+use snapshot::last_failure;
 
-    /// The conversation, replaced from the first changed row.
-    fn rows(&self, thread: &str, patch: RowPatch);
+pub use grants::{command_program, Reducers};
+pub use pump::spawn_pump;
+pub use sink::{ActivitySink, AgentPage, NullSink, Reporting, Roster};
+pub use snapshot::{agent_snapshot, now_ms, row_snapshot};
+pub(crate) use sink::tagged;
 
-    /// The palette's list, after the engine changed it.
-    fn commands(&self, thread: &str, commands: Vec<CommandSnapshot>);
-
-    /// One thread's agent roster, after a subagent started, reported or settled.
-    fn agents(&self, thread: &str, agents: Vec<AgentSnapshot>);
-
-    /// One fact the host is reporting, addressed to the thread it is about (`docs/12` §13).
-    ///
-    /// Carries its own thread rather than being wrapped in [`ThreadEvent`]: a job the engine
-    /// recorded no owner for belongs to no thread, and an envelope that required one would
-    /// force the host to invent it.
-    fn notifications(&self, notification: NotificationEvent);
-
-    /// One fire-and-forget chrome request from the engine (`docs/12` §13).
-    fn chrome(&self, event: ChromeEvent);
-
-    /// The sidebar's roster, after anything in it changed.
-    ///
-    /// The one stream that is **not** thread-tagged: the roster is every live thread,
-    /// which no single session can describe. The caller decides *when* (the pump on its
-    /// tick, the registry on open and close); the roster itself comes from [`Roster`].
-    fn threads(&self, snapshots: Vec<ThreadSnapshot>);
-}
-
-/// The live-thread roster, as the pump needs it.
-///
-/// The pump is what notices a turn starting or a dialog arriving, so it is what has to
-/// republish the sidebar's rows — but the roster is the *set* of live threads, which
-/// belongs to the registry ([`crate::threads::Threads`]). This trait is that seam, in
-/// the same spirit as [`ActivitySink`]: the actor knows it has a roster to announce,
-/// never how one is assembled.
-pub trait Roster: Send + Sync + 'static {
-    /// Every live thread's row, in a stable order.
-    fn snapshots(&self) -> Vec<ThreadSnapshot>;
-
-    /// Retire a thread whose engine is gone, for good.
-    ///
-    /// The pump is what notices a sidecar dying — its frame stream simply ends, and its
-    /// broadcast senders live inside the client the pump itself holds, so no `Closed` ever
-    /// arrives on them. Without this the registry would keep serving a row for a thread with
-    /// no process: a streaming dot over a conversation that will never move again, and
-    /// commands written into a pipe with nobody on the far end (`docs/14` §7 #6).
-    ///
-    /// Defaults to doing nothing, for a roster that is only ever read.
-    fn retire(&self, _thread: &str) {}
-}
-
-/// Where one live session's activity goes, and which thread it belongs to.
-///
-/// One value rather than a stream of arguments because the three halves are one thing: a
-/// session-scoped event without its thread tag, or a tick that never republishes the
-/// roster, is exactly the multi-thread bug this layer exists to prevent. The pump and
-/// the dialog store both hold a copy of it, which is why it is cheap to clone.
-#[derive(Clone)]
-pub struct Reporting {
-    pub sink: Arc<dyn ActivitySink>,
-    /// The engine's session id — the tag on every event this session emits.
-    ///
-    /// The same cell the [`LiveSession`] holds, so a fork's new id is what the *next*
-    /// event is tagged with rather than something a second copy has to be told about.
-    pub thread: ThreadId,
-    /// The registry the sidebar reads, republished when this thread's state moves.
-    pub roster: Arc<dyn Roster>,
-}
-
-impl Reporting {
-    /// The thread's event tail: one tagged envelope per session event.
-    pub fn activity(&self, activity: ActivitySnapshot) {
-        self.sink.activity(&self.thread.current(), activity);
-    }
-
-    /// This thread's agent roster, re-rendered from the shared reducer.
-    ///
-    /// Copied out of the lock before publishing, deliberately: the sink is a Tauri emit,
-    /// and holding a mutex the pump also writes from across it would make a window's
-    /// event loop part of the pump's critical path.
-    pub fn agents(&self, agents: &Mutex<AgentRoster>) {
-        let snapshots = agents
-            .lock()
-            .map(|roster| roster.agents().iter().map(agent_snapshot).collect())
-            .unwrap_or_default();
-
-        self.sink.agents(&self.thread.current(), snapshots);
-    }
-}
-
-impl ActivitySink for AppHandle {
-    fn activity(&self, thread: &str, activity: ActivitySnapshot) {
-        // `Emitter::emit` needs the event name; the sink exists so callers do not.
-        let _ = self.emit(ACTIVITY_EVENT, tagged(thread, activity));
-    }
-
-    fn ui_requests(&self, thread: &str, requests: Vec<UiRequestSnapshot>) {
-        let _ = self.emit(UI_REQUESTS_EVENT, tagged(thread, requests));
-    }
-
-    fn rows(&self, thread: &str, patch: RowPatch) {
-        let _ = self.emit(ROWS_EVENT, tagged(thread, patch));
-    }
-
-    fn commands(&self, thread: &str, commands: Vec<CommandSnapshot>) {
-        let _ = self.emit(COMMANDS_EVENT, tagged(thread, commands));
-    }
-
-    fn agents(&self, thread: &str, agents: Vec<AgentSnapshot>) {
-        let _ = self.emit(AGENTS_EVENT, tagged(thread, agents));
-    }
-
-    fn notifications(&self, notification: NotificationEvent) {
-        let _ = self.emit(NOTIFICATIONS_EVENT, notification);
-    }
-
-    fn chrome(&self, event: ChromeEvent) {
-        let _ = self.emit(CHROME_EVENT, event);
-    }
-
-    fn threads(&self, snapshots: Vec<ThreadSnapshot>) {
-        let _ = self.emit(THREADS_EVENT, snapshots);
-    }
-}
-
-/// One event, addressed to the thread that produced it.
-pub(crate) fn tagged<T>(thread: &str, payload: T) -> ThreadEvent<T> {
-    ThreadEvent {
-        thread: thread.to_string(),
-        payload,
-    }
-}
-
-/// So one sink can be shared: the actor and the dialogs hold the same handle.
-impl<T: ActivitySink + ?Sized> ActivitySink for Arc<T> {
-    fn activity(&self, thread: &str, activity: ActivitySnapshot) {
-        (**self).activity(thread, activity);
-    }
-
-    fn agents(&self, thread: &str, agents: Vec<AgentSnapshot>) {
-        (**self).agents(thread, agents);
-    }
-
-    fn ui_requests(&self, thread: &str, requests: Vec<UiRequestSnapshot>) {
-        (**self).ui_requests(thread, requests);
-    }
-
-    fn rows(&self, thread: &str, patch: RowPatch) {
-        (**self).rows(thread, patch);
-    }
-
-    fn commands(&self, thread: &str, commands: Vec<CommandSnapshot>) {
-        (**self).commands(thread, commands);
-    }
-
-    fn notifications(&self, notification: NotificationEvent) {
-        (**self).notifications(notification);
-    }
-
-    fn chrome(&self, event: ChromeEvent) {
-        (**self).chrome(event);
-    }
-
-    fn threads(&self, snapshots: Vec<ThreadSnapshot>) {
-        (**self).threads(snapshots);
-    }
-}
-
-/// An [`ActivitySink`] that discards activity, for headless runs and tests.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct NullSink;
-
-impl ActivitySink for NullSink {
-    fn activity(&self, _thread: &str, _activity: ActivitySnapshot) {}
-
-    fn ui_requests(&self, _thread: &str, _requests: Vec<UiRequestSnapshot>) {}
-
-    fn rows(&self, _thread: &str, _patch: RowPatch) {}
-
-    fn commands(&self, _thread: &str, _commands: Vec<CommandSnapshot>) {}
-
-    fn agents(&self, _thread: &str, _agents: Vec<AgentSnapshot>) {}
-
-    fn notifications(&self, _notification: NotificationEvent) {}
-
-    fn chrome(&self, _event: ChromeEvent) {}
-
-    fn threads(&self, _snapshots: Vec<ThreadSnapshot>) {}
-}
-
-/// Spawn, handshake, negotiate v2, read the starting state, and start reducing.
-///
-/// The whole M0 path in one function, deliberately free of Tauri types so a test
-/// can call exactly what the `open_thread` command calls.
-///
-/// `roster` is the registry the pump republishes the sidebar's rows through: the
-/// session does not need to be in it yet (the caller registers the session once this
-/// returns, under the id this function settles on).
 pub async fn open(
     spec: &SidecarSpec,
     options: ClientOptions,
@@ -1284,7 +1069,7 @@ pub async fn hydrate(client: &OmpClient, transcript: &Mutex<Transcript>) -> Resu
 }
 
 /// The palette's rows, flattened for the frontend (`dto::CommandSnapshot`).
-fn command_snapshots(commands: &[AdvertisedCommand]) -> Vec<CommandSnapshot> {
+pub(super) fn command_snapshots(commands: &[AdvertisedCommand]) -> Vec<CommandSnapshot> {
     commands
         .iter()
         .map(|command| CommandSnapshot {
@@ -1460,1070 +1245,22 @@ fn spawn_title_generation(
 }
 
 /// Internal `/rename` feedback belongs in diagnostics, not in the conversation.
-fn is_generated_title_receipt(text: &str) -> bool {
+pub(super) fn is_generated_title_receipt(text: &str) -> bool {
     text.starts_with("Session renamed to ")
         || text.starts_with("Could not generate a session title.")
         || text.starts_with("Session name not changed ")
 }
 
-/// One row, flattened for the frontend.
-///
-/// The single place a transcript row becomes the frontend's contract, shared by
-/// the initial read and the patch publisher so the two cannot drift — a mismatch
-/// there would show one conversation on load and a different one as it streamed.
-/// The jobs an `async-result` delivery accounts for (`docs/12` §9).
-///
-/// Empty for every other message, which is what makes `customType == "async-result"` and a
-/// non-empty list the same claim.
-fn jobs(message: &Message) -> Vec<JobDeliverySnapshot> {
-    message
-        .jobs
-        .iter()
-        .map(|job| JobDeliverySnapshot {
-            job_id: job.job_id.clone(),
-            kind: job.kind.clone(),
-            duration_ms: job.duration_ms,
-            label: job.label.clone(),
-        })
-        .collect()
-}
-
-/// The frontend's view of one conversation row.
-///
-/// Public because a second reader needs it: a subagent's transcript is a session of the same
-/// kind, and `bridge::agent_messages` renders its rows through the same mapping so an agent's
-/// conversation is not a lesser view of the thread that spawned it.
-pub fn row_snapshot(row: &omp_session::Row) -> RowSnapshot {
-    match row {
-        omp_session::Row::Message(message)
-            if matches!(message.role(), "toolResult" | "tool_result" | "tool") =>
-        {
-            let (tool_call_id, tool_name, is_error) = match &message.kind {
-                omp_session::MessageKind::ToolResult {
-                    tool_call_id,
-                    tool_name,
-                    is_error,
-                } => (tool_call_id.clone(), tool_name.clone(), *is_error),
-                _ => (String::new(), String::new(), false),
-            };
-            RowSnapshot {
-                role: "tool".to_string(),
-                timestamp: message.timestamp,
-                text: String::new(),
-                thinking: None,
-                streaming: false,
-                tool: Some(ToolSnapshot {
-                    tool_call_id,
-                    tool_name,
-                    intent: None,
-                    args: String::new(),
-                    details: message
-                        .raw
-                        .get("details")
-                        .map(|v| v.to_string())
-                        .unwrap_or_default(),
-                    output: message.text(),
-                    is_error,
-                    finished: true,
-                }),
-                attachments: attachments(message),
-                custom_type: message.custom_type.clone(),
-                jobs: jobs(message),
-                command: None,
-                steering: None,
-            }
-        }
-        omp_session::Row::Message(message) => {
-            let steering = match &message.kind {
-                omp_session::MessageKind::User { steering, .. } if *steering => Some(true),
-                _ => None,
-            };
-            RowSnapshot {
-                role: message.role().to_string(),
-                timestamp: message.timestamp,
-                text: message.text(),
-                thinking: None,
-                streaming: false,
-                tool: None,
-                attachments: attachments(message),
-                custom_type: message.custom_type.clone(),
-                jobs: jobs(message),
-                command: None,
-                steering,
-            }
-        }
-        omp_session::Row::Assistant { message, streaming } => {
-            let mut text = message.text();
-            if text.is_empty() {
-                if let Some(err) = message.error_message() {
-                    text = err.to_string();
-                }
-            }
-            RowSnapshot {
-                role: "assistant".to_string(),
-                timestamp: message.timestamp,
-                text,
-                thinking: optional(message.thinking()),
-                streaming: *streaming,
-                tool: None,
-                attachments: attachments(message),
-                custom_type: message.custom_type.clone(),
-                jobs: jobs(message),
-                command: None,
-                steering: None,
-            }
-        }
-        omp_session::Row::Tool(card) => RowSnapshot {
-            role: "tool".to_string(),
-            timestamp: None,
-            text: String::new(),
-            thinking: None,
-            streaming: !card.is_finished(),
-            tool: Some(ToolSnapshot {
-                tool_call_id: card.tool_call_id.clone(),
-                tool_name: card.tool_name.clone(),
-                intent: card.intent.clone(),
-                args: arguments(&card.args),
-                details: {
-                    let details = match &card.outcome {
-                        omp_session::ToolOutcome::Running => None,
-                        omp_session::ToolOutcome::Done(result) => result.details.as_ref(),
-                    };
-                    details.map_or_else(String::new, ToString::to_string)
-                },
-                output: match &card.outcome {
-                    omp_session::ToolOutcome::Running => String::new(),
-                    omp_session::ToolOutcome::Done(result) => result.text(),
-                },
-                is_error: matches!(
-                    &card.outcome,
-                    omp_session::ToolOutcome::Done(result) if result.is_error
-                ),
-                finished: card.is_finished(),
-            }),
-            attachments: Vec::new(),
-            custom_type: None,
-            jobs: Vec::new(),
-            command: None,
-            steering: None,
-        },
-        omp_session::Row::Notice {
-            level,
-            text,
-            kind,
-            source,
-            ..
-        } => RowSnapshot {
-            role: format!("notice:{level}"),
-            timestamp: None,
-            text: text.clone(),
-            thinking: None,
-            streaming: false,
-            tool: None,
-            attachments: Vec::new(),
-            custom_type: Some(kind.clone()),
-            jobs: Vec::new(),
-            command: source.clone(),
-            steering: None,
-        },
-    }
-}
-
-/// The failure a transcript most recently recorded, if any.
-///
-/// Two shapes mean "a turn failed", and only one of them is a notice: a failed assistant
-/// turn is an assistant message the engine marked (`stopReason: "error"` with the reason
-/// on the message — measured, `429 rate limited`), which the transcript keeps as an
-/// ordinary row. The notice at error level is the other path: a retry that gave up, or an
-/// event this build could not read.
-fn last_failure(transcript: &Transcript) -> Option<String> {
-    for row in transcript.rows().iter().rev() {
-        match row {
-            omp_session::Row::Assistant { message, .. } => match &message.kind {
-                omp_session::MessageKind::Assistant {
-                    stop_reason,
-                    error_message,
-                    ..
-                } if stop_reason.as_deref() == Some("error") => {
-                    return Some(
-                        error_message
-                            .clone()
-                            .unwrap_or_else(|| "the turn failed".to_string()),
-                    );
-                }
-                _ => return None,
-            },
-            omp_session::Row::Notice { level, text, .. } if level == "error" => {
-                return Some(text.clone());
-            }
-            omp_session::Row::Message(_) => return None,
-            _ => {}
-        }
-    }
-    None
-}
-
-/// The images a message carries, in order (`docs/12` §3.1).
-fn attachments(message: &omp_session::Message) -> Vec<AttachmentSnapshot> {
-    message
-        .images()
-        .map(|(mime_type, data)| AttachmentSnapshot {
-            mime_type: mime_type.to_string(),
-            data: data.to_string(),
-        })
-        .collect()
-}
-
-/// A block of text that is present, or absent because it is blank.
-fn optional(text: String) -> Option<String> {
-    (!text.trim().is_empty()).then_some(text)
-}
-
-/// The engine's arguments as JSON text, or empty when the call carried none.
-fn arguments(args: &serde_json::Value) -> String {
-    if args.is_null() {
-        String::new()
-    } else {
-        args.to_string()
-    }
-}
-
-/// Tell the UI to re-render the conversation from the earliest changed row.
-///
-/// Called on a tick rather than per event: see [`ROWS_PUBLISH_INTERVAL`].
-fn publish_rows(
-    reporting: &Reporting,
-    transcript: &Mutex<Transcript>,
-    first_dirty: &mut Option<usize>,
-) -> bool {
-    // Commands such as manual compaction also write maintenance notices. Collect
-    // their dirty marker even when the engine emitted no session event.
-    if let Ok(mut transcript) = transcript.lock() {
-        if let Some(index) = transcript.take_dirty() {
-            *first_dirty = Some(first_dirty.map_or(index, |earliest| earliest.min(index)));
-        }
-    }
-    let Some(from) = first_dirty.take() else {
-        return false;
-    };
-
-    let Ok(transcript) = transcript.lock() else {
-        eprintln!("[omp-desktop] the transcript lock was poisoned");
-        return false;
-    };
-
-    let rows = transcript.rows();
-    // Clamped rather than assumed: a marker left over from a longer transcript
-    // would otherwise slice out of bounds, and a panic here takes the window down.
-    let from = from.min(rows.len());
-
-    reporting.sink.rows(
-        &reporting.thread.current(),
-        RowPatch {
-            from,
-            rows: rows[from..].iter().map(row_snapshot).collect(),
-        },
-    );
-    true
-}
-
-/// Republish the sidebar's roster when this thread's own state may have moved.
-///
-/// Gated on a change rather than sent every tick, for the same reason rows are
-/// coalesced: a streaming turn would otherwise broadcast the whole roster ten times a
-/// second. Two things about a thread are invisible in the rows — a turn starting and a
-/// turn ending, which move `is_streaming` — so they are compared directly. Everything
-/// else arrives with rows (a failure becomes a row) or through [`Dialogs`], which
-/// republishes the roster itself the moment the pending set changes.
-/// The frontend's view of one subagent.
-///
-/// Flattened on purpose: the reducer nests a run's progress and retries because that is
-/// how the frames arrive, while the panel renders one row of fields.
-pub fn agent_snapshot(agent: &Subagent) -> AgentSnapshot {
-    AgentSnapshot {
-        id: agent.id.clone(),
-        index: agent.index,
-        agent: agent.agent.clone(),
-        agent_source: agent.agent_source.clone(),
-        status: agent.status.map(|status| status.as_str().to_string()),
-        description: agent.description.clone(),
-        task: agent.task.clone(),
-        assignment: agent.assignment.clone(),
-        session_file: agent.session_file.clone(),
-        parent_tool_call_id: agent.parent_tool_call_id.clone(),
-        detached: agent.detached,
-        created_at_ms: agent.created_at_ms,
-        last_update_ms: agent.last_update_ms,
-        listed: agent.listed,
-        progress: agent
-            .progress
-            .as_ref()
-            .map(|progress| AgentProgressSnapshot {
-                last_intent: progress.last_intent.clone(),
-                current_tool: progress.current_tool.clone(),
-                current_tool_args: progress.current_tool_args.clone(),
-                tool_count: progress.tool_count,
-                requests: progress.requests,
-                tokens: progress.tokens,
-                context_tokens: progress.context_tokens,
-                context_window: progress.context_window,
-                cost: progress.cost,
-                duration_ms: progress.duration_ms,
-                resolved_model: progress.resolved_model.clone(),
-                resolved_thinking_level: progress.resolved_thinking_level.clone(),
-                advisor: progress.advisor,
-                retry: progress.retry.as_ref().map(|retry| AgentRetrySnapshot {
-                    attempt: retry.attempt,
-                    max_attempts: retry.max_attempts,
-                    delay_ms: retry.delay_ms,
-                    error_message: retry.error_message.clone(),
-                    started_at_ms: retry.started_at_ms,
-                }),
-                retry_failure: progress
-                    .retry_failure
-                    .as_ref()
-                    .map(|failure| AgentRetrySnapshot {
-                        attempt: failure.attempt,
-                        max_attempts: 0,
-                        delay_ms: 0,
-                        error_message: failure.error_message.clone(),
-                        started_at_ms: 0,
-                    }),
-            }),
-    }
-}
-
-/// Unix milliseconds, from the one clock the app reads wall time from.
-///
-/// The roster's rows are timed by *this* host rather than by the engine's `lastUpdate`
-/// (`omp_session::agents`), so a panel that says "4s ago" is comparing one clock to
-/// itself.
-pub fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_millis() as u64)
-        .unwrap_or_default()
-}
-
-fn publish_roster(
-    reporting: &Reporting,
-    control: &Mutex<SessionControl>,
-    last_streaming: &mut bool,
-    rows_changed: bool,
-) {
-    let streaming = control
-        .lock()
-        .map(|control| control.is_streaming)
-        .unwrap_or(*last_streaming);
-
-    if !rows_changed && streaming == *last_streaming {
-        return;
-    }
-
-    *last_streaming = streaming;
-    reporting.sink.threads(reporting.roster.snapshots());
-}
-
-/// Re-read the control-plane snapshot and fold it into the shared state.
-///
-/// Fallible, because two callers want different things from the same read: the pump and
-/// the chip row treat a miss as a stale chip and drop it, while a flow whose *next step*
-/// depends on what moved has to say so — a `branch` learns the thread's new session id
-/// here and has nothing to rekey the registry with if this fails.
-async fn refresh_control(
-    client: &OmpClient,
-    control: &Mutex<SessionControl>,
-) -> Result<SessionControl, String> {
-    let response = client
-        .request(commands::get_state(), None)
-        .await
-        .map_err(|error| format!("the agent did not answer get_state: {error}"))?;
-
-    let refreshed = SessionControl::decode(&response["data"])
-        .ok_or_else(|| "the agent's state payload had no session id".to_string())?;
-
-    if let Ok(mut control) = control.lock() {
-        *control = refreshed.clone();
-    }
-
-    Ok(refreshed)
-}
-
-/// Determine if a plan contains completed or abandoned tasks, and return the filtered phases.
-fn filter_completed_todos(phases: &[TodoPhase]) -> (bool, Vec<Value>) {
-    let has_completed = phases.iter().any(|phase| {
-        phase
-            .tasks
-            .iter()
-            .any(|task| task.status == "completed" || task.status == "abandoned")
-    });
-
-    if !has_completed {
-        return (false, Vec::new());
-    }
-
-    let remaining: Vec<Value> = phases
-        .iter()
-        .filter_map(|phase| {
-            let remaining_tasks: Vec<Value> = phase
-                .tasks
-                .iter()
-                .filter(|task| task.status != "completed" && task.status != "abandoned")
-                .map(|task| {
-                    let mut obj = json!({
-                        "content": task.content,
-                        "status": task.status,
-                    });
-                    if let Some(ref blocker) = task.blocker {
-                        obj["blocker"] = json!(blocker);
-                    }
-                    obj
-                })
-                .collect();
-
-            if remaining_tasks.is_empty() {
-                None
-            } else {
-                Some(json!({
-                    "name": phase.name,
-                    "tasks": remaining_tasks,
-                }))
-            }
-        })
-        .collect();
-
-    (true, remaining)
-}
-
-/// Auto-clear completed or abandoned tasks at the end of a turn,
-/// updating the in-memory plan in the engine without requiring user action.
-async fn auto_clear_completed_todos(client: &OmpClient, control: &Mutex<SessionControl>) {
-    let (has_completed, remaining_phases) = {
-        let Ok(ctrl) = control.lock() else { return };
-        filter_completed_todos(&ctrl.todo_phases)
-    };
-
-    if has_completed {
-        let response = call(
-            client,
-            commands::set_todos(Value::Array(remaining_phases)),
-            None,
-            "auto-clearing completed todos",
-        )
-        .await;
-
-        match response {
-            Ok(response) => {
-                let raw = &response["data"]["todoPhases"];
-                if raw.is_array() {
-                    let stored = omp_session::decode_phases(raw);
-                    if let Ok(mut ctrl) = control.lock() {
-                        ctrl.todo_phases = stored;
-                    }
-                } else if let Ok(mut ctrl) = control.lock() {
-                    ctrl.todo_phases.retain_mut(|phase| {
-                        phase
-                            .tasks
-                            .retain(|t| t.status != "completed" && t.status != "abandoned");
-                        !phase.tasks.is_empty()
-                    });
-                }
-            }
-            Err(err) => {
-                eprintln!("[omp-desktop] could not auto-clear completed todos: {err}");
-                if let Ok(mut ctrl) = control.lock() {
-                    ctrl.todo_phases.retain_mut(|phase| {
-                        phase
-                            .tasks
-                            .retain(|t| t.status != "completed" && t.status != "abandoned");
-                        !phase.tasks.is_empty()
-                    });
-                }
-            }
-        }
-    }
-}
-
-/// Subscribe to both of the client's streams and reduce them forever.
-///
-/// Frames that ask the host for something become pending dialogs, which announce
-/// themselves through the sink ([`Dialogs`]); the rest are counted. A dialog that
-/// arrives while nobody is listening is still in the store, which is what makes the
-/// answer command safe regardless of subscription order.
-///
-/// `reporting` is what makes a published event addressable: the tag on everything
-/// thread-scoped, and the roster the sidebar reads.
-/// The state a session's pump feeds, in one bundle.
-///
-/// A bundle rather than six parameters because it is one thing: every handle here is a
-/// reducer the pump writes as frames arrive, and the `LiveSession` that reads them keeps the
-/// same arcs. Grouping them is also what keeps the pump's signature about its *job* — a sink,
-/// a client, and the state they meet in — instead of a list of mutexes a caller has to get in
-/// the right order.
-pub struct Reducers {
-    pub transcript: Arc<Mutex<Transcript>>,
-    pub control: Arc<Mutex<SessionControl>>,
-    pub dialogs: Arc<Dialogs>,
-    pub granted_tools: Arc<Mutex<HashSet<String>>>,
-    pub granted_commands: Arc<Mutex<HashSet<String>>>,
-    pub counters: Arc<Counters>,
-    pub commands: Arc<Mutex<Vec<AdvertisedCommand>>>,
-    pub agents: Arc<Mutex<AgentRoster>>,
-    pub title_generation_in_flight: Arc<AtomicBool>,
-    pub last_slash_command: Arc<Mutex<Option<String>>>,
-}
-
-/// A tool grant answers only that tool's exact approval. A command grant answers only a
-/// simple shell invocation of the selected executable; shell operators still require approval.
-/// Extension dialogs and changed approval shapes still reach the user.
-fn auto_approval_frame(
-    incoming: &ui::Incoming,
-    granted_tools: &Mutex<HashSet<String>>,
-    granted_commands: &Mutex<HashSet<String>>,
-) -> Option<serde_json::Value> {
-    let ui::Incoming::Request(request) = incoming else {
-        return None;
-    };
-    if request.kind != ui::UiRequestKind::Select || request.options != ["Approve", "Deny"] {
-        return None;
-    }
-    let tool = request
-        .title
-        .lines()
-        .next()?
-        .strip_prefix("Allow tool: ")?
-        .trim();
-    if crate::policy::validate_tool_name(tool).is_err() {
-        return None;
-    }
-
-    let tool_granted = granted_tools.lock().ok()?.contains(tool);
-    let command_granted = if matches!(tool, "bash" | "bash_interactive") {
-        command_from_approval(&request.title)
-            .and_then(grantable_command_programs)
-            .is_some_and(|programs| {
-                granted_commands
-                    .lock()
-                    .is_ok_and(|set| programs.iter().all(|program| set.contains(program)))
-            })
-    } else {
-        false
-    };
-    if !tool_granted && !command_granted {
-        return None;
-    }
-    UiResponse::Value("Approve".to_string()).frame(request.kind, &request.id)
-}
-
-/// The executable at the beginning of a command, normalized to its basename.
-/// This is a display/grant identity only; it never executes or rewrites the command.
-pub fn command_program(command: &str) -> Result<String, String> {
-    let words = shell_words::split(command)
-        .map_err(|_| "the command could not be parsed safely".to_string())?;
-    let executable = words
-        .first()
-        .filter(|word| !word.is_empty())
-        .ok_or_else(|| "the command has no executable".to_string())?;
-    let program = Path::new(executable)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| "the command executable has no readable name".to_string())?;
-    crate::policy::validate_tool_name(program)?;
-    Ok(program.to_string())
-}
-
-fn command_from_approval(title: &str) -> Option<&str> {
-    let mut lines = title.lines().skip(1);
-    while let Some(line) = lines.next() {
-        if let Some(command) = line.strip_prefix("Command:").map(str::trim) {
-            // A multiline script must never be approved from just its first line.
-            return (!command.is_empty() && lines.all(|line| line.trim().is_empty()))
-                .then_some(command);
-        }
-    }
-    None
-}
-
-/// A deliberately narrow shell subset: plain commands separated by `;`, with an
-/// optional final stderr redirect to `/dev/null`. Unknown syntax keeps prompting.
-/// In particular, substitutions, pipelines and other redirects cannot inherit a
-/// grant for just one visible executable.
-fn grantable_command_programs(command: &str) -> Option<Vec<String>> {
-    let mut parts = Vec::new();
-    let mut start = 0;
-    let mut quote = None;
-    for (index, character) in command.char_indices() {
-        match (quote, character) {
-            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
-            (None, '\'' | '"') => quote = Some(character),
-            (None, ';') => {
-                parts.push(&command[start..index]);
-                start = index + 1;
-            }
-            // Reject syntax whose execution cannot be accounted for by this parser.
-            (
-                None,
-                '|' | '&' | '<' | '$' | '`' | '(' | ')' | '{' | '}' | '\n' | '\r' | '\\' | '#',
-            )
-            | (Some('"'), '$' | '`' | '\\') => return None,
-            _ => {}
-        }
-    }
-    if quote.is_some() {
-        return None;
-    }
-    parts.push(&command[start..]);
-
-    let mut programs = Vec::new();
-    for part in parts {
-        let mut part = part.trim();
-        // This harmless redirect occurs in OMP's own inspection commands. Do not
-        // generalize it to arbitrary output paths or other redirection forms.
-        if let Some(before) = part.strip_suffix("2>/dev/null") {
-            if !before.ends_with(char::is_whitespace) {
-                return None;
-            }
-            part = before.trim_end();
-        }
-        if part.is_empty() || part.contains('>') {
-            return None;
-        }
-        let words = shell_words::split(part).ok()?;
-        let executable = words.first()?;
-        if executable.contains(['*', '?', '[', ']']) {
-            return None;
-        }
-        let program = command_program(part).ok()?;
-        if !programs.contains(&program) {
-            programs.push(program);
-        }
-    }
-    Some(programs)
-}
-
-pub fn spawn_pump(
-    reporting: Reporting,
-    client: Arc<OmpClient>,
-    reducers: Reducers,
-) -> JoinHandle<()> {
-    let Reducers {
-        transcript,
-        control,
-        dialogs,
-        granted_tools,
-        granted_commands,
-        counters,
-        commands,
-        agents,
-        title_generation_in_flight,
-        last_slash_command,
-    } = reducers;
-
-    tokio::spawn(async move {
-        let mut events = client.subscribe_events();
-        let mut frames = client.subscribe_frames();
-        // The three things only this task can notice, and the only reason a pump needs state
-        // of its own: the notification rules ("once per real occurrence", which is a property
-        // of a sequence rather than of an event), the dialogs actually announced, and the
-        // engine's own death.
-        let mut notifier = Notifier::new();
-        let mut closed = client.closed();
-        let mut kinds: HashSet<String> = HashSet::new();
-        let mut sequence = 0u64;
-        // The earliest row changed since the last publish, coalescing a turn's
-        // worth of deltas into one patch per tick.
-        let mut first_dirty: Option<usize> = None;
-        // Whether the last roster this thread published said it was streaming, so a
-        // turn starting or ending is noticed without comparing whole snapshots.
-        let mut last_streaming = control
-            .lock()
-            .map(|control| control.is_streaming)
-            .unwrap_or(false);
-        let mut ticker = tokio::time::interval(ROWS_PUBLISH_INTERVAL);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-
-        loop {
-            tokio::select! {
-                // The engine is gone. This is the *only* arm that can fire for it: the two
-                // broadcast streams end with the child, but their senders live inside the
-                // `Arc<OmpClient>` this task holds, so `Closed` can never arrive on them —
-                // which is how a dead sidecar used to stay on screen as a live thread with a
-                // streaming dot and an approval nobody could answer (`docs/14` §7 #6).
-                changed = closed.changed() => {
-                    // Either a new value (the reader stopped) or a dropped sender (the client
-                    // is gone): both mean there is nothing left to reduce.
-                    let _ = changed;
-                    break;
-                }
-                received = events.recv() => match received {
-                    Ok(event) => {
-                        let turn_finished = matches!(
-                            &event,
-                            SessionEvent::AgentEnd(end) if end.is_terminal()
-                        );
-                        sequence += 1;
-                        counters.events_seen.fetch_add(1, Ordering::Relaxed);
-
-                        match &event {
-                            SessionEvent::Unknown { .. } => {
-                                counters.unknown_events.fetch_add(1, Ordering::Relaxed);
-                            }
-                            SessionEvent::Malformed { .. } => {
-                                counters.malformed_events.fetch_add(1, Ordering::Relaxed);
-                            }
-                            _ => {}
-                        }
-
-                        if kinds.insert(event.kind().to_string()) {
-                            counters
-                                .distinct_kinds
-                                .fetch_add(1, Ordering::Relaxed);
-                        }
-
-                        // The control reducer reports when an event left fields
-                        // stale; M0 has no poll loop yet, so it is only logged.
-                        let stale = control
-                            .lock()
-                            .map(|mut control| control.apply(&event))
-                            .unwrap_or(false);
-                        if stale && cfg!(debug_assertions) {
-                            println!("[omp-desktop] {} invalidated cached state", event.kind());
-                        }
-
-                        if let Ok(mut transcript) = transcript.lock() {
-                            transcript.apply(&event);
-                            if let Some(index) = transcript.take_dirty() {
-                                first_dirty = Some(first_dirty.map_or(index, |earliest| {
-                                    earliest.min(index)
-                                }));
-                            }
-                        }
-
-                        if cfg!(debug_assertions) {
-                            println!("[omp-desktop] event #{sequence} {}", event.kind());
-                        }
-
-                        reporting.activity(ActivitySnapshot {
-                            kind: event.kind().to_string(),
-                            sequence,
-                        });
-
-                        // Some fields are authoritative only in `get_state` — the
-                        // engine's own message count, queue depth, context usage.
-                        // Events carry changes, not totals, so the snapshot is
-                        // re-read when a run settles or when an event says part of
-                        // it went stale. Without this the pane shows a stale count
-                        // beside a live transcript.
-                        if stale || event.ends_run() {
-                            // Logged and dropped: a missed refresh is a stale count
-                            // beside a live transcript, not a reason to end the pump.
-                            if let Err(error) = refresh_control(&client, &control).await {
-                                eprintln!("[omp-desktop] could not refresh session state: {error}");
-                            }
-                            if matches!(event, omp_transport::events::SessionEvent::AutoCompactionEnd(_)) {
-                                if let Ok(mut ctrl) = control.lock() {
-                                    ctrl.is_compacting = false;
-                                }
-                            }
-                        }
-
-                        // Last, so the name and the last answer it reads are the ones the
-                        // event just produced.
-                        let facts = facts(&reporting.thread.current(), &control, &transcript);
-                        if let Some(notification) = notifier.event(&event, &facts) {
-                            reporting.sink.notifications(notification);
-                        }
-
-                        if turn_finished {
-                            auto_clear_completed_todos(&client, &control).await;
-                            spawn_title_generation(
-                                Arc::clone(&client),
-                                Arc::clone(&control),
-                                Arc::clone(&title_generation_in_flight),
-                                reporting.clone(),
-                            );
-                        }
-                    }
-                    Err(RecvError::Lagged(missed)) => {
-                        counters.lagged_events.fetch_add(1, Ordering::Relaxed);
-                        eprintln!("[omp-desktop] event stream lagged by {missed}");
-                    }
-                    Err(RecvError::Closed) => break,
-                },
-                // A tick with nothing dirty publishes nothing: the marker is the
-                // only thing that decides, so a paused conversation costs nothing.
-                _ = ticker.tick() => {
-                    // Rows and the roster share the tick: a streaming turn emits deltas
-                    // far faster than either a conversation view or a sidebar redraws.
-                    let changed = publish_rows(&reporting, &transcript, &mut first_dirty);
-                    publish_roster(&reporting, &control, &mut last_streaming, changed);
-                }
-                received = frames.recv() => match received {
-                    Ok(frame) => {
-                        counters.frames_seen.fetch_add(1, Ordering::Relaxed);
-
-                        // The slash-command side channels (`docs/rpc.md` §11) have
-                        // consumers now, and this is where they arrive: a builtin's
-                        // output becomes a notice row, and a metadata change refreshes
-                        // the palette's list for whichever window is looking at it.
-                        match protocol::classify(&frame) {
-                            protocol::FrameClass::CommandOutput => {
-                                if let Some(text) = palette::command_output(&frame) {
-                                    // `/rename` is an implementation detail of automatic
-                                    // naming. Its receipt (including failure) must not become
-                                    // an "info" message in the conversation.
-                                    if is_generated_title_receipt(text)
-                                        && title_generation_in_flight.swap(false, Ordering::AcqRel)
-                                    {
-                                        continue;
-                                    }
-                                    let cmd = last_slash_command.lock().ok().and_then(|mut slot| slot.take());
-                                    if let Ok(mut transcript) = transcript.lock() {
-                                        transcript.apply_command_output_with_command(text, cmd.as_deref());
-                                        if let Some(index) = transcript.take_dirty() {
-                                            first_dirty = Some(first_dirty.map_or(index, |earliest| {
-                                                earliest.min(index)
-                                            }));
-                                        }
-                                    }
-                                }
-                            }
-                            protocol::FrameClass::Subagent => {
-                                // Folded in as they arrive, and published the moment the
-                                // roster actually changes: the engine deletes a settled
-                                // subagent from its registry at once, so a later poll
-                                // cannot bring the row back (`docs/12` §9) — these frames
-                                // are the only place a finished agent is still a row.
-                                let changed = agents
-                                    .lock()
-                                    .map(|mut roster| roster.apply_frame(&frame, now_ms()))
-                                    .unwrap_or(false);
-                                if changed {
-                                    reporting.agents(&agents);
-                                }
-                            }
-                            protocol::FrameClass::AvailableCommandsUpdate => {
-                                let list = crate::palette::with_desktop_builtins(palette::commands_from(&frame));
-                                // An update with an empty list is dropped rather than
-                                // stored: it would empty a palette that works.
-                                if !list.is_empty() {
-                                    let snapshots = command_snapshots(&list);
-                                    if let Ok(mut cached) = commands.lock() {
-                                        *cached = list;
-                                    }
-                                    reporting
-                                        .sink
-                                        .commands(&reporting.thread.current(), snapshots);
-                                }
-                            }
-                            protocol::FrameClass::SessionInfoUpdate => {
-                                // `/rename` persists the title and announces this frame, but the
-                                // frame is only a hint; `get_state` is the authoritative session
-                                // name. Re-read it and republish the live row so the sidebar does
-                                // not wait for a process restart to see the generated title.
-                                if let Err(error) = refresh_control(&client, &control).await {
-                                    eprintln!(
-                                        "[omp-desktop] could not refresh generated title: {error}"
-                                    );
-                                } else {
-                                    reporting.sink.threads(reporting.roster.snapshots());
-                                }
-                            }
-                            _ => {}
-                        }
-
-                        // Every `extension_ui_request` is counted; only the
-                        // blocking four become state. The classification comes
-                        // from the transport, so a new fire-and-forget method
-                        // upstream cannot make the app report a stall.
-                        if frame.get("type").and_then(|kind| kind.as_str())
-                            == Some("extension_ui_request")
-                        {
-                            counters.ui_requests.fetch_add(1, Ordering::Relaxed);
-
-                            let method = frame
-                                .get("method")
-                                .and_then(|method| method.as_str())
-                                .unwrap_or_default();
-                            if ui::UiRequestKind::from_method(method).is_some() {
-                                counters
-                                    .blocking_ui_requests
-                                    .fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-
-                        let Some(incoming) = ui::decode(&frame) else {
-                            // The half the host does not answer: chrome the window draws
-                            // (`docs/12` §13). Emitted with its thread, because two live
-                            // sessions share one window and a widget from one is not a
-                            // widget for the other.
-                            if let Some(op) = ui::chrome(&frame) {
-                                reporting.sink.chrome(ChromeEvent {
-                                    thread: reporting.thread.current(),
-                                    op,
-                                });
-                            } else if let Some(method) = unusable_dialog(&frame) {
-                                // A blocking dialog the decoder could not turn into a
-                                // request: the engine is waiting on it and will refuse the
-                                // tool at its own deadline, so a silent `continue` here is
-                                // the user seeing a tool fail for no stated reason.
-                                if let Ok(mut transcript) = transcript.lock() {
-                                    transcript.apply_error(&method, "extension_ui_request");
-                                    if let Some(index) = transcript.take_dirty() {
-                                        first_dirty = Some(first_dirty.map_or(index, |earliest| {
-                                            earliest.min(index)
-                                        }));
-                                    }
-                                }
-                            }
-                            continue;
-                        };
-
-                        if let Some(frame) = auto_approval_frame(
-                            &incoming,
-                            &granted_tools,
-                            &granted_commands,
-                        ) {
-                            match client.send(&frame).await {
-                                Ok(()) => continue,
-                                Err(error) => eprintln!(
-                                    "[omp-desktop] could not answer granted approval: {error}"
-                                ),
-                            }
-                        }
-
-                        if let ui::Incoming::Request(request) = &incoming {
-                            let facts =
-                                facts(&reporting.thread.current(), &control, &transcript);
-                            if let Some(notification) = notifier.dialog(request, &facts) {
-                                reporting.sink.notifications(notification);
-                            }
-                        }
-
-                        dialogs.apply(incoming);
-                    }
-                    Err(RecvError::Lagged(_)) => {}
-                    Err(RecvError::Closed) => break,
-                },
-            }
-        }
-
-        // The engine is gone, so nothing in the set can be answered any more and
-        // an approval dialog must not stay on screen behind a dead agent.
-        let reason = client
-            .closed_reason()
-            .unwrap_or_else(|| "the agent's stream ended".to_string());
-
-        dialogs.clear();
-
-        // And the thread itself is not live any more. Two things would otherwise lie about
-        // it: the row's streaming dot, which no event will ever clear, and the registry,
-        // which would keep offering a thread whose process is gone. The reason is published
-        // where a failed turn is (`last_failure` reads the rows), so the sidebar's red dot
-        // and the transcript both say it.
-        if let Ok(mut control) = control.lock() {
-            control.is_streaming = false;
-        }
-        if let Ok(mut transcript) = transcript.lock() {
-            transcript.apply_error(&reason, "sidecar");
-            if let Some(index) = transcript.take_dirty() {
-                first_dirty = Some(first_dirty.map_or(index, |earliest| earliest.min(index)));
-            }
-        }
-        publish_rows(&reporting, &transcript, &mut first_dirty);
-
-        let thread = reporting.thread.current();
-        let facts = facts(&thread, &control, &transcript);
-        reporting
-            .sink
-            .notifications(notifier.host_failure(&facts, &reason));
-
-        // Then the child itself. Two states end here, and both want the same call: an engine
-        // that was killed is a zombie until somebody waits for it — and the session is out of
-        // the registry now, so nobody else ever will — while an engine whose stdout stopped
-        // being readable is still running and must not be left writing into a pipe nobody
-        // drains. `wait_or_kill` covers both: it returns at once for a dead child.
-        let _ = client.shutdown(SHUTDOWN_GRACE).await;
-
-        reporting.roster.retire(&thread);
-        reporting.sink.threads(reporting.roster.snapshots());
-
-        if cfg!(debug_assertions) {
-            println!("[omp-desktop] the engine is gone: {reason}");
-        }
-    })
-}
-
-/// The blocking dialog a frame asks for but cannot be decoded into, or `None`.
-///
-/// `ui::decode` answers `None` for a chrome frame *and* for a blocking one whose frame is
-/// unusable — a `select` with no string `id`, say. Only the second is a problem: the engine
-/// has stopped and is waiting, and the sentence names the method and the id it sent, because
-/// the request the host could not read is also the request it cannot answer.
-///
-/// The readability check is repeated here rather than left to the caller, so this cannot be
-/// misused into reporting a dialog that is on screen and answerable.
-fn unusable_dialog(frame: &serde_json::Value) -> Option<String> {
-    if ui::decode(frame).is_some() {
-        return None;
-    }
-
-    if frame.get("type").and_then(serde_json::Value::as_str) != Some("extension_ui_request") {
-        return None;
-    }
-
-    let method = frame
-        .get("method")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    let kind = ui::UiRequestKind::from_method(method)?;
-
-    // `decode` returned `None` for it, so something it requires is missing; the id is the one
-    // a reader needs to know which request is stuck, and `get("id")` is rendered as it
-    // arrived so a non-string id is visible rather than reported as absent.
-    Some(format!(
-        "the engine is waiting on a `{}` dialog the host could not read (id: {})",
-        kind.as_str(),
-        frame
-            .get("id")
-            .map(ToString::to_string)
-            .unwrap_or_else(|| "none".to_string())
-    ))
-}
-
-/// What the host knows about a thread when a notification trigger fires.
-///
-/// Read under the two locks the pump already takes and returned owned: the emit happens
-/// outside both, so a window's event loop is never inside the pump's critical section.
-fn facts(thread: &str, control: &Mutex<SessionControl>, transcript: &Mutex<Transcript>) -> Facts {
-    let name = control
-        .lock()
-        .ok()
-        .and_then(|control| control.session_name.clone());
-    let (failure, answer) = transcript
-        .lock()
-        .map(|transcript| (last_failure(&transcript), last_answer(&transcript)))
-        .unwrap_or((None, None));
-
-    Facts {
-        thread: thread.to_string(),
-        name,
-        failure,
-        answer,
-    }
-}
-
-/// The engine's most recent assistant text, if it has said anything yet.
-fn last_answer(transcript: &Transcript) -> Option<String> {
-    transcript.rows().iter().rev().find_map(|row| match row {
-        omp_session::Row::Assistant { message, .. } => optional(message.text()),
-        _ => None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::grants::*;
+    use super::pump::*;
+    use super::snapshot::*;
+    use omp_transport::protocol::ui;
+    use omp_transport::SessionEvent;
+    use serde_json::json;
+    use crate::notify::{Facts, Notifier};
 
     #[test]
     fn compaction_notices_keep_their_identity_in_the_frontend() {
@@ -3030,7 +1767,7 @@ mod tests {
             },
         ];
 
-        let (has_completed, remaining) = super::filter_completed_todos(&phases);
+        let (has_completed, remaining) = filter_completed_todos(&phases);
         assert!(has_completed);
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0]["name"], "Phase 2");
@@ -3048,8 +1785,97 @@ mod tests {
                 blocker: None,
             }],
         }];
-        let (has_completed, remaining) = super::filter_completed_todos(&pending_only);
+        let (has_completed, remaining) = filter_completed_todos(&pending_only);
         assert!(!has_completed);
         assert!(remaining.is_empty());
+    }
+
+    /// Every event used to build [`Facts`], deltas included — and the facts carry the
+    /// engine's *whole* last answer, so a token-by-token turn joined and dropped that text
+    /// once per frame. Only the two shapes [`Notifier::event`] answers may build them, and
+    /// this asserts both halves together so neither side can drift silently.
+    #[test]
+    fn notification_facts_are_built_only_for_the_events_the_notifier_answers() {
+        let facts = Facts {
+            thread: "session-7".to_string(),
+            name: Some("Ship the release".to_string()),
+            answer: Some("Released v1.0.0.".to_string()),
+            ..Facts::default()
+        };
+        let mut notifier = Notifier::new();
+
+        for raw in [
+            json!({ "type": "agent_start" }),
+            json!({ "type": "turn_start" }),
+            json!({ "type": "message_start", "message": { "role": "assistant", "content": [] } }),
+            json!({
+                "type": "message_end",
+                "message": { "role": "assistant", "content": [], "timestamp": 7 },
+            }),
+            json!({ "type": "session_settled" }),
+            json!({ "type": "agent_end", "isTerminal": false, "messages": [] }),
+            json!({ "type": "auto_retry_end", "success": true, "attempt": 1 }),
+        ] {
+            let event = SessionEvent::decode(&raw);
+
+            assert!(!earns_notification(&event), "{raw} must not build facts");
+            assert_eq!(
+                notifier.event(&event, &facts),
+                None,
+                "{raw} earns no notification"
+            );
+        }
+
+        // The two shapes that do: a settled turn, and a retry that gave up.
+        for raw in [
+            json!({ "type": "agent_end", "messages": [] }),
+            json!({
+                "type": "auto_retry_end",
+                "success": false,
+                "attempt": 2,
+                "finalError": "socket hang up",
+            }),
+        ] {
+            let event = SessionEvent::decode(&raw);
+
+            assert!(earns_notification(&event), "{raw} must build facts");
+            assert!(
+                notifier.event(&event, &facts).is_some(),
+                "{raw} reports the turn"
+            );
+        }
+    }
+
+    /// The pane's event tail must still see a turn start and end, while a streamed delta
+    /// repeating the kind already on show must not cost an IPC event each: a new kind is
+    /// published at once, a repeat is coalesced into the tick.
+    #[test]
+    fn the_event_tail_publishes_a_new_kind_at_once_and_coalesces_its_repeats() {
+        let mut tail = ActivityTail::default();
+
+        let first = tail
+            .record("agent_start", 1)
+            .expect("a kind the tail has not shown goes out at once");
+        assert_eq!((first.kind.as_str(), first.sequence), ("agent_start", 1));
+        assert!(
+            tail.take().is_none(),
+            "the immediate publish leaves nothing queued for the tick"
+        );
+
+        assert!(
+            tail.record("agent_start", 2).is_none(),
+            "a repeat waits for the tick"
+        );
+        let repeat = tail.take().expect("the tick publishes the newest repeat");
+        assert_eq!((repeat.kind.as_str(), repeat.sequence), ("agent_start", 2));
+        assert!(tail.take().is_none(), "a quiet tick publishes nothing");
+
+        // The turn's end is a different kind, so the death of a delta stream cannot
+        // swallow it — which is the notification the view clears its streaming dot with.
+        let ended = tail
+            .record("agent_end", 3)
+            .expect("a new kind goes out at once");
+        assert_eq!((ended.kind.as_str(), ended.sequence), ("agent_end", 3));
+        assert!(tail.take().is_none());
     }
 }

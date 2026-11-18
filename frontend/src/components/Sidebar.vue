@@ -36,7 +36,6 @@ const props = defineProps<{
   sessions: number;
   /** The thread whose title is being edited in place, if any. */
   renameId: string | null;
-  agents?: number;
 }>();
 
 const emit = defineEmits<{
@@ -45,7 +44,6 @@ const emit = defineEmits<{
   open: [workspace: string];
   /** Open cross-thread search (`docs/12` §2.1) — the overlay lives in the shell. */
   search: [];
-  agents: [];
   /** Open the settings screen (`docs/12` §12), whose own rail carries this footer row too. */
   settings: [];
   /** Right-click opened the menu (`docs/12` §2.3) — the actions live in `ThreadActions`. */
@@ -292,6 +290,12 @@ onUnmounted(() => {
   if (hoverTimer) clearTimeout(hoverTimer);
 });
 
+const vFocus = {
+  mounted(el: HTMLInputElement): void {
+    el.focus();
+  },
+};
+
 const total = computed(() => props.groups.reduce((count, group) => count + group.threads.length, 0));
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPod|iPad/i.test(navigator.userAgent || "");
@@ -377,7 +381,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
       <div class="flex items-center gap-2 rounded-[6px] bg-raised px-2.5 py-1.5">
         <Icon name="folder" class="h-3.5 w-3.5 shrink-0 text-faint" />
         <input
-          :ref="(input) => (input as HTMLInputElement | null)?.focus()"
+          v-focus
           v-model="typed"
           spellcheck="false"
           class="min-w-0 flex-1 bg-transparent font-mono text-[12px] text-fg outline-none placeholder:text-faint"
@@ -477,8 +481,10 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
 
         <ul v-if="isOpen(group.path)" class="my-0.5 flex flex-col gap-0.5">
           <li v-for="row in group.threads" :key="row.id">
-            <button
-              class="group/row relative flex h-8 w-full items-center justify-between gap-2 rounded-[7px] pr-2.5 text-left transition-colors"
+            <div
+              role="button"
+              tabindex="0"
+              class="group/row relative flex h-8 w-full cursor-pointer items-center justify-between gap-2 rounded-[7px] pr-2.5 text-left transition-colors"
               :class="
                 row.id === props.activeId
                   ? 'bg-selected text-fg font-medium'
@@ -488,6 +494,8 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
               @mouseenter="onRowMouseEnter($event, row)"
               @mouseleave="onRowMouseLeave"
               @click="onRowMouseLeave(); emit('select', row.id)"
+              @keydown.enter.self="onRowMouseLeave(); emit('select', row.id)"
+              @keydown.space.self.prevent="onRowMouseLeave(); emit('select', row.id)"
               @contextmenu="onContext($event, row)"
             >
               <!--
@@ -497,7 +505,7 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
               -->
               <input
                 v-if="props.renameId === row.id"
-                :ref="(input) => (input as HTMLInputElement | null)?.focus()"
+                v-focus
                 v-model="draft"
                 spellcheck="false"
                 class="min-w-0 flex-1 rounded-[5px] bg-raised px-1.5 text-[12.5px] text-fg outline-none ring-1 ring-accent"
@@ -533,15 +541,16 @@ const userInitial = computed(() => (props.identity.user ? props.identity.user.ch
                 >
                   {{ formatRelativeTime(row.modifiedAt) }}
                 </span>
-                <span
+                <button
+                  type="button"
                   class="hidden h-5 w-5 place-items-center rounded-[5px] text-faint hover:bg-surface hover:text-err group-hover/row:grid"
                   aria-label="delete conversation"
                   @click.stop="emit('delete', row.id)"
                 >
                   <Icon name="trash" class="h-3 w-3" />
-                </span>
+                </button>
               </div>
-            </button>
+            </div>
           </li>
         </ul>
       </section>

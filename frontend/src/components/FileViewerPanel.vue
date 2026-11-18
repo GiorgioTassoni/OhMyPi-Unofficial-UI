@@ -47,8 +47,19 @@ const lineRange = computed(() => meta.value.lineRange);
 const basename = computed(() => meta.value.basename);
 const extension = computed(() => meta.value.extension);
 
-const isHttp = computed(() => /^https?:\/\//i.test(props.file.path));
-const isLocalHttp = computed(() => /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?/i.test(props.file.path));
+const parsedHttpUrl = computed(() => {
+  try {
+    const url = new URL(props.file.path);
+    return url.protocol === "http:" || url.protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+});
+const isHttp = computed(() => parsedHttpUrl.value !== null);
+const isLocalHttp = computed(() => {
+  const host = parsedHttpUrl.value?.hostname.toLowerCase();
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+});
 const iframeKey = ref(0);
 
 function onInspect(): void {
@@ -94,7 +105,15 @@ watch([extension, isMarkdown, isHtml], () => {
   }
 });
 
+let loadSeq = 0;
+
+function decodeBase64Utf8(b64: string): string {
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
 async function load(): Promise<void> {
+  const seq = ++loadSeq;
   loading.value = true;
   error.value = null;
   imageDataUrl.value = null;
@@ -107,11 +126,12 @@ async function load(): Promise<void> {
       } else {
         const targetPath = fullPath.value || cleanPath.value;
         const b64 = await readFileBase64(props.workspace ?? null, targetPath);
+        if (seq !== loadSeq) return;
         const mime = mimeTypeForExtension(extension.value);
         imageDataUrl.value = `data:${mime};base64,${b64}`;
         if (isSvg.value) {
           try {
-            content.value = atob(b64);
+            content.value = decodeBase64Utf8(b64);
           } catch {
             content.value = "";
           }
@@ -130,6 +150,7 @@ async function load(): Promise<void> {
 
     if (props.file.artifactId) {
       const art = await readArtifact(props.thread, props.file.artifactId);
+      if (seq !== loadSeq) return;
       content.value = stripToolOutputFormatting(art.text);
       return;
     }
@@ -142,6 +163,7 @@ async function load(): Promise<void> {
     if (isRealFileSystemPath.value && cleanPath.value) {
       const targetPath = fullPath.value || cleanPath.value;
       const text = await readFileContent(props.workspace ?? null, targetPath);
+      if (seq !== loadSeq) return;
       content.value = text;
       return;
     }
@@ -150,9 +172,12 @@ async function load(): Promise<void> {
       throw new Error(`Content not available for virtual URI: ${cleanPath.value}`);
     }
   } catch (cause) {
+    if (seq !== loadSeq) return;
     error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
-    loading.value = false;
+    if (seq === loadSeq) {
+      loading.value = false;
+    }
   }
 }
 
@@ -287,7 +312,7 @@ const formattedLines = computed(() => highlightCode(content.value, isMarkdown.va
           class="h-3.5 w-3.5 shrink-0 text-accent"
         />
         <span class="truncate font-mono text-[12.5px] font-medium text-fg" :title="props.file.path">
-          {{ isLiveWeb ? (props.file.path.includes('choose') || props.file.path.includes('127.0.0.1') ? 'Design Choice Preview' : 'Live Preview') : basename }}
+          {{ isLiveWeb ? (isLocalHttp || parsedHttpUrl?.pathname.includes('choose') ? 'Design Choice Preview' : 'Live Preview') : basename }}
         </span>
         <span v-if="lineRange" class="shrink-0 rounded bg-raised px-1 py-0.5 font-mono text-[10.5px] text-accent font-medium">
           :{{ lineRange }}

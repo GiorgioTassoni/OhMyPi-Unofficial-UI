@@ -7,17 +7,61 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use rusqlite::{params, Connection};
 use serde_json::json;
+use tokio::io::AsyncWriteExt;
 
 use crate::dto::{CatalogProviderDto, CustomProviderInput, OAuthUsageLimitDto, ProviderAccountDto};
 
-static LAST_OAUTH_LIMITS: OnceLock<Mutex<HashMap<String, OAuthUsageLimitDto>>> = OnceLock::new();
+const OAUTH_CACHE_TTL: Duration = Duration::from_secs(900);
 
-fn oauth_limits_cache() -> &'static Mutex<HashMap<String, OAuthUsageLimitDto>> {
+type OAuthCacheKey = (String, String, String);
+static LAST_OAUTH_LIMITS: OnceLock<Mutex<HashMap<OAuthCacheKey, (Instant, OAuthUsageLimitDto)>>> =
+    OnceLock::new();
+
+fn oauth_limits_cache(
+) -> &'static Mutex<HashMap<OAuthCacheKey, (Instant, OAuthUsageLimitDto)>> {
     LAST_OAUTH_LIMITS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn escape_curl_config_value(value: &str) -> Option<String> {
+    if value.contains('\n') || value.contains('\r') {
+        return None;
+    }
+    Some(value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+pub(crate) async fn run_curl_with_config(
+    args: &[&str],
+    config_stdin: &str,
+    timeout: Duration,
+) -> Result<std::process::Output, String> {
+    let mut child = tokio::process::Command::new("curl")
+        .args(args)
+        .arg("--config")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn curl: {e}"))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(config_stdin.as_bytes())
+            .await
+            .map_err(|e| format!("failed to write curl config: {e}"))?;
+        let _ = stdin.shutdown().await;
+    }
+
+    tokio::time::timeout(timeout, child.wait_with_output())
+        .await
+        .map_err(|_| "curl request timed out".to_string())?
+        .map_err(|e| format!("curl execution failed: {e}"))
 }
 
 /// Return the agent directory path.
@@ -177,6 +221,12 @@ pub fn get_catalog_providers() -> Vec<CatalogProviderDto> {
 /// Populates available models from `models.db` cache whenever present.
 #[tauri::command]
 pub async fn get_configured_providers() -> Result<Vec<ProviderAccountDto>, String> {
+    tokio::task::spawn_blocking(get_configured_providers_sync)
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+fn get_configured_providers_sync() -> Result<Vec<ProviderAccountDto>, String> {
     let agent_dir = resolve_agent_dir()?;
     let mut results: Vec<ProviderAccountDto> = Vec::new();
 
@@ -302,6 +352,12 @@ pub async fn get_configured_providers() -> Result<Vec<ProviderAccountDto>, Strin
 /// Store or update an API key in `agent.db` for a provider.
 #[tauri::command]
 pub async fn add_provider_api_key(provider: String, api_key: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || add_provider_api_key_sync(provider, api_key))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+fn add_provider_api_key_sync(provider: String, api_key: String) -> Result<(), String> {
     let provider = provider.trim();
     let api_key = api_key.trim();
 
@@ -373,6 +429,12 @@ pub async fn add_provider_api_key(provider: String, api_key: String) -> Result<(
 /// Remove a credential record by its SQLite ID.
 #[tauri::command]
 pub async fn remove_provider_credential(id: i64) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || remove_provider_credential_sync(id))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+fn remove_provider_credential_sync(id: i64) -> Result<(), String> {
     let agent_dir = resolve_agent_dir()?;
     let db_path = agent_db_path(&agent_dir);
     if !db_path.is_file() {
@@ -390,6 +452,12 @@ pub async fn remove_provider_credential(id: i64) -> Result<(), String> {
 /// Add or update a custom provider in `~/.omp/agent/models.yml`.
 #[tauri::command]
 pub async fn add_custom_provider(input: CustomProviderInput) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || add_custom_provider_sync(input))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+fn add_custom_provider_sync(input: CustomProviderInput) -> Result<(), String> {
     let id = input.id.trim();
     let base_url = input.base_url.trim();
     let model_id = input.model_id.trim();
@@ -412,8 +480,14 @@ pub async fn add_custom_provider(input: CustomProviderInput) -> Result<(), Strin
 
     let yml_path = models_yml_path(&agent_dir);
     let mut root: serde_yaml::Value = if yml_path.is_file() {
-        let text = fs::read_to_string(&yml_path).unwrap_or_default();
-        serde_yaml::from_str(&text).unwrap_or_else(|_| serde_yaml::Mapping::new().into())
+        let text = fs::read_to_string(&yml_path)
+            .map_err(|e| format!("cannot read models.yml: {e}"))?;
+        if text.trim().is_empty() {
+            serde_yaml::Mapping::new().into()
+        } else {
+            serde_yaml::from_str(&text)
+                .map_err(|e| format!("cannot parse models.yml: {e}"))?
+        }
     } else {
         serde_yaml::Mapping::new().into()
     };
@@ -518,6 +592,12 @@ pub async fn add_custom_provider(input: CustomProviderInput) -> Result<(), Strin
 /// Remove a custom provider from `~/.omp/agent/models.yml`.
 #[tauri::command]
 pub async fn remove_custom_provider(provider_id: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || remove_custom_provider_sync(provider_id))
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+}
+
+fn remove_custom_provider_sync(provider_id: String) -> Result<(), String> {
     let agent_dir = resolve_agent_dir()?;
     let yml_path = models_yml_path(&agent_dir);
     if !yml_path.is_file() {
@@ -544,13 +624,13 @@ pub async fn remove_custom_provider(provider_id: String) -> Result<(), String> {
 /// Fetch remaining quota and usage limits for configured OAuth providers.
 #[tauri::command]
 pub async fn get_oauth_usage_limits() -> Result<Vec<crate::dto::OAuthUsageLimitDto>, String> {
-    let agent_dir = resolve_agent_dir()?;
-    let db_path = agent_db_path(&agent_dir);
-    if !db_path.is_file() {
-        return Ok(Vec::new());
-    }
+    let records: Vec<(String, String)> = tokio::task::spawn_blocking(|| {
+        let agent_dir = resolve_agent_dir()?;
+        let db_path = agent_db_path(&agent_dir);
+        if !db_path.is_file() {
+            return Ok::<_, String>(Vec::new());
+        }
 
-    let records: Vec<(String, String)> = {
         let conn = Connection::open(&db_path).map_err(|e| format!("cannot open agent.db: {e}"))?;
         let mut stmt = conn
             .prepare("SELECT provider, data FROM auth_credentials WHERE credential_type = 'oauth'")
@@ -564,29 +644,56 @@ pub async fn get_oauth_usage_limits() -> Result<Vec<crate::dto::OAuthUsageLimitD
             })
             .map_err(|e| format!("query error: {e}"))?;
 
-        rows.flatten().collect()
-    };
+        Ok(rows.flatten().collect())
+    })
+    .await
+    .map_err(|e| format!("task join error: {e}"))??;
 
-    let active_providers: std::collections::HashSet<String> =
-        records.iter().map(|(p, _)| p.clone()).collect();
-    if let Ok(mut cache) = oauth_limits_cache().lock() {
-        cache.retain(|k, _| active_providers.contains(k));
+    if records.is_empty() {
+        if let Ok(mut cache) = oauth_limits_cache().lock() {
+            cache.clear();
+        }
+        return Ok(Vec::new());
     }
 
-    let mut limits = Vec::new();
+    let now = Instant::now();
+    let mut active_keys = std::collections::HashSet::new();
+    let mut parsed_records = Vec::with_capacity(records.len());
 
     for (provider, data_str) in records {
         let Ok(data_json) = serde_json::from_str::<serde_json::Value>(&data_str) else {
             continue;
         };
+        let account_id = data_json
+            .get("accountId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let email = data_json
+            .get("email")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        active_keys.insert((provider.clone(), account_id.clone(), email.clone()));
+        parsed_records.push((provider, data_json, account_id, email));
+    }
 
+    if let Ok(mut cache) = oauth_limits_cache().lock() {
+        cache.retain(|k, (ts, _)| {
+            active_keys.contains(k) && now.saturating_duration_since(*ts) <= OAUTH_CACHE_TTL
+        });
+    }
+
+    let mut limits = Vec::new();
+
+    for (provider, data_json, account_id, email_key) in parsed_records {
         if provider == "openai-codex" {
             let token = data_json.get("access").and_then(|v| v.as_str());
-            let account_id = data_json.get("accountId").and_then(|v| v.as_str());
-            let email = data_json
-                .get("email")
-                .and_then(|v| v.as_str())
-                .map(String::from);
+            let email = if email_key.is_empty() {
+                None
+            } else {
+                Some(email_key.clone())
+            };
             let plan_type = data_json
                 .get("orgName")
                 .and_then(|v| v.as_str())
@@ -594,29 +701,25 @@ pub async fn get_oauth_usage_limits() -> Result<Vec<crate::dto::OAuthUsageLimitD
 
             let mut fetched: Option<OAuthUsageLimitDto> = None;
 
-            if let Some(token) = token {
-                let mut args = vec![
-                    "-s".to_string(),
-                    "-m".to_string(),
-                    "5".to_string(),
-                    "-H".to_string(),
-                    format!("Authorization: Bearer {token}"),
-                    "-H".to_string(),
-                    "User-Agent: Mozilla/5.0".to_string(),
-                ];
-                if let Some(acc) = account_id {
-                    args.push("-H".to_string());
-                    args.push(format!("ChatGPT-Account-Id: {acc}"));
+            if let Some(token) = token.and_then(escape_curl_config_value) {
+                let mut curl_cfg = format!(
+                    "header = \"Authorization: Bearer {token}\"\nheader = \"User-Agent: Mozilla/5.0\"\n"
+                );
+                if !account_id.is_empty() {
+                    if let Some(escaped_acc) = escape_curl_config_value(&account_id) {
+                        curl_cfg.push_str(&format!(
+                            "header = \"ChatGPT-Account-Id: {escaped_acc}\"\n"
+                        ));
+                    }
                 }
-                args.push("https://chatgpt.com/backend-api/wham/usage".to_string());
 
-                let curl_res = tokio::time::timeout(
-                    std::time::Duration::from_secs(6),
-                    tokio::process::Command::new("curl").args(&args).output(),
+                if let Ok(out) = run_curl_with_config(
+                    &["-s", "-m", "5", "--", "https://chatgpt.com/backend-api/wham/usage"],
+                    &curl_cfg,
+                    Duration::from_secs(6),
                 )
-                .await;
-
-                if let Ok(Ok(out)) = curl_res {
+                .await
+                {
                     if out.status.success() {
                         if let Ok(resp) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
                             let mut windows = Vec::new();
@@ -669,14 +772,17 @@ pub async fn get_oauth_usage_limits() -> Result<Vec<crate::dto::OAuthUsageLimitD
                 }
             }
 
+            let cache_key = (provider, account_id, email_key);
             if let Some(dto) = fetched {
                 if let Ok(mut cache) = oauth_limits_cache().lock() {
-                    cache.insert("openai-codex".into(), dto.clone());
+                    cache.insert(cache_key, (Instant::now(), dto.clone()));
                 }
                 limits.push(dto);
             } else if let Ok(cache) = oauth_limits_cache().lock() {
-                if let Some(cached) = cache.get("openai-codex") {
-                    limits.push(cached.clone());
+                if let Some((ts, cached)) = cache.get(&cache_key) {
+                    if now.saturating_duration_since(*ts) <= OAUTH_CACHE_TTL {
+                        limits.push(cached.clone());
+                    }
                 }
             }
         }

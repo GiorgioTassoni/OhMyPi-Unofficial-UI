@@ -36,11 +36,6 @@ import {
   renameThread as sendRename,
   setFavourites,
   setFocusedThread,
-  terminalClose,
-  terminalOpen,
-  terminalWrite,
-  terminals as readTerminals,
-  onTerminals,
   threads as readThreads,
   type ActivitySnapshot,
   type ChromeEvent,
@@ -57,20 +52,19 @@ import {
   type ParkedAgent,
   toggleDevtools,
 } from "./bridge";
-import { activeCount, agentInFlight, buildChatSubagents, tabAgentLabel as resolveTabAgentLabel, type ChatSubagent } from "./lib/agents";
+import { agentInFlight, buildChatSubagents, tabAgentLabel as resolveTabAgentLabel, type ChatSubagent } from "./lib/agents";
 import { readAppTheme, setAppTheme, type AppTheme } from "./lib/appTheme";
 import { applyChrome, chromeFor, draftTarget, type ThreadChrome } from "./lib/chrome";
 import {
-  addNotice,
-  dropNotice,
   marksUnread,
-  noticeForAction,
   noticeFor,
   noticeFromChrome,
   shouldNotifyOs,
   showsNotice,
-  type Notice,
 } from "./lib/notify";
+import { useNotices } from "./composables/useNotices";
+import { usePaneResize } from "./composables/usePaneResize";
+import { useTerminals } from "./composables/useTerminals";
 import {
   playNotificationSound,
   readNotificationSoundEnabled,
@@ -84,7 +78,6 @@ import {
   syncDesignChoiceMcp,
 } from "./lib/designChoiceSetting";
 import { isRecentDialogInteraction } from "./lib/dialogSelect";
-import { selectAfterClose, selectFrom, tabsFrom, type TerminalTab } from "./lib/terminals";
 import { loadProjectOrder, saveProjectOrder, sidebarModel, type ProjectGroup, type ThreadRow } from "./lib/threads";
 import type { TurnFileSummary, TurnReviewRequest } from "./lib/panel";
 import type { ThreadContext } from "./lib/thread-menu";
@@ -274,36 +267,14 @@ watch(activeId, (thread) => {
  * watching and two facts landing together are two things to say: the second must not erase the
  * first before it has been read. `lib/notify.ts` owns which facts become one.
  */
-const notices = ref<Notice[]>([]);
-/** How many notices stay on screen; the oldest goes first, since it is the least new. */
-const NOTICE_LIMIT = 3;
-const NOTICE_AUTO_DISMISS_DURATION = 6000;
-const noticeTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-function scheduleNoticeAutoDismiss(id: string, durationMs = NOTICE_AUTO_DISMISS_DURATION): void {
-  const existing = noticeTimers.get(id);
-  if (existing) clearTimeout(existing);
-  noticeTimers.set(
-    id,
-    setTimeout(() => {
-      notices.value = dropNotice(notices.value, id);
-      noticeTimers.delete(id);
-    }, durationMs),
-  );
-}
-
-function clearNoticeDismiss(id: string): void {
-  const timer = noticeTimers.get(id);
-  if (timer) {
-    clearTimeout(timer);
-    noticeTimers.delete(id);
-  }
-}
-
-function dismissNotice(id: string): void {
-  clearNoticeDismiss(id);
-  notices.value = dropNotice(notices.value, id);
-}
+const {
+  notices,
+  nextId: nextNoticeId,
+  push: pushNotice,
+  dismiss: dismissNotice,
+  showActionNotice,
+  removeForThread: removeNoticesForThread,
+} = useNotices();
 
 /**
  * The status line and widget each thread's extensions have pushed (`lib/chrome.ts`).
@@ -322,9 +293,6 @@ const chrome = ref<Record<string, ThreadChrome>>({});
  * moves both. A rename through the menu clears it, because that is the user speaking last.
  */
 const engineTitles = ref<Record<string, string>>({});
-
-/** Notice ids: monotonic, so two identical facts are still two notices. */
-let noticeSeq = 0;
 
 /** App-wide, because the engine's model catalogue is a property of the engine. */
 const models = ref<ModelOption[]>([]);
@@ -425,13 +393,21 @@ function readStorageNumber(key: string, fallback: number): number {
   }
 }
 
+function readStorageBoolean(key: string, fallback = false): boolean {
+  try {
+    return localStorage.getItem(key) === "true";
+  } catch {
+    return fallback;
+  }
+}
+
 const sidebarWidth = ref(
   Math.min(
     MAX_SIDEBAR_WIDTH,
     Math.max(MIN_SIDEBAR_WIDTH, readStorageNumber("omp:sidebar-width", DEFAULT_SIDEBAR_WIDTH)),
   ),
 );
-const sidebarCollapsed = ref(localStorage.getItem("omp:sidebar-collapsed") === "true");
+const sidebarCollapsed = ref(readStorageBoolean("omp:sidebar-collapsed"));
 const notificationSoundEnabled = ref(readNotificationSoundEnabled());
 const appTheme = ref(readAppTheme());
 setAppTheme(appTheme.value);
@@ -443,8 +419,41 @@ const rightPanelWidth = ref(
   ),
 );
 
-const isDraggingLeft = ref(false);
-const isDraggingRight = ref(false);
+const sidebarOpen = computed({
+  get: () => !sidebarCollapsed.value,
+  set: (next) => {
+    sidebarCollapsed.value = !next;
+  },
+});
+
+const leftPane = usePaneResize({
+  open: sidebarOpen,
+  width: sidebarWidth,
+  defaultWidth: DEFAULT_SIDEBAR_WIDTH,
+  minWidth: MIN_SIDEBAR_WIDTH,
+  maxWidth: MAX_SIDEBAR_WIDTH,
+  maxViewportRatio: 0.45,
+  collapseThreshold: SIDEBAR_COLLAPSE_THRESHOLD,
+  side: "left",
+});
+
+const rightPane = usePaneResize({
+  open: panelOpen,
+  width: rightPanelWidth,
+  defaultWidth: DEFAULT_RIGHT_PANEL_WIDTH,
+  minWidth: MIN_RIGHT_PANEL_WIDTH,
+  maxWidth: MAX_RIGHT_PANEL_WIDTH,
+  maxViewportRatio: 0.65,
+  collapseThreshold: RIGHT_PANEL_COLLAPSE_THRESHOLD,
+  side: "right",
+});
+
+const isDraggingLeft = leftPane.isDragging;
+const isDraggingRight = rightPane.isDragging;
+const startLeftResize = leftPane.start;
+const resetLeftWidth = leftPane.reset;
+const startRightResize = rightPane.start;
+const resetRightWidth = rightPane.reset;
 
 watch(sidebarWidth, (next) => {
   try {
@@ -484,92 +493,6 @@ watch(rightPanelWidth, (next) => {
   } catch {}
 });
 
-function startLeftResize(event: PointerEvent): void {
-  event.preventDefault();
-  isDraggingLeft.value = true;
-  document.body.style.cursor = "col-resize";
-  document.body.style.userSelect = "none";
-
-  const onPointerMove = (e: PointerEvent) => {
-    if (!isDraggingLeft.value) return;
-    const currentX = e.clientX;
-    if (currentX < SIDEBAR_COLLAPSE_THRESHOLD) {
-      sidebarCollapsed.value = true;
-    } else {
-      sidebarCollapsed.value = false;
-      const maxAllowed = Math.min(MAX_SIDEBAR_WIDTH, Math.floor(window.innerWidth * 0.45));
-      sidebarWidth.value = Math.max(MIN_SIDEBAR_WIDTH, Math.min(currentX, maxAllowed));
-    }
-  };
-
-  const onPointerUp = () => {
-    isDraggingLeft.value = false;
-    document.body.style.cursor = "";
-    document.body.style.userSelect = "";
-    window.removeEventListener("pointermove", onPointerMove);
-    window.removeEventListener("pointerup", onPointerUp);
-    window.removeEventListener("pointercancel", onPointerUp);
-  };
-
-  window.addEventListener("pointermove", onPointerMove);
-  window.addEventListener("pointerup", onPointerUp);
-  window.addEventListener("pointercancel", onPointerUp);
-}
-
-function resetLeftWidth(): void {
-  sidebarWidth.value = DEFAULT_SIDEBAR_WIDTH;
-  sidebarCollapsed.value = false;
-}
-
-function startRightResize(event: PointerEvent): void {
-  event.preventDefault();
-  isDraggingRight.value = true;
-  document.body.style.cursor = "col-resize";
-  document.body.style.userSelect = "none";
-
-  const onPointerMove = (e: PointerEvent) => {
-    if (!isDraggingRight.value) return;
-    const currentWidth = window.innerWidth - e.clientX;
-    if (currentWidth < RIGHT_PANEL_COLLAPSE_THRESHOLD) {
-      panelOpen.value = false;
-    } else {
-      panelOpen.value = true;
-      const maxAllowed = Math.min(MAX_RIGHT_PANEL_WIDTH, Math.floor(window.innerWidth * 0.65));
-      rightPanelWidth.value = Math.max(MIN_RIGHT_PANEL_WIDTH, Math.min(currentWidth, maxAllowed));
-    }
-  };
-
-  const onPointerUp = () => {
-    isDraggingRight.value = false;
-    document.body.style.cursor = "";
-    document.body.style.userSelect = "";
-    window.removeEventListener("pointermove", onPointerMove);
-    window.removeEventListener("pointerup", onPointerUp);
-    window.removeEventListener("pointercancel", onPointerUp);
-  };
-
-  window.addEventListener("pointermove", onPointerMove);
-  window.addEventListener("pointerup", onPointerUp);
-  window.addEventListener("pointercancel", onPointerUp);
-}
-
-function resetRightWidth(): void {
-  rightPanelWidth.value = DEFAULT_RIGHT_PANEL_WIDTH;
-  panelOpen.value = true;
-}
-
-/** How many subagents are in flight, for the sidebar's row (`docs/12` §2.1). */
-const activeAgents = computed(() =>
-  activeCount(
-    // Every roster the window holds, filtered to the threads that still have an engine: a
-    // closed thread's roster is what it *had*, and nothing runs in a session whose engine has
-    // gone. The panel applies the same rule, so the sidebar's number and the panel's cannot
-    // disagree — which they did until a browser check compared them.
-    rosters.value,
-    live.value.map((thread) => thread.id),
-  ),
-);
-
 function activeAgentIds(thread: string): string[] {
   if (!live.value.some((entry) => entry.id === thread)) return [];
   return rosters.value.find((entry) => entry.thread === thread)?.agents
@@ -596,12 +519,6 @@ async function refreshAgents(): Promise<void> {
   } catch (cause) {
     error.value = describe(cause);
   }
-}
-
-async function openAgents(): Promise<void> {
-  agentFocus.value = null;
-  agentsOpen.value = true;
-  await refreshAgents();
 }
 
 async function openAgentTab(thread: string, id: string): Promise<void> {
@@ -653,62 +570,6 @@ const searchOpen = ref(false);
 const agentsOpen = ref(false);
 const agentFocus = ref<{ thread: string; id: string } | null>(null);
 
-/**
- * The terminal drawer (`docs/12` §11, decision D6), which is app-wide too.
- *
- * The rows are the *host's* — a shell is a process this window does not own, and it is the
- * host that notices one exiting — so this keeps the set it was last told and which of them is
- * on screen. Both outlive a session switch, which is the point: a terminal is where a person
- * goes while the agent works.
- */
-const terminalsOpen = ref(false);
-const terminals = ref<TerminalTab[]>([]);
-const activeTerminal = ref<string | null>(null);
-
-/**
- * Open a terminal in `cwd`, and put it on screen.
- *
- * The size is a placeholder: the emulator measures itself once it is mounted and tells the
- * host, which is also what makes the shell redraw to it. 80×24 is the size a terminal has
- * been since VT100, so a shell that prints its prompt before the first resize sees a sane one.
- */
-async function openTerminal(cwd: string): Promise<void> {
-  if (cwd === "") {
-    error.value = "there is nowhere to open a terminal: no workspace is open";
-    return;
-  }
-
-  try {
-    const opened = await terminalOpen(cwd, 80, 24);
-    terminalsOpen.value = true;
-    activeTerminal.value = opened.id;
-  } catch (cause) {
-    error.value = describe(cause);
-  }
-}
-
-/** Select a tab. */
-function selectTerminal(id: string): void {
-  activeTerminal.value = id;
-}
-
-/**
- * Close a tab, ending its shell.
- *
- * The selection is decided *before* the answer, from the set on screen: the host's reply is
- * the remaining tabs, and by then the one that was closed is not in it to be found.
- */
-async function closeTerminal(id: string): Promise<void> {
-  const next = selectAfterClose(terminals.value, id, activeTerminal.value);
-
-  try {
-    terminals.value = tabsFrom(await terminalClose(id));
-    activeTerminal.value = next;
-  } catch (cause) {
-    error.value = describe(cause);
-  }
-}
-
 const showAddSkillModal = ref(false);
 
 /**
@@ -752,54 +613,6 @@ function onSkillAdded(name: string): void {
   if (activeId.value !== null) {
     void sendPrompt(activeId.value, "/reload", []);
   }
-}
-
-/**
- * The login affordance.
- *
- * The engine has no `omp login` — `docs/04` records that `/login` exists only inside the TUI and
- * that `omp login`/`omp logout` are not commands at all. What does exist is its credential
- * vault's own OAuth flow, `omp auth-broker login`. That flow is interactive by design (a browser
- * and a callback), so the app's terminal is the honest host for it rather than an attempt to
- * drive it over RPC — and the credential never passes through this window, because the vault
- * writes it where the engine reads it.
- *
- * The command is written to the pty immediately, with no wait for a prompt: measured on a real
- * pty, bytes written before the shell has printed anything are read and executed as its first
- * line, so a delay here would be a guess dressed as caution.
- */
-function logIn(providerId?: string): void {
-  // A terminal needs a directory, and this is the app's existing rule for one that has none —
-  // the same refusal `openTerminal` gives, for the same reason: a shell started somewhere nobody
-  // chose is a shell in the wrong place. A first run has to open a directory before it has a
-  // composer at all, so nothing here is reachable before that point anyway.
-  const current = terminals.value.find((tab) => tab.id === activeTerminal.value)?.cwd;
-  const cwd = current ?? workspace.value ?? "";
-  if (cwd === "") {
-    error.value = "there is nowhere to log in from: no workspace is open";
-    return;
-  }
-
-  // Switch back to thread view so the terminal drawer is in front of the user
-  settings.value = false;
-
-  void (async () => {
-    try {
-      const opened = await terminalOpen(cwd, 80, 24);
-      terminalsOpen.value = true;
-      activeTerminal.value = opened.id;
-      const cmd = providerId ? `omp auth-broker login ${providerId}\r` : "omp auth-broker login\r";
-      await terminalWrite(opened.id, cmd);
-    } catch (cause) {
-      error.value = describe(cause);
-    }
-  })();
-}
-
-/** Another tab in the directory the active one runs in, or in the workspace. */
-function openTerminalBeside(): void {
-  const current = terminals.value.find((tab) => tab.id === activeTerminal.value)?.cwd;
-  void openTerminal(current ?? workspace.value ?? "");
 }
 
 /** The open thread menu (`docs/12` §2.3): which thread, and where the press landed. */
@@ -851,6 +664,20 @@ const project = computed(() =>
 
 /** Where a new thread would start: the active thread's project, else the last opened. */
 const workspace = computed(() => project.value ?? recent.value[0] ?? null);
+
+/**
+ * The terminal drawer (`docs/12` §11, decision D6), which is app-wide too.
+ */
+const {
+  terminalsOpen,
+  terminals,
+  activeTerminal,
+  init: initTerminals,
+  selectTerminal,
+  closeTerminal,
+  logIn,
+  openTerminalBeside,
+} = useTerminals({ workspace, settings, error, describe });
 
 watch(workspace, (nextWs) => {
   if (mcpDesignChoiceEnabled.value) {
@@ -961,18 +788,6 @@ onMounted(async () => {
     }),
     onNotifications((event) => onNotification(event)),
     onChrome((event) => onChromeEvent(event)),
-    onTerminals((published) => {
-      const before = terminals.value;
-      const active = activeTerminal.value;
-      terminals.value = tabsFrom(published);
-
-      // The host is authoritative, so a tab it no longer lists is gone — however it went. And
-      // the selection has to survive that: a closed tab's neighbour is where the user lands,
-      // and a set nobody selected from keeps its first tab on screen.
-      activeTerminal.value = terminals.value.some((tab) => tab.id === active)
-        ? active
-        : selectFrom(terminals.value, selectAfterClose(before, active ?? "", active));
-    }),
     onAgents((event) => {
       // Replaced, not merged: the host publishes a thread's whole roster on every change, so
       // the last one it sent *is* what that thread has.
@@ -1028,12 +843,7 @@ onMounted(async () => {
 
   // The same for the tabs: the host pushes the set when it changes, and a tab that existed
   // before this window subscribed would otherwise be a shell running with no tab to show it.
-  try {
-    terminals.value = tabsFrom(await readTerminals());
-    activeTerminal.value = selectFrom(terminals.value, activeTerminal.value);
-  } catch (cause) {
-    error.value = describe(cause);
-  }
+  await initTerminals();
 
   // A workspace argument means the app was launched *for* a project, so open it rather than
   // showing an empty state the user did not ask for.
@@ -1050,7 +860,6 @@ onUnmounted(() => {
   unlistenClose?.();
   cleanupAudio?.();
   for (const off of unlisten) off();
-  for (const timer of noticeTimers.values()) clearTimeout(timer);
   window.removeEventListener("keydown", onShortcut);
   window.removeEventListener("focus", onWindowFocus);
   window.removeEventListener("contextmenu", onContextMenu);
@@ -1214,13 +1023,18 @@ async function onForked(forked: ThreadSnapshot): Promise<void> {
 function onDeleted(id: string): void {
   if (activeAgentTab.value?.thread === id) activeAgentKey.value = null;
   agentTabs.value = agentTabs.value.filter((tab) => tab.thread !== id);
-  openThreadTabs.value = openThreadTabs.value.filter((tid) => tid !== id);
-  if (activeId.value === id) activeId.value = null;
-  unread.value = new Set([...unread.value].filter((entry) => entry !== id));
-  for (const entry of notices.value) {
-    if (entry.thread === id) clearNoticeDismiss(entry.id);
+  const tabIndex = openThreadTabs.value.indexOf(id);
+  if (tabIndex !== -1) {
+    openThreadTabs.value.splice(tabIndex, 1);
   }
-  notices.value = notices.value.filter((entry) => entry.thread !== id);
+  if (activeId.value === id) {
+    activeId.value = openThreadTabs.value[tabIndex] ?? openThreadTabs.value[tabIndex - 1] ?? null;
+  }
+  delete views[id];
+  threadSubagentsHistory.value.delete(id);
+  parkedByThread.value.delete(id);
+  unread.value = new Set([...unread.value].filter((entry) => entry !== id));
+  removeNoticesForThread(id);
   live.value = live.value.filter((thread) => thread.id !== id);
   forgetChrome(id);
   if (engineTitles.value[id] !== undefined) {
@@ -1309,14 +1123,7 @@ function onNotification(event: NotificationEvent): void {
     unread.value = new Set([...unread.value, event.thread]);
   }
   if (showsNotice(event.thread, activeId.value)) {
-    noticeSeq += 1;
-    const noticeId = `notice-${noticeSeq}`;
-    notices.value = addNotice(
-      notices.value,
-      noticeFor({ ...event, title: name }, noticeId),
-      NOTICE_LIMIT,
-    );
-    scheduleNoticeAutoDismiss(noticeId);
+    pushNotice(noticeFor({ ...event, title: name }, nextNoticeId()));
   }
 
   void deliverOs(event.thread, name, event.body);
@@ -1366,14 +1173,7 @@ function onChromeEvent(event: ChromeEvent): void {
   // at that thread is how a message disappears without a trace. The OS banner still follows
   // the focus rule, because the notice in the window is already carrying it.
   const name = threadTitles.value[event.thread] ?? "";
-  noticeSeq += 1;
-  const noticeId = `notice-${noticeSeq}`;
-  notices.value = addNotice(
-    notices.value,
-    noticeFromChrome(event.thread, name, op.message, op.level, noticeId),
-    NOTICE_LIMIT,
-  );
-  scheduleNoticeAutoDismiss(noticeId);
+  pushNotice(noticeFromChrome(event.thread, name, op.message, op.level, nextNoticeId()));
 
   void deliverOs(event.thread, name, op.message);
 }
@@ -1411,18 +1211,6 @@ async function openNotice(id: string): Promise<void> {
 
   dismissNotice(id);
   if (notice.thread !== null) await select(notice.thread);
-}
-
-/** Put app-owned action receipts on the same bottom-right surface as other notices. */
-function showActionNotice(message: string): void {
-  noticeSeq += 1;
-  const id = `notice-${noticeSeq}`;
-  notices.value = addNotice(
-    notices.value,
-    noticeForAction(message, id),
-    NOTICE_LIMIT,
-  );
-  scheduleNoticeAutoDismiss(id);
 }
 
 /**
@@ -1532,7 +1320,6 @@ function describe(cause: unknown): string {
             :identity="identity"
             :sessions="catalogue.length"
             :rename-id="renameId"
-            :agents="activeAgents"
             @select="select"
             @open="open($event)"
             @context="(id, at) => (menu = { id, at })"
@@ -1541,7 +1328,6 @@ function describe(cause: unknown): string {
             @cancel-rename="renameId = null"
             @delete-project="projectToDelete = $event"
             @search="searchOpen = true"
-            @agents="openAgents"
             @settings="openSettings(true)"
             @collapse="sidebarCollapsed = true"
             @reorder-projects="onReorderProjects"
@@ -1641,7 +1427,7 @@ function describe(cause: unknown): string {
               ? 'bg-raised text-fg border-accent/40 font-medium'
               : 'text-dim hover:text-fg hover:bg-raised/60 border-transparent'"
             :aria-current="activeAgentKey === agentKey(tab.thread, tab.id) ? 'page' : undefined"
-            @click="activeId = tab.thread; activeAgentKey = agentKey(tab.thread, tab.id)"
+            @click="void select(tab.thread).then(() => { activeAgentKey = agentKey(tab.thread, tab.id); })"
             @auxclick.stop.prevent="closeAgentTab(tab.thread, tab.id)"
           >
             <Icon name="bot" class="mr-1.5 h-3.5 w-3.5 text-accent shrink-0" />
@@ -1682,12 +1468,9 @@ function describe(cause: unknown): string {
               :models="models"
               :refreshing="refreshing"
               :favourites="favourites"
-              :recent="recent"
               :user="identity.user"
               class="flex-1"
               @failed="error = $event"
-              @workspace="open($event)"
-              @terminal="openTerminal"
               @favourites="onFavourites"
               @app-action="onAppAction"
               @review="openTurnReview(id, $event)"

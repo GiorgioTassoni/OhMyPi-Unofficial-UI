@@ -7,7 +7,7 @@
  * file owns the vertical rhythm between them. Their already-prioritized order arrives from the
  * screen model, so this renderer contains no second ordering policy.
  */
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import {
   getCatalogProviders,
   getConfiguredProviders,
@@ -65,6 +65,7 @@ const emit = defineEmits<{
 const configuredProviders = ref<ProviderAccountDto[]>([]);
 const catalogProviders = ref<CatalogProviderDto[]>([]);
 const loadingProviders = ref(false);
+const providerActionError = ref<string | null>(null);
 const showAddModal = ref(false);
 const showAddSkillModal = ref(false);
 const skillsCardRef = ref<InstanceType<typeof ConfiguredSkillsCard> | null>(null);
@@ -100,6 +101,7 @@ watch(
   () => props.section.id,
   (id) => {
     advancedOpen.value = false;
+    providerActionError.value = null;
     if (id === "model-and-providers") {
       void loadProviders();
     }
@@ -107,13 +109,8 @@ watch(
   { immediate: true }
 );
 
-onMounted(() => {
-  if (props.section.id === "model-and-providers") {
-    void loadProviders();
-  }
-});
-
 async function onProviderAdded(): Promise<void> {
+  providerActionError.value = null;
   await loadProviders();
   try {
     await refreshModels();
@@ -124,6 +121,7 @@ async function onProviderAdded(): Promise<void> {
 }
 
 async function handleRemoveCredential(id: number): Promise<void> {
+  providerActionError.value = null;
   try {
     await removeProviderCredential(id);
     await loadProviders();
@@ -133,12 +131,13 @@ async function handleRemoveCredential(id: number): Promise<void> {
       // ignore
     }
     emit("changed");
-  } catch {
-    // ignore
+  } catch (cause) {
+    providerActionError.value = cause instanceof Error ? cause.message : String(cause);
   }
 }
 
 async function handleRemoveCustom(providerId: string): Promise<void> {
+  providerActionError.value = null;
   try {
     await removeCustomProvider(providerId);
     await loadProviders();
@@ -148,8 +147,8 @@ async function handleRemoveCustom(providerId: string): Promise<void> {
       // ignore
     }
     emit("changed");
-  } catch {
-    // ignore
+  } catch (cause) {
+    providerActionError.value = cause instanceof Error ? cause.message : String(cause);
   }
 }
 
@@ -186,6 +185,12 @@ function needsFor(row: SettingsRowModel): { sectionId: string; title: string } |
     />
 
     <div v-if="props.section.id === 'model-and-providers'" class="mt-6">
+      <p
+        v-if="providerActionError"
+        class="mb-3 rounded-[8px] border border-err/40 bg-err/10 px-3 py-2 text-[12px] text-err"
+      >
+        {{ providerActionError }}
+      </p>
       <ConfiguredProvidersCard
         :providers="configuredProviders"
         :loading="loadingProviders"

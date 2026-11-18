@@ -21,8 +21,6 @@ import type { ModelOption } from "./models";
 export interface ChipRow {
   /** The session's working directory, as the sidecar was launched. */
   workspace: string;
-  /** Directories this window has been pointed at — the switcher's short list. */
-  recent: string[];
   /** The approval mode in force (`--approval-mode`); null when the host did not say. */
   mode: string | null;
   model: SessionModel | null;

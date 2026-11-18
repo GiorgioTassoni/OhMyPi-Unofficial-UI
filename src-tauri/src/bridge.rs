@@ -30,7 +30,7 @@ use crate::dto::{
     ActivitySnapshot, AgentSnapshot, AgentTranscript, ArtifactSnapshot, BranchTarget, BrokerScope,
     CommandSnapshot, ImageIn, IndexStatus, LaunchContext, ModelCatalogue, ParkedAgent,
     ProjectSnapshot, RowSnapshot, SearchHit, SessionStatus, SessionSummaryDto, SidebarSnapshot,
-    SubagentFileChange, TerminalSnapshot, ThreadAgents, ThreadSnapshot, TodoPhaseInput,
+    SubagentFileChange, ThreadAgents, ThreadSnapshot, TodoPhaseInput,
     TodoPhaseSnapshot, UiAnswer, UiRequestSnapshot, WorkspaceEntry, WorkspaceFileMatch,
 };
 use crate::favourites::Favourites;
@@ -38,7 +38,7 @@ use crate::flows;
 use crate::models::Catalogue;
 use crate::panel;
 use crate::policy::{self, PolicyOutcome};
-use crate::pty::{TerminalSink, Terminals};
+use crate::pty::Terminals;
 use crate::search::{self, Index};
 use crate::session::{self, LiveSession, Roster};
 use crate::session::{agent_snapshot, row_snapshot};
@@ -384,7 +384,10 @@ pub async fn get_archived_history_info(
     let session_file = thread_session_file(&state, &thread).await?;
     let path = PathBuf::from(session_file);
     let loaded = if let Some(live) = state.threads.get(&thread) {
-        *live.loaded_archived_turns.lock().unwrap()
+        *live
+            .loaded_archived_turns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     } else {
         0
     };
@@ -402,13 +405,19 @@ pub async fn load_earlier_turns(
     let path = PathBuf::from(session_file);
     let live = state.threads.get(&thread);
     let loaded = if let Some(ref live) = live {
-        *live.loaded_archived_turns.lock().unwrap()
+        *live
+            .loaded_archived_turns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     } else {
         0
     };
     let outcome = scan(move || archived_history::load_batch(&path, loaded, batch_size)).await?;
     if let Some(ref live) = live {
-        let mut guard = live.loaded_archived_turns.lock().unwrap();
+        let mut guard = live
+            .loaded_archived_turns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = outcome.new_loaded;
     }
     Ok(LoadEarlierTurnsResult {
@@ -999,68 +1008,85 @@ pub async fn read_artifact(
     scan(move || panel::artifact(&directory, &id)).await
 }
 
-fn resolve_file_path(workspace: Option<&str>, path: &str) -> PathBuf {
+fn is_raster_image_path(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .as_deref(),
+        Some("png" | "jpg" | "jpeg" | "gif" | "webp")
+    )
+}
+
+fn resolve_file_path(
+    workspace: Option<&str>,
+    path: &str,
+    allow_unscoped_image: bool,
+) -> Result<PathBuf, String> {
     let cleaned = flows::clean_path_input(path);
     let p = Path::new(cleaned.as_ref());
-    if p.is_absolute() {
-        if p.exists() {
-            return p.to_path_buf();
+
+    let Some(ws) = workspace.filter(|s| !s.trim().is_empty()) else {
+        if allow_unscoped_image && p.is_absolute() && is_raster_image_path(p) {
+            return p
+                .canonicalize()
+                .map_err(|e| format!("failed to resolve {}: {e}", p.display()));
         }
-        if let Some(collapsed) = flows::collapse_duplicate_components(p) {
-            if collapsed.exists() {
-                return collapsed;
-            }
-        }
-        return p.to_path_buf();
-    }
-    let Some(ws) = workspace else {
-        return p.to_path_buf();
+        return Err("workspace is required to read files".to_string());
     };
-    let ws_path = Path::new(ws);
-    let direct = ws_path.join(p);
-    if direct.exists() {
-        return direct;
-    }
 
-    if let (Some(ws_name), Some(first_comp)) = (
-        ws_path.file_name().and_then(|n| n.to_str()),
-        p.iter().next().and_then(|n| n.to_str()),
-    ) {
-        if ws_name.eq_ignore_ascii_case(first_comp) {
-            if let Ok(stripped) = p.strip_prefix(first_comp) {
-                let candidate = ws_path.join(stripped);
-                if candidate.exists() {
-                    return candidate;
+    let canonical_ws = Path::new(ws)
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve workspace {ws}: {e}"))?;
+
+    let candidate = if p.is_absolute() {
+        if p.exists() {
+            p.to_path_buf()
+        } else if let Some(collapsed) = flows::collapse_duplicate_components(p) {
+            collapsed
+        } else {
+            p.to_path_buf()
+        }
+    } else {
+        let direct = canonical_ws.join(p);
+        if direct.exists() {
+            direct
+        } else if let (Some(ws_name), Some(first_comp)) = (
+            canonical_ws.file_name().and_then(|n| n.to_str()),
+            p.iter().next().and_then(|n| n.to_str()),
+        ) {
+            if ws_name.eq_ignore_ascii_case(first_comp) {
+                if let Ok(stripped) = p.strip_prefix(first_comp) {
+                    canonical_ws.join(stripped)
+                } else {
+                    direct
                 }
+            } else {
+                direct
             }
+        } else {
+            direct
         }
+    };
+
+    let canonical_target = candidate
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve {}: {e}", candidate.display()))?;
+
+    if !canonical_target.starts_with(&canonical_ws) {
+        return Err(format!(
+            "refused to read {} outside workspace",
+            canonical_target.display()
+        ));
     }
 
-    if let Some(parent) = ws_path.parent() {
-        let candidate = parent.join(p);
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-
-    if let (Some(ws_name), Some(first_comp)) = (
-        ws_path.file_name().and_then(|n| n.to_str()),
-        p.iter().next().and_then(|n| n.to_str()),
-    ) {
-        if ws_name.eq_ignore_ascii_case(first_comp) {
-            if let Ok(stripped) = p.strip_prefix(first_comp) {
-                return ws_path.join(stripped);
-            }
-        }
-    }
-
-    direct
+    Ok(canonical_target)
 }
 
 /// Read the full contents of a file on disk for the read-only file viewer.
 #[tauri::command]
 pub async fn read_file_content(workspace: Option<String>, path: String) -> Result<String, String> {
-    let resolved = resolve_file_path(workspace.as_deref(), &path);
+    let resolved = resolve_file_path(workspace.as_deref(), &path, false)?;
 
     tokio::fs::read_to_string(&resolved)
         .await
@@ -1070,7 +1096,7 @@ pub async fn read_file_content(workspace: Option<String>, path: String) -> Resul
 /// Read the full binary contents of a file on disk as base64 for image/binary viewers.
 #[tauri::command]
 pub async fn read_file_base64(workspace: Option<String>, path: String) -> Result<String, String> {
-    let resolved = resolve_file_path(workspace.as_deref(), &path);
+    let resolved = resolve_file_path(workspace.as_deref(), &path, true)?;
 
     let metadata = tokio::fs::metadata(&resolved)
         .await
@@ -1649,16 +1675,17 @@ pub async fn pick_directory(
 
         #[cfg(target_os = "macos")]
         {
+            let escape = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
             let script = if let Some(ref start) = start_dir {
                 format!(
                     "POSIX path of (choose folder with prompt \"{}\" default location POSIX file \"{}\")",
-                    title_str.replace('\"', "\\\""),
-                    start.to_string_lossy().replace('\"', "\\\"")
+                    escape(&title_str),
+                    escape(&start.to_string_lossy())
                 )
             } else {
                 format!(
                     "POSIX path of (choose folder with prompt \"{}\")",
-                    title_str.replace('\"', "\\\"")
+                    escape(&title_str)
                 )
             };
             if let Ok(output) = std::process::Command::new("osascript")
@@ -1845,9 +1872,15 @@ pub fn terminate(app: &AppHandle) {
     workspaces.sort();
     workspaces.dedup();
 
-    for live in live_sessions {
-        tauri::async_runtime::block_on(live.shutdown(SHUTDOWN_GRACE));
-    }
+    tauri::async_runtime::block_on(async move {
+        let mut set = tokio::task::JoinSet::new();
+        for live in live_sessions {
+            set.spawn(async move {
+                live.shutdown(SHUTDOWN_GRACE).await;
+            });
+        }
+        while set.join_next().await.is_some() {}
+    });
 
     state.terminals.shutdown();
 
@@ -1855,190 +1888,6 @@ pub fn terminate(app: &AppHandle) {
     // after its idle grace. Let it finish before Tauri's exit tears down the temporary
     // AppImage mount; this is bounded and never kills broker-owned work.
     tauri::async_runtime::block_on(agents::wait_for_appimage_brokers(&workspaces));
-}
-
-/// Where a terminal's events go: the window, through the handle every other event uses.
-fn terminal_sink(app: &AppHandle) -> Arc<dyn TerminalSink> {
-    Arc::new(app.clone())
-}
-
-/// Show an OS notification.
-///
-/// The host sends it and the **window** decides whether to: focus, and whether the thread is
-/// the one on screen, are facts about the window, and the host has no business holding them
-/// (`docs/12` §13 — the host reports facts, the surface decides whether to interrupt someone).
-/// What this adds is a path that does not depend on a web `Notification` global existing:
-/// measured against `@tauri-apps/plugin-notification` 2.4.0, the JavaScript API is
-/// `new window.Notification(title, options)` and never invokes the plugin's own command, so a
-/// Ask the operating system to show a banner. The plugin's Rust side is `notify-rust` over
-/// D-Bus on Linux, with its own implementation per platform and no permission dance in front of it.
-#[tauri::command]
-pub async fn notify_os(app: AppHandle, title: String, body: String) -> Result<(), String> {
-    use tauri_plugin_notification::NotificationExt;
-
-    app.notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .show()
-        .map_err(|error| format!("the notification was not shown: {error}"))
-}
-
-/// Play a notification chime through the operating system's audio facilities.
-///
-/// Bypasses webview AudioContext/WebKitGTK limitations on Linux desktop.
-#[tauri::command]
-pub fn play_notification_sound(kind: String) {
-    std::thread::spawn(move || {
-        play_sound_sync(&kind);
-    });
-}
-
-#[cfg(target_os = "linux")]
-#[derive(Clone, Copy)]
-enum LinuxAudioBackend {
-    Canberra,
-    PipeWire,
-    PulseAudio,
-    None,
-}
-
-#[cfg(target_os = "linux")]
-fn detect_linux_audio() -> LinuxAudioBackend {
-    fn has_bin(name: &str) -> bool {
-        if let Ok(path) = std::env::var("PATH") {
-            for dir in std::env::split_paths(&path) {
-                if dir.join(name).is_file() {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    if has_bin("canberra-gtk-play") {
-        LinuxAudioBackend::Canberra
-    } else if has_bin("pw-play") {
-        LinuxAudioBackend::PipeWire
-    } else if has_bin("paplay") {
-        LinuxAudioBackend::PulseAudio
-    } else {
-        LinuxAudioBackend::None
-    }
-}
-
-fn play_sound_sync(kind: &str) {
-    #[cfg(target_os = "linux")]
-    {
-        static AUDIO_BACKEND: std::sync::OnceLock<LinuxAudioBackend> = std::sync::OnceLock::new();
-        let backend = AUDIO_BACKEND.get_or_init(detect_linux_audio);
-
-        let (sound_id, oga_file) = match kind {
-            "needs-you" => (
-                "message-new-instant",
-                "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga",
-            ),
-            _ => (
-                "complete",
-                "/usr/share/sounds/freedesktop/stereo/complete.oga",
-            ),
-        };
-
-        match backend {
-            LinuxAudioBackend::Canberra => {
-                let _ = std::process::Command::new("canberra-gtk-play")
-                    .args(["-i", sound_id])
-                    .spawn();
-            }
-            LinuxAudioBackend::PipeWire if std::path::Path::new(oga_file).exists() => {
-                let _ = std::process::Command::new("pw-play").arg(oga_file).spawn();
-            }
-            LinuxAudioBackend::PulseAudio if std::path::Path::new(oga_file).exists() => {
-                let _ = std::process::Command::new("paplay").arg(oga_file).spawn();
-            }
-            _ => {
-                eprint!("\x07");
-            }
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let sound = match kind {
-            "needs-you" => "/System/Library/Sounds/Ping.aiff",
-            _ => "/System/Library/Sounds/Glass.aiff",
-        };
-        let _ = std::process::Command::new("afplay").arg(sound).spawn();
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let _ = std::process::Command::new("powershell")
-            .args(["-c", "[System.Media.SystemSounds]::Asterisk.Play()"])
-            .spawn();
-    }
-}
-
-/// The app's terminals, in the order their tabs were opened (`docs/12` §11).
-#[tauri::command]
-pub fn terminals(state: State<'_, AppState>) -> Vec<TerminalSnapshot> {
-    state.terminals.list()
-}
-
-/// Open a terminal in `cwd`, running the user's own shell.
-///
-/// The directory comes from the caller because only the window knows which thread the user
-/// is looking at; the *shell* does not, which is what keeps a terminal app-scoped.
-///
-/// Synchronous, and it is the one place here where that is a decision: allocating a pty and
-/// forking a shell is a millisecond, and the window has nothing to draw until it answers.
-#[tauri::command]
-pub fn terminal_open(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    cwd: String,
-    cols: u16,
-    rows: u16,
-) -> Result<TerminalSnapshot, String> {
-    state
-        .terminals
-        .open(terminal_sink(&app), Path::new(&cwd), cols, rows)
-}
-
-/// Send what the user typed, or pasted.
-#[tauri::command]
-pub fn terminal_write(state: State<'_, AppState>, id: String, data: String) -> Result<(), String> {
-    state.terminals.write(&id, &data)
-}
-
-/// Tell a terminal's shell its window changed size.
-#[tauri::command]
-pub fn terminal_resize(
-    state: State<'_, AppState>,
-    id: String,
-    cols: u16,
-    rows: u16,
-) -> Result<(), String> {
-    state.terminals.resize(&id, cols, rows)
-}
-
-/// Close a tab, ending its shell and everything it started.
-///
-/// The only terminal command that is not on the main thread: ending a shell waits for it (a
-/// graceful signal, a grace period, then a kill), and a window that froze for that would
-/// freeze on the one action a user takes *because* something is stuck.
-#[tauri::command]
-pub async fn terminal_close(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<Vec<TerminalSnapshot>, String> {
-    let terminals = Arc::clone(&state.terminals);
-    let sink = terminal_sink(&app);
-
-    tauri::async_runtime::spawn_blocking(move || terminals.close(sink.as_ref(), &id))
-        .await
-        .map_err(|error| format!("the terminal was not closed: {error}"))?
 }
 
 #[cfg(test)]
@@ -2296,5 +2145,27 @@ mod tests {
         ] {
             assert!(resolve_answer(&answer(mixed.clone())).is_err(), "{mixed}");
         }
+    }
+
+    #[test]
+    fn resolve_file_path_confines_reads_to_workspace() {
+        let root = tempfile::tempdir().unwrap();
+        let ws = root.path().join("workspace");
+        let outside = root.path().join("secret.txt");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::write(ws.join("inside.txt"), "ok").unwrap();
+        std::fs::write(&outside, "secret").unwrap();
+
+        let ws_str = ws.to_string_lossy().to_string();
+
+        // Valid relative path inside workspace succeeds.
+        assert!(resolve_file_path(Some(&ws_str), "inside.txt", false).is_ok());
+
+        // Path traversal and absolute outside paths are rejected.
+        assert!(resolve_file_path(Some(&ws_str), "../secret.txt", false).is_err());
+        assert!(resolve_file_path(Some(&ws_str), &outside.to_string_lossy(), false).is_err());
+
+        // Missing workspace rejects non-image reads.
+        assert!(resolve_file_path(None, &outside.to_string_lossy(), true).is_err());
     }
 }

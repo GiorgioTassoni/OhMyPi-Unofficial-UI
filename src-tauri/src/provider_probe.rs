@@ -61,34 +61,28 @@ async fn probe_custom_endpoint(
         format!("{}/v1/models", base_url.trim_end_matches('/'))
     };
 
-    let mut args = vec![
-        "-s".to_string(),
-        "-S".to_string(),
-        "-m".to_string(),
-        "4".to_string(),
-        "-w".to_string(),
-        "\n%{http_code}".to_string(),
-    ];
-
+    let mut curl_cfg = String::new();
     if let Some(key) = api_key {
         if key != "none" && !key.trim().is_empty() {
-            args.push("-H".to_string());
-            args.push(format!("Authorization: Bearer {key}"));
+            if key.contains('\n') || key.contains('\r') {
+                return Err("API key contains invalid control characters".to_string());
+            }
+            let escaped = key.replace('\\', "\\\\").replace('"', "\\\"");
+            curl_cfg.push_str(&format!("header = \"Authorization: Bearer {escaped}\"\n"));
         }
     }
 
-    args.push(probe_url);
-
-    let curl_output = tokio::time::timeout(
+    let curl_output = crate::providers::run_curl_with_config(
+        &["-s", "-S", "-m", "4", "-w", "\n%{http_code}", "--", &probe_url],
+        &curl_cfg,
         std::time::Duration::from_secs(5),
-        tokio::process::Command::new("curl").args(&args).output(),
     )
     .await;
 
     let latency_ms = start.elapsed().as_millis() as u64;
 
     match curl_output {
-        Ok(Ok(output)) => {
+        Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -165,20 +159,20 @@ async fn probe_custom_endpoint(
                 })
             }
         }
-        Ok(Err(err)) => Ok(ProviderTestResultDto {
-            ok: false,
-            latency_ms,
-            model_count: 0,
-            sample_models: Vec::new(),
-            message: format!("Failed to run connection probe: {err}"),
-        }),
-        Err(_) => Ok(ProviderTestResultDto {
-            ok: false,
-            latency_ms: 5000,
-            model_count: 0,
-            sample_models: Vec::new(),
-            message: "Connection timed out after 5 seconds: server offline".to_string(),
-        }),
+        Err(err) => {
+            let timed_out = err.contains("timed out");
+            Ok(ProviderTestResultDto {
+                ok: false,
+                latency_ms: if timed_out { 5000 } else { latency_ms },
+                model_count: 0,
+                sample_models: Vec::new(),
+                message: if timed_out {
+                    "Connection timed out after 5 seconds: server offline".to_string()
+                } else {
+                    format!("Failed to run connection probe: {err}")
+                },
+            })
+        }
     }
 }
 

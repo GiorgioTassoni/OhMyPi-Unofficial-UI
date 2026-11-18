@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { getConfiguredProviders, getOAuthUsageLimits, type OAuthUsageLimitDto } from "../bridge";
+import { ringDash } from "../lib/chips";
 
 const CACHE_KEY = "omp:oauth-limits-cache";
 
@@ -67,6 +68,12 @@ function remainingLabel(usedPercent: number): number {
   return Math.max(0, 100 - Math.round(usedPercent));
 }
 
+function windowLabel(label: string): string {
+  if (label.includes("5h")) return "5h limit";
+  if (label.toLowerCase().includes("week")) return "Weekly limit";
+  return label;
+}
+
 function strokeColor(usedPercent: number): string {
   const left = 100 - usedPercent;
   if (left <= 15) return "var(--color-err)";
@@ -74,12 +81,8 @@ function strokeColor(usedPercent: number): string {
   return "var(--color-ok)";
 }
 
-function ringDash(usedPercent: number): string {
-  const radius = 6;
-  const circumference = 2 * Math.PI * radius;
-  const fraction = Math.max(0, Math.min(100, 100 - usedPercent)) / 100;
-  const filled = fraction * circumference;
-  return `${filled} ${circumference}`;
+function limitRingDash(usedPercent: number): string {
+  return ringDash(Math.max(0, Math.min(100, 100 - usedPercent)), 6).dash;
 }
 
 onMounted(() => {
@@ -128,9 +131,9 @@ onUnmounted(() => {
       >
         <div class="flex flex-col min-w-0">
           <span class="text-[11.5px] text-fg/85 leading-tight truncate">
-            {{ w.label.includes('5h') ? '5h limit' : 'Weekly limit' }}
+            {{ windowLabel(w.label) }}
           </span>
-          <span v-if="w.resetAfterSeconds" class="text-[10.5px] text-faint leading-tight mt-0.5">
+          <span v-if="w.resetAfterSeconds !== null && w.resetAfterSeconds !== undefined" class="text-[10.5px] text-faint leading-tight mt-0.5">
             Resets in {{ formatRemainingTime(w.resetAfterSeconds) }}
           </span>
         </div>
@@ -154,7 +157,7 @@ onUnmounted(() => {
               r="6"
               fill="none"
               :stroke="strokeColor(w.usedPercent)"
-              :stroke-dasharray="ringDash(w.usedPercent)"
+              :stroke-dasharray="limitRingDash(w.usedPercent)"
               stroke-width="1.6"
               stroke-linecap="round"
               transform="rotate(-90 8 8)"

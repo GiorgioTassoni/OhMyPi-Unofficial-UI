@@ -86,10 +86,6 @@ const emit = defineEmits<{
   (event: "failed", message: string): void;
   /** A chip changed something about the session, so the screen re-reads it. */
   (event: "changed"): void;
-  /** A chip asked for another directory. */
-  (event: "workspace", path: string): void;
-  /** The folder chip's terminal entry: the app's own shell, in this session's directory. */
-  (event: "terminal", path: string): void;
   /** The favourites order changed. */
   (event: "favourites", keys: string[]): void;
   /** A palette row for something the *window* owns, which the shell opens (`docs/12` §12). */
@@ -744,7 +740,7 @@ defineExpose({ setDraft, appendDraft, attachPaths, attachFiles, attachPastedText
     file is dropped on, so the highlight is a ring around that card rather than a second box
     around the box. (Until this pass it drew both, with tokens that no longer exist.)
   -->
-  <div class="transition-shadow">
+  <div>
     <AttachmentStrip
       :attachments="attachments"
       :refusal="refusal"
@@ -777,8 +773,6 @@ defineExpose({ setDraft, appendDraft, attachPaths, attachFiles, attachPastedText
         v-bind="props.chips"
         @failed="emit('failed', $event)"
         @changed="emit('changed')"
-        @workspace="emit('workspace', $event)"
-        @terminal="emit('terminal', $event)"
         @favourites="emit('favourites', $event)"
       >
         <div class="px-3.5 pt-2.5 pb-1.5">

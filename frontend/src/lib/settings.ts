@@ -921,30 +921,30 @@ export function gatedLine(reason: string, needs: string | null): string {
 }
 
 const ADVANCED_GROUP_NAMES: ReadonlySet<string> = new Set([
-  "Housekeeping",
-  "Status Line",
-  "Magic Keywords",
-  "Advisor",
-  "Tiny Model",
-  "Protocol",
-  "Prewalk",
-  "Tool Exposure",
-  "Read Summaries",
-  "Isolation",
-  "Output Limits",
-  "Grep & Browser",
-  "Discovery (xdev)",
-  "Extensions",
-  "Rules (TTSR)",
-  "Experimental",
-  "Mnemopi",
-  "Hindsight",
-  "Legacy Local Memory",
-  "Sharpshooter",
-  "Shell Minimizer",
-  "Accounts & Concurrency",
-  "Service Tiers",
-  "Timeouts",
+  "general/Housekeeping",
+  "appearance/Status Line",
+  "shortcuts-and-keys/Magic Keywords",
+  "model-and-providers/Advisor",
+  "model-and-providers/Tiny Model",
+  "model-and-providers/Protocol",
+  "model-and-providers/Prewalk",
+  "agent/Tool Exposure",
+  "agent/Read Summaries",
+  "agent/Isolation",
+  "agent/Output Limits",
+  "agent/Grep & Browser",
+  "agent/Discovery (xdev)",
+  "agent/Extensions",
+  "context-and-compaction/Rules (TTSR)",
+  "context-and-compaction/Experimental",
+  "memory/Mnemopi",
+  "memory/Hindsight",
+  "memory/Legacy Local Memory",
+  "memory/Sharpshooter",
+  "terminal-and-shell/Shell Minimizer",
+  "usage-and-limits/Accounts & Concurrency",
+  "usage-and-limits/Service Tiers",
+  "usage-and-limits/Timeouts",
 ]);
 
 const ADVANCED_ROW_KEYS: ReadonlySet<string> = new Set([
@@ -1037,7 +1037,7 @@ export function partitionSectionGroups(
   const advancedGroups: SettingsGroup[] = [];
 
   for (const group of section.groups) {
-    if (ADVANCED_GROUP_NAMES.has(group.name)) {
+    if (ADVANCED_GROUP_NAMES.has(`${section.id}/${group.name}`)) {
       if (group.rows.length > 0) {
         advancedGroups.push(group);
       }

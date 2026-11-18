@@ -679,6 +679,67 @@ fn clamp(value: u16, lowest: u16, highest: u16) -> u16 {
     value.max(lowest).min(highest)
 }
 
+/// Where a terminal's events go: the window, through the handle every other event uses.
+fn terminal_sink(app: &tauri::AppHandle) -> Arc<dyn TerminalSink> {
+    Arc::new(app.clone())
+}
+
+/// The app's terminals, in the order their tabs were opened (`docs/12` §11).
+#[tauri::command]
+pub fn terminals(state: tauri::State<'_, crate::bridge::AppState>) -> Vec<TerminalSnapshot> {
+    state.terminals.list()
+}
+
+/// Open a terminal in `cwd`, running the user's own shell.
+#[tauri::command]
+pub fn terminal_open(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::bridge::AppState>,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+) -> Result<TerminalSnapshot, String> {
+    state
+        .terminals
+        .open(terminal_sink(&app), std::path::Path::new(&cwd), cols, rows)
+}
+
+/// Send what the user typed, or pasted.
+#[tauri::command]
+pub fn terminal_write(
+    state: tauri::State<'_, crate::bridge::AppState>,
+    id: String,
+    data: String,
+) -> Result<(), String> {
+    state.terminals.write(&id, &data)
+}
+
+/// Tell a terminal's shell its window changed size.
+#[tauri::command]
+pub fn terminal_resize(
+    state: tauri::State<'_, crate::bridge::AppState>,
+    id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    state.terminals.resize(&id, cols, rows)
+}
+
+/// Close a tab, ending its shell and everything it started.
+#[tauri::command]
+pub async fn terminal_close(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::bridge::AppState>,
+    id: String,
+) -> Result<Vec<TerminalSnapshot>, String> {
+    let terminals = Arc::clone(&state.terminals);
+    let sink = terminal_sink(&app);
+
+    tauri::async_runtime::spawn_blocking(move || terminals.close(sink.as_ref(), &id))
+        .await
+        .map_err(|error| format!("the terminal was not closed: {error}"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
